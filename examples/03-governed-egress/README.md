@@ -8,33 +8,7 @@ Demonstrates **per-tenant egress governance** using the AgentGateway waypoint pr
 
 ## Architecture
 
-```
-                    example-egress namespace
-┌────────────────────────────────────────────────────────┐
-│                                                        │
-│  governed-assistant                                    │
-│  (Declarative agent)                                   │
-│       │                                                │
-│       │  HTTP → api.anthropic.com:80                   │
-│       │  (mesh-intercepted)                            │
-│       ▼                                                │
-│  ┌─────────┐     ┌──────────────────────────────┐      │
-│  │ ztunnel │────►│ AgentGateway Waypoint         │      │
-│  │  (L4)   │     │                               │      │
-│  └─────────┘     │  1. Prompt Guard (regex)      │      │
-│                  │     SSN → 403 REJECT          │      │
-│                  │     Credit Card → 403 REJECT  │      │
-│                  │  2. Credential Injection       │      │
-│                  │     dummy key → real API key   │      │
-│                  │  3. TLS Origination            │      │
-│                  │     HTTP:80 → HTTPS:443        │      │
-│                  └──────────┬───────────────────┘      │
-│                             │                          │
-└─────────────────────────────┼──────────────────────────┘
-                              │ HTTPS
-                              ▼
-                     api.anthropic.com:443
-```
+![Architecture](architecture.drawio.svg)
 
 ### How it differs from Examples 01 & 02
 

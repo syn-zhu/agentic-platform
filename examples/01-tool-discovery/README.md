@@ -11,22 +11,7 @@ A platform assistant agent that discovers deployed agents at runtime and dynamic
 
 ## Architecture
 
-```
-                        ┌──────────────────────────┐
-                        │   AgentRegistry (8090)    │
-                        │   Deployment Tracker      │
-                        │   (K8s watch → catalog)   │
-                        └────────────▲─────────────┘
-                                     │ MCP: list_deployments
-                                     │
-┌──────────┐  A2A   ┌───────────────┐│  invoke_agent   ┌────────────────┐
-│  curl /  │ ─────► │  platform-    ├┘ ──────────────► │  k8s-agent     │
-│  kagent  │        │  assistant    │  ──────────────► │  helm-agent    │
-│  UI      │        │               │       A2A        │  observability │
-└──────────┘        └───────────────┘  (kube DNS)      │  ...           │
-                      example-discovery                └────────────────┘
-                                                         kagent-system
-```
+![Architecture](architecture.drawio.svg)
 
 **Flow:**
 1. User asks the platform-assistant a question (e.g. "check the health of my cluster")

@@ -14,31 +14,7 @@ A "self-extending" agent that discovers MCP servers in the AgentRegistry catalog
 
 ## Architecture
 
-```
-                          ┌────────────────────────────┐
-                          │   AgentRegistry (8090)      │
-                          │   MCP Server                │
-                          │   • list_servers (semantic)  │
-                          │   • get_server / get_readme  │
-                          │   • deploy_server            │
-                          └──────────▲─────────────────┘
-                                     │ Static MCP connection
-                                     │
-┌──────────┐  A2A   ┌───────────────┤
-│  curl /  │ ─────► │  mcp-agent    │   Custom Python tools
-│  kagent  │        │  (BYO ADK)    ├──────────────────────────┐
-│  UI      │        │               │  list_server_tools()     │
-└──────────┘        └──────┬────────┘  call_mcp_tool()         │
-                    example-mcp    │                            │
-                                   │                            │
-                    ┌──────────────┴──────────────┐             │
-                    ▼                              ▼             │
-        ┌───────────────────┐         ┌──────────────────┐      │
-        │ Remote MCP server │◄────────│ Deployed MCP     │◄─────┘
-        │ (public URL)      │  direct │ server (Pod+Svc) │ in-cluster
-        │ e.g. mcp.exa.ai  │         │ default:3000     │
-        └───────────────────┘         └──────────────────┘
-```
+![Architecture](architecture.drawio.svg)
 
 **Remote server flow** (e.g. "search the web for Kubernetes news"):
 1. Agent searches the catalog → finds `ai.exa/exa` (remote, URL: `https://mcp.exa.ai/mcp`)

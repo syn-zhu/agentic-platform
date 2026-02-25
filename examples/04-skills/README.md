@@ -12,45 +12,7 @@ Demonstrates kagent's **skills system** — packaged domain expertise (instructi
 
 ## Architecture
 
-```
-                         Pod: skill-agent
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│  Init Container (skills-init)                        │
-│  ┌────────────────────────────────────────┐          │
-│  │ kagent-adk pull-skills                 │          │
-│  │   └─ krane export → /skills/           │          │
-│  └────────────────────────────────────────┘          │
-│              │ emptyDir volume                       │
-│              ▼                                       │
-│  Main Container (kagent)                             │
-│  ┌────────────────────────────────────────┐          │
-│  │                                        │          │
-│  │  /skills/skill-platform-runbook/       │          │
-│  │  ├── SKILL.md    (instructions)        │          │
-│  │  └── scripts/    (executables)         │          │
-│  │                                        │          │
-│  │  Auto-registered tools:                │          │
-│  │    • skills  — load skill content      │          │
-│  │    • bash    — execute skill scripts   │          │
-│  │                                        │          │
-│  │  MCP tools (AgentRegistry):            │          │
-│  │    • list_skills — browse catalog      │          │
-│  │    • get_skill   — read skill details  │          │
-│  │                                        │          │
-│  │  MCP tools (kagent-tool-server):       │          │
-│  │    • k8s_get_resources                 │          │
-│  │    • k8s_get_pod_logs                  │          │
-│  │    • k8s_describe_resource             │          │
-│  │    • k8s_get_events                    │          │
-│  └────────────────────────────────────────┘          │
-└──────────────────────────────────────────────────────┘
-          │ MCP calls                 │ MCP calls
-          ▼                           ▼
-   AgentRegistry             kagent-tool-server
-   (skill catalog)           (shells out to kubectl
-                              with cluster-admin RBAC)
-```
+![Architecture](architecture.drawio.svg)
 
 ## Why MCP Tools Instead of Direct K8s API Calls?
 
