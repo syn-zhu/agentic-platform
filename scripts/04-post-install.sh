@@ -6,13 +6,7 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 echo "=== Phase 4: Applying Post-Install Manifests ==="
 
-# Load secrets for template substitution
-SECRETS_FILE="$ROOT_DIR/.secrets.env"
-if [[ -f "$SECRETS_FILE" ]]; then
-  set -a; source "$SECRETS_FILE"; set +a
-fi
-
-# Load .env (for ANTHROPIC_API_KEY)
+# Load .env (all platform config: user vars + AWS outputs + generated secrets)
 if [[ -f "$ROOT_DIR/.env" ]]; then
   set -a; source "$ROOT_DIR/.env"; set +a
 fi

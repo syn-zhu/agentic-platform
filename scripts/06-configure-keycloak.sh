@@ -6,13 +6,12 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 echo "=== Phase 6: Configuring Keycloak ==="
 
-# Load secrets
-SECRETS_FILE="$ROOT_DIR/.secrets.env"
-if [[ ! -f "$SECRETS_FILE" ]]; then
-  echo "ERROR: $SECRETS_FILE not found. Run 02-create-secrets.sh first."
+# Load .env
+if [[ ! -f "$ROOT_DIR/.env" ]]; then
+  echo "ERROR: .env not found. Run 01/02 setup scripts first."
   exit 1
 fi
-set -a; source "$SECRETS_FILE"; set +a
+set -a; source "$ROOT_DIR/.env"; set +a
 
 KEYCLOAK_URL="http://keycloak.keycloak.svc.cluster.local:8080"
 ADMIN_USER="admin"

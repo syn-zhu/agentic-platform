@@ -7,7 +7,7 @@
 #
 # Requires:
 #   - AWS_PROFILE or valid kubeconfig context for EKS
-#   - ANTHROPIC_API_KEY env var (or stored in .secrets.env)
+#   - .env file with platform secrets (created by 01/02 setup scripts)
 #   - helmfile, kubectl, helm installed
 set -euo pipefail
 
@@ -22,10 +22,9 @@ for arg in "$@"; do
   esac
 done
 
-# ── Load secrets ──
-SECRETS_FILE="$ROOT_DIR/.secrets.env"
-if [[ -f "$SECRETS_FILE" ]]; then
-  set -a; source "$SECRETS_FILE"; set +a
+# ── Load .env ──
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a; source "$ROOT_DIR/.env"; set +a
 fi
 
 # ── Ensure AWS profile ──
@@ -60,7 +59,7 @@ fi
 echo "── Platform manifests ──"
 
 # AgentgatewayParameters (Langfuse tracing)
-BASIC_AUTH="${LANGFUSE_BASIC_AUTH:-$(echo -n 'pk:sk' | base64)}"
+BASIC_AUTH="${LANGFUSE_BASIC_AUTH:?ERROR: LANGFUSE_BASIC_AUTH not set in .env — run 02-create-secrets.sh first}"
 echo "Applying AgentgatewayParameters..."
 sed "s|<BASE64_PK_SK>|${BASIC_AUTH}|g" \
   "$ROOT_DIR/platform/manifests/agentgateway-parameters.yaml" | kubectl apply -f -
