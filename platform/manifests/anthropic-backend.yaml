@@ -1,0 +1,40 @@
+# Anthropic LLM Backend — routes kagent LLM traffic through agentgateway
+#
+# The <ANTHROPIC_API_KEY> placeholder is substituted by 04-post-install.sh.
+#
+# Annotations:
+#   platform.agentic.io/expose: "true"    — Kyverno auto-generates an HTTPRoute
+#   platform.agentic.io/expose-alias: "default" — path becomes /llm/default/anthropic
+#     (instead of /llm/agentgateway-system/anthropic)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-api-secret
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: "<ANTHROPIC_API_KEY>"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic
+  namespace: agentgateway-system
+  annotations:
+    platform.agentic.io/expose: "true"
+    platform.agentic.io/expose-alias: "default"
+spec:
+  ai:
+    provider:
+      anthropic:
+          model: claude-sonnet-4-20250514
+  policies:
+    ai:
+      routes:
+        /v1/messages: Messages
+        /v1/chat/completions: Completions
+        /v1/models: Models
+        "*": Passthrough
+    auth:
+      secretRef:
+        name: anthropic-api-secret

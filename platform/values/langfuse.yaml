@@ -1,0 +1,139 @@
+# Langfuse v3 — LLM Observability Platform
+# Chart: langfuse/langfuse v1.5.19
+#
+# Integration: All kagent + AgentGateway OTEL traces flow here.
+# Backing: AWS RDS (PostgreSQL), AWS ElastiCache (Redis), AWS S3, in-cluster ClickHouse.
+
+# ═══════════════════════════════════════════════════════
+# Disable built-in subcharts (using external services)
+# ═══════════════════════════════════════════════════════
+
+postgresql:
+  deploy: false
+  host: "agentic-platform-langfuse.csv6iaouck0m.us-east-1.rds.amazonaws.com"
+  port: 5432
+  auth:
+    username: langfuse
+    existingSecret: langfuse-db-credentials
+    secretKeys:
+      userPasswordKey: password
+    database: langfuse
+
+redis:
+  deploy: false
+  host: "master.agentic-platform-redis.eq2fwq.use1.cache.amazonaws.com"
+  port: 6379
+  tls:
+    enabled: true
+  auth:
+    password: ""
+    existingSecret: langfuse-redis-credentials
+    existingSecretPasswordKey: REDIS_AUTH
+
+clickhouse:
+  deploy: false
+  host: "clickhouse.langfuse.svc.cluster.local"
+  httpPort: 8123
+  nativePort: 9000
+  auth:
+    username: default
+    existingSecret: langfuse-clickhouse-credentials
+    existingSecretKey: CLICKHOUSE_PASSWORD
+
+s3:
+  deploy: false
+  bucket: "agentic-platform-langfuse-dev"
+  region: "us-east-1"
+  forcePathStyle: false
+  eventUpload:
+    bucket: "agentic-platform-langfuse-dev"
+    prefix: "events/"
+    region: "us-east-1"
+  mediaUpload:
+    bucket: "agentic-platform-langfuse-dev"
+    prefix: "media/"
+    region: "us-east-1"
+
+# ═══════════════════════════════════════════════════════
+# Langfuse Core Configuration
+# ═══════════════════════════════════════════════════════
+
+langfuse:
+  salt:
+    secretKeyRef:
+      name: langfuse-auth-secrets
+      key: SALT
+
+  encryptionKey:
+    secretKeyRef:
+      name: langfuse-auth-secrets
+      key: ENCRYPTION_KEY
+
+  nextauth:
+    url: "http://langfuse-web.langfuse.svc.cluster.local:3000"
+    secret:
+      secretKeyRef:
+        name: langfuse-auth-secrets
+        key: NEXTAUTH_SECRET
+
+  serviceAccount:
+    create: false
+    name: "langfuse-web"
+
+  additionalEnv:
+    # ── Auto-Provisioning: create default org/project/user on first boot ──
+    - name: LANGFUSE_INIT_ORG_ID
+      value: "platform-org"
+    - name: LANGFUSE_INIT_ORG_NAME
+      value: "Agentic Platform"
+    - name: LANGFUSE_INIT_PROJECT_ID
+      value: "platform-default"
+    - name: LANGFUSE_INIT_PROJECT_NAME
+      value: "Platform Default"
+    - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
+      valueFrom:
+        secretKeyRef:
+          name: langfuse-api-keys
+          key: PUBLIC_KEY
+    - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: langfuse-api-keys
+          key: SECRET_KEY
+    - name: LANGFUSE_INIT_USER_EMAIL
+      value: "admin@platform.internal"
+    - name: LANGFUSE_INIT_USER_NAME
+      value: "Platform Admin"
+    - name: LANGFUSE_INIT_USER_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: langfuse-auth-secrets
+          key: ADMIN_PASSWORD
+
+  # ── Web component ──
+  web:
+    replicas: 1
+    pod:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+  # ── Worker component ──
+  worker:
+    replicas: 1
+    pod:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+  service:
+    type: ClusterIP
+    port: 3000

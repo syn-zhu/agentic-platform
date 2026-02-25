@@ -1,0 +1,9 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+namespaceSelector:
+  - name: kagent-system
+    labels:
+      platform.agentic.io/component: kagent
+  - name: agentgateway-system
+    labels:
+      platform.agentic.io/component: agentgateway

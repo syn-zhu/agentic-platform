@@ -1,0 +1,46 @@
+# Istio AuthorizationPolicy — L4 tenant isolation enforced by ztunnel
+#
+# Only allows inbound traffic from:
+#   - Same namespace (agent-to-agent, agent-to-MCP server)
+#   - agentgateway-system (ingress proxy → tenant services)
+#   - kagent-system (controller manages agent pods)
+#   - istio-system (istiod config push, health probes)
+#   - monitoring (Prometheus metrics scraping)
+#
+# All other sources are denied — tenant-beta cannot reach tenant-alpha, etc.
+# This is enforced at L4 by ztunnel using SPIFFE identity, independent of
+# the NetworkPolicy (which provides defense-in-depth at the CNI layer).
+
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenant-isolation
+  namespace: {{ TENANT_NS }}
+spec:
+  action: ALLOW
+  rules:
+    # Same namespace
+    - from:
+        - source:
+            namespaces:
+              - {{ TENANT_NS }}
+    # AgentGateway ingress proxy + controller
+    - from:
+        - source:
+            namespaces:
+              - agentgateway-system
+    # Kagent controller + MCP servers
+    - from:
+        - source:
+            namespaces:
+              - kagent-system
+    # Istiod (config, health)
+    - from:
+        - source:
+            namespaces:
+              - istio-system
+    # Prometheus scraping
+    - from:
+        - source:
+            namespaces:
+              - monitoring

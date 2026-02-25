@@ -1,0 +1,22 @@
+cr:
+  create: true
+  namespace: istio-system
+  spec:
+    auth:
+      strategy: anonymous
+    external_services:
+      prometheus:
+        url: http://kube-prometheus-stack-prometheus.monitoring:9090
+      grafana:
+        url: http://kube-prometheus-stack-grafana.monitoring:80
+        internal_url: http://kube-prometheus-stack-grafana.monitoring:80
+      istio:
+        gateway_api_classes:
+          - class_name: istio
+            name: Istio
+          - class_name: istio-waypoint
+            name: Istio Waypoint
+          - class_name: agentgateway
+            name: AgentGateway Ingress
+          - class_name: agentgateway-waypoint
+            name: AgentGateway Waypoint

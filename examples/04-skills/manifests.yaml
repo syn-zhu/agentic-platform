@@ -1,0 +1,306 @@
+# Example 04: Skills
+#
+# Demonstrates kagent's skills system — packaged domain expertise distributed
+# as OCI container images, plus runtime skill discovery via the AgentRegistry.
+#
+#   - Pre-loaded skills: OCI images pulled at pod startup via init container,
+#     immediately available as instructions + executable scripts
+#   - Registry skills: browse and read published skills from the AgentRegistry
+#     catalog at runtime via list_skills / get_skill MCP tools
+#
+# Prerequisites:
+#   1. Platform deployed (platform/manifests/)
+#   2. AgentRegistry RemoteMCPServer applied (platform/manifests/agentregistry-remotemcpserver.yaml)
+#   3. (Optional) Publish a skill to the registry for list_skills demo:
+#        kubectl port-forward -n agentregistry svc/agentregistry 18080:8080
+#        curl -X POST http://localhost:18080/v0/skills \
+#          -H 'Content-Type: application/json' \
+#          -d '{"name":"promql-guide","title":"PromQL Query Guide","description":"Reference guide for writing PromQL queries.","version":"1.0.0","category":"observability"}'
+#
+# Deploy:  kubectl apply -f manifests.yaml
+# Cleanup: kubectl delete -f manifests.yaml
+
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-skills
+  labels:
+    platform.agentic.io/gateway-discovery: "true"
+    platform.agentic.io/tenant: "true"
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: agentgateway-waypoint
+    istio.io/ingress-use-waypoint: "true"
+---
+# ── RBAC ───────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-agent-developer-binding
+  namespace: example-skills
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-agent-developer
+subjects:
+  - kind: Group
+    name: "tenant-skills-developers"
+    apiGroup: rbac.authorization.k8s.io
+---
+# ── Network Policy ─────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-skills
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-skills
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    - from:
+        - ipBlock:
+            cidr: 169.254.7.127/32
+  egress:
+    # Same namespace (includes waypoint pod)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-skills
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Langfuse (tracing)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+    # kagent controller
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    # AgentGateway system (ingress proxy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    # AgentRegistry (for list_skills / get_skill)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentregistry
+    # Istio control plane
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # External traffic — HTTPS for LLM API
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# ── Istio Authorization Policy ─────────────────────────────────────────────────
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-skills
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - example-skills
+    - from:
+        - source:
+            namespaces:
+              - agentgateway-system
+    - from:
+        - source:
+            namespaces:
+              - kagent-system
+    - from:
+        - source:
+            namespaces:
+              - istio-system
+    - from:
+        - source:
+            namespaces:
+              - monitoring
+---
+# ── Per-Tenant Waypoint ────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-waypoint
+  namespace: example-skills
+  labels:
+    platform.agentic.io/component: agentgateway
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# ── LLM Configuration ─────────────────────────────────────────────────────────
+# Dummy secret — the real API key is injected by AgentGateway at the proxy layer.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-dummy
+  namespace: example-skills
+type: Opaque
+stringData:
+  api-key: "not-a-real-key"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: example-skills
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-20250514
+  apiKeySecret: anthropic-dummy
+  apiKeySecretKey: api-key
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/llm/default/anthropic
+---
+# ── Agent: Skill Agent ─────────────────────────────────────────────────────────
+# Uses skills.refs to pull an OCI-packaged skill at pod startup.
+# The controller adds an init container that runs `kagent-adk pull-skills`
+# to extract the image into /skills/. The ADK automatically registers
+# SkillsTool (discover/load instructions) and BashTool (execute scripts).
+#
+# Additionally references:
+#   - list_skills / get_skill from AgentRegistry for catalog browsing
+#   - k8s_get_resources / k8s_get_pod_logs / k8s_describe_resource / k8s_get_events
+#     from the kagent tool-server for Kubernetes cluster queries
+#
+# The skill's SKILL.md instructs the agent to use MCP tools for cluster
+# operations instead of direct K8s API calls — this avoids the need for
+# RBAC, srt sandbox networking, and ztunnel bypass configuration.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: skill-agent
+  namespace: example-skills
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  description: "Agent with pre-loaded operational skills and registry skill discovery"
+  skills:
+    refs:
+      - public.ecr.aws/w1e2w7d8/agentic-platform/skill-platform-runbook:v0.4.0
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a platform operations assistant with two sources of skills:
+
+      ## Pre-loaded Skills (available immediately)
+
+      You have skills loaded from container images at startup.
+      The available skill names are listed in the `skills` tool description.
+
+      To load a skill, call `skills` with the exact skill name as the command.
+      This returns the skill's full instructions. Then follow those instructions.
+
+      IMPORTANT: The only valid command values are actual skill names like
+      "skill-platform-runbook". NEVER pass "list", "get", "help", or any
+      other verb — these are NOT valid and will fail.
+
+      ## Registry Skills (discovered on demand)
+
+      You can also search the platform's skill catalog using `list_skills` and
+      read details with `get_skill`. These are published guides and runbooks
+      from the community and platform team.
+
+      ## Kubernetes Cluster Tools
+
+      You have MCP tools for querying the Kubernetes cluster:
+        - k8s_get_resources — list pods, deployments, services, etc.
+        - k8s_get_pod_logs — get logs from a pod
+        - k8s_describe_resource — describe any resource in detail
+        - k8s_get_events — get events from a namespace
+
+      Use these tools when a skill instructs you to check cluster state.
+      Do NOT try to call the Kubernetes API directly from bash scripts.
+
+      ## Guidelines
+
+      - When a user asks for operational help, load a pre-loaded skill first
+      - For broader discovery, search the registry catalog with `list_skills`
+      - Always load a skill's full instructions before executing its procedures
+      - Report command output clearly back to the user
+    tools:
+      # AgentRegistry — discover published skills in the catalog
+      - type: McpServer
+        mcpServer:
+          name: agentregistry
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          namespace: kagent-system
+          toolNames:
+            - list_skills
+            - get_skill
+      # Kubernetes tools — query cluster state via the kagent tool-server
+      # (runs in kagent-system with full RBAC, no sandbox networking needed)
+      - type: McpServer
+        mcpServer:
+          name: kagent-tool-server
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          namespace: kagent-system
+          toolNames:
+            - k8s_get_resources
+            - k8s_get_pod_logs
+            - k8s_describe_resource
+            - k8s_get_events
+    a2aConfig:
+      skills:
+        - id: operational-skills
+          name: Operational Skills
+          description: "Pre-loaded operational runbooks and registry skill discovery"
+          tags:
+            - skills
+            - operations
+            - runbook

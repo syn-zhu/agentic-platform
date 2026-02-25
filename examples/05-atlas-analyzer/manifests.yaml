@@ -1,0 +1,503 @@
+# Example 05: Atlas Performance Analyzer
+#
+# Demonstrates deploying a third-party MCP server (MongoDB) via the kmcp
+# operator and wiring it to an agent with structured performance analysis
+# procedures. The agent analyzes MongoDB Atlas clusters — slow queries,
+# index recommendations, alerts, and system health.
+#
+#   - MCPServer CRD: kmcp operator creates Deployment + Service automatically
+#   - Scoped tool access: read-only Atlas + database tools (write tools excluded)
+#   - Secret-based credentials: Atlas Service Account injected via envFrom
+#
+# Prerequisites:
+#   1. Platform deployed (platform/manifests/)
+#   2. IAM role "atlas-mcp-reader" with OIDC trust for this SA (see README)
+#   3. Atlas database user (AWS IAM type) mapped to the IAM role ARN
+#   4. Atlas API credentials secret created:
+#        kubectl create namespace example-atlas-analyzer
+#        kubectl create secret generic atlas-credentials \
+#          -n example-atlas-analyzer \
+#          --from-literal=MDB_MCP_API_CLIENT_ID="<client-id>" \
+#          --from-literal=MDB_MCP_API_CLIENT_SECRET="<client-secret>"
+#
+# Deploy:  kubectl apply -f manifests.yaml
+# Cleanup: kubectl delete -f manifests.yaml
+
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-atlas-analyzer
+  labels:
+    platform.agentic.io/gateway-discovery: "true"
+    platform.agentic.io/tenant: "true"
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: agentgateway-waypoint
+    istio.io/ingress-use-waypoint: "true"
+---
+# ── RBAC ───────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-agent-developer-binding
+  namespace: example-atlas-analyzer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-agent-developer
+subjects:
+  - kind: Group
+    name: "tenant-atlas-analyzer-developers"
+    apiGroup: rbac.authorization.k8s.io
+---
+# ── Network Policy ─────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-atlas-analyzer
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-atlas-analyzer
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    - from:
+        - ipBlock:
+            cidr: 169.254.7.127/32
+  egress:
+    # Same namespace (agent <-> MCP server communication)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-atlas-analyzer
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Langfuse (tracing)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+    # kagent controller
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    # AgentGateway system (LLM proxy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    # Istio control plane
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # External — HTTPS for Atlas REST API + MongoDB Atlas connections (TLS on 27017)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 27017
+---
+# ── Istio Authorization Policy ─────────────────────────────────────────────────
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-atlas-analyzer
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - example-atlas-analyzer
+    - from:
+        - source:
+            namespaces:
+              - agentgateway-system
+    - from:
+        - source:
+            namespaces:
+              - kagent-system
+    - from:
+        - source:
+            namespaces:
+              - istio-system
+    - from:
+        - source:
+            namespaces:
+              - monitoring
+---
+# ── Per-Tenant Waypoint ────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-waypoint
+  namespace: example-atlas-analyzer
+  labels:
+    platform.agentic.io/component: agentgateway
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# ── LLM Configuration ─────────────────────────────────────────────────────────
+# Dummy secret — the real API key is injected by AgentGateway at the proxy layer.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-dummy
+  namespace: example-atlas-analyzer
+type: Opaque
+stringData:
+  api-key: "not-a-real-key"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: example-atlas-analyzer
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-20250514
+  apiKeySecret: anthropic-dummy
+  apiKeySecretKey: api-key
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/llm/default/anthropic
+---
+# ── MongoDB MCP Server (deployed by kmcp operator) ────────────────────────────
+# The MCPServer CRD tells kmcp to create a Deployment + Service running the
+# official MongoDB MCP server in HTTP transport mode.
+#
+# Authentication is split into two layers:
+#   - Atlas API (management tools): Service Account credentials in atlas-credentials Secret
+#   - Database (query tools): AWS IAM via IRSA — no password needed
+#
+# The agent uses atlas-connect-cluster at runtime to dynamically discover and
+# connect to clusters (no hardcoded connection string). The serviceAccount block
+# configures IRSA so the MongoDB driver authenticates via MONGODB-AWS automatically.
+#
+# Prerequisites (create BEFORE applying this file):
+#
+#   1. IAM role for the MCP server pod:
+#        - Trust policy: EKS OIDC provider, SA "mongodb-mcp-server" in "example-atlas-analyzer"
+#        - No extra IAM policies needed (Atlas handles authZ via database user mapping)
+#
+#   2. Atlas database user (IAM type) mapped to the IAM role ARN:
+#        Atlas Console → Database Access → Add Database User → AWS IAM
+#        IAM Role ARN: arn:aws:iam::<account-id>:role/atlas-mcp-reader
+#        Roles: readAnyDatabase@admin (or scoped to your database)
+#
+#   3. Atlas API credentials secret:
+#        kubectl create secret generic atlas-credentials \
+#          -n example-atlas-analyzer \
+#          --from-literal=MDB_MCP_API_CLIENT_ID="<client-id>" \
+#          --from-literal=MDB_MCP_API_CLIENT_SECRET="<client-secret>"
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: mongodb-mcp-server
+  namespace: example-atlas-analyzer
+spec:
+  transportType: http
+  httpTransport:
+    targetPort: 3000
+    path: /mcp
+  deployment:
+    image: mongodb/mongodb-mcp-server:latest
+    port: 3000
+    env:
+      MDB_MCP_TRANSPORT: "http"
+      MDB_MCP_READ_ONLY: "true"
+      # Bind to all interfaces so the K8s Service can reach the pod.
+      # Default is 127.0.0.1 which only allows localhost connections.
+      MDB_MCP_HTTP_HOST: "0.0.0.0"
+      # No MDB_MCP_CONNECTION_STRING here — the agent uses atlas-connect-cluster
+      # at runtime to dynamically discover and connect to the target cluster.
+    secretRefs:
+      # Atlas API credentials only (MDB_MCP_API_CLIENT_ID + MDB_MCP_API_CLIENT_SECRET).
+      # Database auth is handled by IRSA, so no MDB_MCP_CONNECTION_STRING in the secret.
+      - name: atlas-credentials
+    # IRSA: the kmcp operator creates a ServiceAccount with this annotation,
+    # allowing the pod to assume the IAM role for MongoDB MONGODB-AWS auth.
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "arn:aws:iam::701761900767:role/atlas-mcp-reader"
+        eks.amazonaws.com/sts-regional-endpoints: "true"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+---
+# ── Agent: Atlas Performance Analyzer ──────────────────────────────────────────
+# Declarative agent with structured performance analysis procedures in the
+# system prompt. References the mongodb-mcp-server MCPServer CR for tool access.
+# Only read-only tools are included — write tools (create-index, atlas-create-
+# access-list) are excluded as defense-in-depth alongside MDB_MCP_READ_ONLY.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: atlas-analyzer
+  namespace: example-atlas-analyzer
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  description: "Analyzes MongoDB Atlas cluster performance — slow queries, index recommendations, alerts, and system health"
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a MongoDB Atlas performance analyst. You help users understand and
+      optimize the performance of their MongoDB Atlas clusters by analyzing slow
+      queries, indexes, alerts, and system metrics.
+
+      ## Tools
+
+      You have access to MongoDB Atlas management tools and database query tools
+      via the MongoDB MCP server.
+
+      ### Atlas Management Tools
+      - `atlas-list-orgs` — list all organizations
+      - `atlas-list-projects` — list projects in an organization
+      - `atlas-list-clusters` — list clusters in a project
+      - `atlas-inspect-cluster` — detailed cluster info (metrics, connection stats, config)
+      - `atlas-connect-cluster` — connect to an Atlas cluster for database queries
+      - `atlas-get-performance-advisor` — slow query logs and suggested indexes from Atlas Performance Advisor
+      - `atlas-list-alerts` — active and recent alerts for a project
+      - `atlas-inspect-access-list` — IP access list entries for a project
+      - `atlas-list-db-users` — database users configured for a project
+
+      ### Database Tools
+      These tools require an active database connection. Call `atlas-connect-cluster`
+      first to establish a connection before using any of these tools.
+
+      - `find` / `aggregate` / `count` — query data
+      - `explain` — get query execution plans
+      - `collection-schema` — infer schema for a collection
+      - `collection-indexes` — list indexes on a collection
+      - `list-databases` / `list-collections` — enumerate databases and collections
+      - `db-stats` — database-level statistics (storage, indexes, counts)
+      - `mongodb-logs` — retrieve MongoDB server logs
+
+      ## Performance Analysis Procedures
+
+      When a user asks you to analyze performance, follow these procedures depending
+      on what they need. Always start broad and drill down.
+
+      ### Connecting to a Cluster
+
+      Before using any database tools, you must connect to the cluster:
+
+      1. Call `atlas-list-clusters` to discover available clusters
+      2. Call `atlas-connect-cluster` with the cluster name to establish a connection
+      3. You only need to connect once per conversation — the connection persists
+
+      ### Procedure 1: Cluster Health Overview
+
+      Use this when the user asks for a general health check or overview.
+
+      1. Call `atlas-list-clusters` to identify the target cluster
+      2. Call `atlas-connect-cluster` to connect to it
+      3. Call `atlas-inspect-cluster` to get:
+         - Cluster tier, region, and MongoDB version
+         - Connection metrics (current connections vs. limit)
+         - IOPS and disk utilization
+         - Replication lag (if replica set)
+      4. Call `atlas-list-alerts` to check for active alerts
+      5. Call `db-stats` on the primary database to get storage and index sizes
+      6. Summarize findings:
+         - Cluster configuration and capacity
+         - Connection utilization percentage
+         - Active alerts and their severity
+         - Storage utilization
+         - Recommendations if any metrics are concerning
+
+      ### Procedure 2: Slow Query Analysis
+
+      Use this when the user reports slow queries or asks about query performance.
+
+      1. Call `atlas-get-performance-advisor` to retrieve:
+         - Slow query logs (queries exceeding the slow query threshold)
+         - Suggested indexes from the Performance Advisor
+      2. For each slow query pattern:
+         a. Identify the collection and operation type
+         b. Call `collection-indexes` on that collection to see existing indexes
+         c. Call `explain` on a representative query to get the execution plan
+         d. Check for COLLSCAN (full collection scan) vs. IXSCAN (index scan)
+      3. Cross-reference Performance Advisor suggestions with existing indexes
+      4. Report:
+         - Top slow query patterns with frequency and average execution time
+         - Whether each slow query has a supporting index
+         - Specific index recommendations (from Performance Advisor + your analysis)
+         - Expected improvement from each recommendation
+
+      ### Procedure 3: Index Analysis
+
+      Use this when the user asks about index optimization.
+
+      1. Call `list-collections` to enumerate all collections in the database
+      2. For each significant collection:
+         a. Call `collection-indexes` to list all indexes
+         b. Call `collection-schema` to understand the document structure
+         c. Call `db-stats` to understand collection size
+      3. Call `atlas-get-performance-advisor` for suggested indexes
+      4. Analyze:
+         - Missing indexes (queries doing COLLSCAN)
+         - Redundant indexes (prefix-overlapping compound indexes)
+         - Unused indexes (if stats are available)
+         - Index size relative to data size
+      5. Provide prioritized recommendations:
+         - High priority: missing indexes causing frequent slow queries
+         - Medium priority: redundant indexes wasting storage
+         - Low priority: optimization opportunities
+
+      ### Procedure 4: Query Optimization
+
+      Use this when the user wants to optimize a specific query.
+
+      1. Ask the user for the query or identify it from slow query logs
+      2. Call `explain` with the query to get the execution plan
+      3. Analyze the explain output:
+         - `winningPlan` — what strategy MongoDB chose
+         - `rejectedPlans` — alternative strategies considered
+         - `executionStats` — documents examined vs. returned (examine-to-return ratio)
+         - Stage analysis: COLLSCAN, IXSCAN, FETCH, SORT, SORT_KEY_GENERATOR
+      4. Call `collection-indexes` to see available indexes
+      5. Call `collection-schema` to understand the document structure
+      6. Recommend optimizations:
+         - Index creation or modification
+         - Query restructuring (e.g., covered queries, projection optimization)
+         - Aggregation pipeline reordering ($match early, $project before $group)
+
+      ### Procedure 5: Connection and Resource Monitoring
+
+      Use this when the user asks about connection issues or resource utilization.
+
+      1. Call `atlas-inspect-cluster` to get current metrics:
+         - Current connections vs. configured limit
+         - CPU utilization
+         - Memory utilization
+         - IOPS (read/write)
+         - Disk utilization
+         - Network throughput
+      2. Call `atlas-list-alerts` for capacity-related alerts
+      3. Analyze:
+         - Connection pool saturation (> 80% is concerning)
+         - CPU hotspots
+         - Memory pressure (page faults, cache eviction)
+         - I/O bottlenecks
+      4. Recommend:
+         - Connection pool tuning (app-side maxPoolSize)
+         - Cluster tier upgrade if resources are saturated
+         - Read preference adjustments for read-heavy workloads
+         - Sharding considerations if single-cluster limits are reached
+
+      ## Guidelines
+
+      - **Answer the user's actual question first.** If they ask a simple, direct
+        question (e.g., "are there any active alerts?"), call the relevant tool and
+        answer it directly. Do NOT run a full procedure unless the user asks for a
+        comprehensive analysis. The procedures above are templates for deep-dive
+        investigations, not mandatory workflows for every interaction.
+      - Always identify the target cluster and project first before drilling down
+      - Present metrics with context (e.g., "75% of connection limit" not just "750 connections")
+      - Prioritize recommendations by impact and effort
+      - When recommending index creation, explain WHY the index helps and estimate
+        the impact (e.g., "eliminates COLLSCAN on 2M documents, reducing query
+        time from ~500ms to ~5ms")
+      - Be specific about collection names, field paths, and query patterns
+      - If the Performance Advisor has no suggestions, that does not mean everything
+        is optimized — check manually with explain plans
+      - When reporting alerts, include severity and recommended actions
+      - All operations are read-only — you cannot create indexes, modify queries,
+        or change cluster configuration. Provide actionable recommendations that
+        the user can implement.
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: mongodb-mcp-server
+          kind: MCPServer
+          apiGroup: kagent.dev
+          namespace: example-atlas-analyzer
+          toolNames:
+            # Atlas Management (read-only)
+            - atlas-list-orgs
+            - atlas-list-projects
+            - atlas-list-clusters
+            - atlas-inspect-cluster
+            - atlas-connect-cluster
+            - atlas-get-performance-advisor
+            - atlas-list-alerts
+            - atlas-inspect-access-list
+            - atlas-list-db-users
+            # Database (read-only)
+            - find
+            - aggregate
+            - count
+            - explain
+            - collection-schema
+            - collection-indexes
+            - list-databases
+            - list-collections
+            - db-stats
+            - mongodb-logs
+    a2aConfig:
+      skills:
+        - id: atlas-performance-analysis
+          name: Atlas Performance Analysis
+          description: "Analyze MongoDB Atlas cluster performance — slow queries, index recommendations, alerts, and system health"
+          tags:
+            - mongodb
+            - atlas
+            - performance
+            - database
+        - id: atlas-query-optimization
+          name: Atlas Query Optimization
+          description: "Analyze and optimize MongoDB queries using explain plans, schema analysis, and index recommendations"
+          tags:
+            - mongodb
+            - queries
+            - optimization
+            - indexes

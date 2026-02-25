@@ -1,0 +1,50 @@
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: anthropic-api
+  labels:
+    istio.io/use-waypoint: agentgateway-waypoint
+spec:
+  hosts:
+    - api.anthropic.com
+  ports:
+    - name: http
+      number: 80
+      protocol: HTTP
+      targetPort: 443
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic-egress
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: claude-sonnet-4-20250514
+  policies:
+    ai:
+      routes:
+        "*": Passthrough
+        /v1/chat/completions: Completions
+        /v1/messages: Messages
+    auth:
+      secretRef:
+        name: anthropic-api-secret
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: anthropic-egress
+spec:
+  hostnames:
+    - api.anthropic.com
+  parentRefs:
+    - name: agentgateway-waypoint
+  rules:
+    - backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-egress

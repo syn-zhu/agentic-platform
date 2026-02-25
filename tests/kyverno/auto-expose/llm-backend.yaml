@@ -1,0 +1,13 @@
+# Input: AI AgentgatewayBackend with expose annotation → should generate LLM HTTPRoute
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: openai
+  namespace: tenant-beta
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4o

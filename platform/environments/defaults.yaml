@@ -1,0 +1,4 @@
+# Shared defaults across all environments
+clusterName: agentic-platform
+region: us-east-1
+langfuseEndpoint: "http://langfuse-web.langfuse.svc.cluster.local:3000"

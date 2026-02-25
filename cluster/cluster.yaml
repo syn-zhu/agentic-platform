@@ -1,0 +1,92 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: agentic-platform
+  region: us-east-1
+  version: "1.31"
+
+vpc:
+  nat:
+    gateway: Single
+
+iam:
+  withOIDC: true
+  serviceAccounts:
+    - metadata:
+        name: langfuse-web
+        namespace: langfuse
+      attachPolicyARNs:
+        - "arn:aws:iam::${ACCOUNT_ID}:policy/langfuse-s3-access"
+    - metadata:
+        name: langfuse-worker
+        namespace: langfuse
+      attachPolicyARNs:
+        - "arn:aws:iam::${ACCOUNT_ID}:policy/langfuse-s3-access"
+    - metadata:
+        name: ebs-csi-controller-sa
+        namespace: kube-system
+      wellKnownPolicies:
+        ebsCSIController: true
+
+addons:
+  - name: vpc-cni
+    version: latest
+    configurationValues: '{"enableNetworkPolicy":"true"}'
+  - name: coredns
+    version: latest
+  - name: kube-proxy
+    version: latest
+  - name: aws-ebs-csi-driver
+    version: latest
+
+managedNodeGroups:
+  # Platform node group: controllers, observability, Langfuse, Keycloak, system pods.
+  # UNTAINTED — this is the default landing zone for all workloads that don't
+  # need specialty nodes.  No tolerations required.
+  - name: platform
+    instanceType: t3.large
+    minSize: 1
+    maxSize: 3
+    desiredCapacity: 2
+    labels:
+      node-role: platform
+    volumeSize: 30
+    volumeType: gp3
+    tags:
+      role: platform
+
+  # Tenant node group: kagent agent pods, MCP servers, waypoint proxies,
+  # and any other tenant workloads.  Tainted so platform pods don't land here.
+  - name: agents
+    instanceType: t3.large
+    minSize: 1
+    maxSize: 3
+    desiredCapacity: 1
+    labels:
+      node-role: agents
+    taints:
+      - key: workload
+        value: agents
+        effect: NoSchedule
+    volumeSize: 30
+    volumeType: gp3
+    tags:
+      role: agents
+
+  # Gateway node group: AgentGateway data plane proxies
+  - name: gateway
+    instanceType: t3.medium
+    minSize: 1
+    maxSize: 2
+    desiredCapacity: 1
+    labels:
+      node-role: gateway
+    taints:
+      - key: workload
+        value: gateway
+        effect: NoSchedule
+    volumeSize: 20
+    volumeType: gp3
+    tags:
+      role: gateway

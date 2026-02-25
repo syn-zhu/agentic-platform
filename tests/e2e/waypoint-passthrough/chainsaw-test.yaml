@@ -1,0 +1,144 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: waypoint-passthrough
+spec:
+  description: |
+    Verifies that intra-namespace service traffic flows through the AgentGateway
+    waypoint proxy via the _waypoint-default passthrough route.
+
+    Self-contained: creates an ambient-enrolled namespace, deploys a waypoint
+    Gateway + test pods, runs assertions, then tears everything down.
+
+    Traffic flow:
+      test-client -> ztunnel -> HBONE:15008 -> waypoint (_waypoint-default) -> test-server
+
+  # Chainsaw creates this namespace (if it doesn't exist) and deletes it after.
+  namespaceTemplate:
+    metadata:
+      labels:
+        istio.io/dataplane-mode: ambient
+        istio.io/use-waypoint: agentgateway-waypoint
+        platform.agentic.io/gateway-discovery: "true"
+
+  timeouts:
+    apply: 30s
+    assert: 120s
+    exec: 60s
+    cleanup: 120s
+
+  # Collect diagnostics on any step failure
+  catch:
+    - podLogs:
+        selector: gateway.networking.k8s.io/gateway-name=agentgateway-waypoint
+        tail: 20
+    - events: {}
+
+  steps:
+    # ── Setup ──────────────────────────────────────────────────────────
+    - name: deploy-waypoint
+      try:
+        - apply:
+            file: waypoint.yaml
+
+    - name: deploy-test-fixtures
+      try:
+        - apply:
+            file: test-server.yaml
+        - apply:
+            file: test-client.yaml
+
+    - name: wait-for-waypoint
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              for i in $(seq 1 60); do
+                STATUS=$(kubectl get gateway agentgateway-waypoint -n $NAMESPACE \
+                  -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null)
+                if [ "$STATUS" = "True" ]; then
+                  echo "Programmed"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "Timeout waiting for Gateway to be Programmed"
+              exit 1
+
+    - name: wait-for-pods
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              kubectl wait -n $NAMESPACE pod/test-server --for=condition=Ready --timeout=90s
+              kubectl wait -n $NAMESPACE pod/test-client --for=condition=Ready --timeout=90s
+
+    # ── Tests ──────────────────────────────────────────────────────────
+    - name: passthrough-returns-200
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              kubectl exec -n $NAMESPACE test-client -- \
+                curl -s -o /dev/null -w '%{http_code}' \
+                http://test-server.$NAMESPACE.svc.cluster.local/
+            check:
+              ($stdout): "200"
+      catch:
+        - script:
+            content: |
+              echo "=== Waypoint logs ==="
+              kubectl logs -n $NAMESPACE -l gateway.networking.k8s.io/gateway-name=agentgateway-waypoint --tail=20
+
+    - name: passthrough-reaches-backend
+      try:
+        - script:
+            timeout: 15s
+            content: |
+              BODY=$(kubectl exec -n $NAMESPACE test-client -- \
+                curl -s http://test-server.$NAMESPACE.svc.cluster.local/)
+              echo "$BODY"
+              echo "$BODY" | grep -q nginx
+
+    - name: waypoint-log-confirms-default-route
+      try:
+        - script:
+            timeout: 15s
+            content: |
+              kubectl exec -n $NAMESPACE test-client -- \
+                curl -s -o /dev/null http://test-server.$NAMESPACE.svc.cluster.local/
+              sleep 1
+              LOGS=$(kubectl logs -n $NAMESPACE \
+                -l gateway.networking.k8s.io/gateway-name=agentgateway-waypoint \
+                --tail=5)
+              echo "$LOGS"
+              echo "$LOGS" | grep -q '_waypoint-default'
+
+    - name: outbound-uses-hbone
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              # Look at the client→waypoint leg (outbound), which completes quickly.
+              # The waypoint→server leg stays open (~65s keep-alive) so its log
+              # may not appear within the test window.
+              NODE=$(kubectl get pod -n $NAMESPACE test-client -o jsonpath='{.spec.nodeName}')
+              ZTUNNEL=$(kubectl get pods -n istio-system -l app=ztunnel \
+                -o jsonpath="{.items[?(@.spec.nodeName=='$NODE')].metadata.name}")
+              for i in $(seq 1 10); do
+                kubectl exec -n $NAMESPACE test-client -- \
+                  curl -s -o /dev/null http://test-server.$NAMESPACE.svc.cluster.local/
+                sleep 2
+                LINE=$(kubectl logs -n istio-system "$ZTUNNEL" --since=5m \
+                  | grep 'src.workload="test-client"' \
+                  | grep "dst.service=\"test-server.$NAMESPACE" \
+                  | grep ':15008' \
+                  | tail -1)
+                if [ -n "$LINE" ]; then
+                  echo "$LINE"
+                  exit 0
+                fi
+              done
+              echo "No HBONE connection log found after 10 attempts"
+              kubectl logs -n istio-system "$ZTUNNEL" --since=5m | grep "ztunnel-debug" | tail -5
+              exit 1

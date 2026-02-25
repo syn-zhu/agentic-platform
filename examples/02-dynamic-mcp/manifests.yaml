@@ -1,0 +1,221 @@
+# Example 02: Dynamic MCP
+#
+# Deploys a BYO ADK agent that discovers MCP servers in the AgentRegistry
+# catalog — connecting to remote servers directly or deploying stdio servers
+# on-demand to Kubernetes — and calls their tools dynamically at runtime.
+#
+# Prerequisites:
+#   1. Platform deployed (platform/manifests/)
+#   2. AgentRegistry seeded with MCP servers (SEED_FROM env var)
+#
+# Deploy:  kubectl apply -f manifests.yaml
+# Cleanup: kubectl delete -f manifests.yaml
+
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-mcp
+  labels:
+    platform.agentic.io/gateway-discovery: "true"
+    platform.agentic.io/tenant: "true"
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: agentgateway-waypoint
+    istio.io/ingress-use-waypoint: "true"
+---
+# ── RBAC ───────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-agent-developer-binding
+  namespace: example-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-agent-developer
+subjects:
+  - kind: Group
+    name: "tenant-mcp-developers"
+    apiGroup: rbac.authorization.k8s.io
+---
+# ── Network Policy ─────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-mcp
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-mcp
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    - from:
+        - ipBlock:
+            cidr: 169.254.7.127/32
+  egress:
+    # Same namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-mcp
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Langfuse (observability)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+    # kagent controller
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    # AgentGateway (LLM proxy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    # AgentRegistry (MCP catalog + deploy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentregistry
+    # Istio control plane
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # Dynamically deployed MCP servers (KMCP creates them in the agentregistry namespace)
+    # — already covered by the agentregistry egress rule above
+    # External HTTPS (container image pulls, etc.)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# ── Istio Authorization Policy ─────────────────────────────────────────────────
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-mcp
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - example-mcp
+    - from:
+        - source:
+            namespaces:
+              - agentgateway-system
+    - from:
+        - source:
+            namespaces:
+              - kagent-system
+    - from:
+        - source:
+            namespaces:
+              - istio-system
+    - from:
+        - source:
+            namespaces:
+              - monitoring
+---
+# ── Per-Tenant Waypoint ────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-waypoint
+  namespace: example-mcp
+  labels:
+    platform.agentic.io/component: agentgateway
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# ── LLM Secret ────────────────────────────────────────────────────────────────
+# Dummy secret — the real API key is injected by AgentGateway at the proxy layer.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-dummy
+  namespace: example-mcp
+type: Opaque
+stringData:
+  api-key: "not-a-real-key"
+---
+# ── Agent: MCP Deployer (BYO) ─────────────────────────────────────────────────
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: mcp-agent
+  namespace: example-mcp
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  type: BYO
+  description: "Discovers MCP servers in the registry, connects to remote servers or deploys stdio servers on-demand, and calls their tools dynamically"
+  byo:
+    deployment:
+      image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/mcp-deployer:v0.4.0
+      args: ["mcp_deployer"]
+      replicas: 1
+      env:
+        - name: KAGENT_URL
+          value: "http://kagent-controller.kagent-system.svc.cluster.local:8083"
+        - name: KAGENT_NAME
+          value: "mcp-agent"
+        - name: KAGENT_NAMESPACE
+          value: "example-mcp"
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-dummy
+              key: api-key
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi

@@ -1,0 +1,28 @@
+# AgentGateway Waypoint — per-tenant L7 proxy for Istio Ambient Mesh
+#
+# Enables AI-native L7 traffic processing for this tenant:
+#   - Receives traffic from ztunnel via HBONE (HTTP/2 CONNECT over mTLS) on port 15008
+#   - MCP/A2A protocol awareness
+#   - Tool-level authorization, prompt inspection, credential injection
+#   - Unmatched service traffic is passed through to the original destination
+#
+# ztunnel routes L7 traffic through this waypoint when the namespace
+# is labeled with: istio.io/use-waypoint=agentgateway-waypoint
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-waypoint
+  namespace: {{ TENANT_NS }}
+  labels:
+    platform.agentic.io/component: agentgateway
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+      allowedRoutes:
+        namespaces:
+          from: Same

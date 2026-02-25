@@ -1,0 +1,31 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: platform-workload-scheduling
+policies:
+- ../../../platform/manifests/kyverno-platform-scheduling.yaml
+resources:
+- platform-pod.yaml
+- platform-pod-with-selector.yaml
+- gateway-proxy-pod.yaml
+variables: variables.yaml
+results:
+- policy: platform-workload-scheduling
+  rule: inject-platform-scheduling
+  resources:
+  - kagent-system/controller-pod
+  kind: Pod
+  result: pass
+  patchedResources: expected-mutated-pod.yaml
+- policy: platform-workload-scheduling
+  rule: inject-platform-scheduling
+  resources:
+  - kagent-system/custom-scheduled-pod
+  kind: Pod
+  result: skip
+- policy: platform-workload-scheduling
+  rule: inject-platform-scheduling
+  resources:
+  - agentgateway-system/proxy-pod
+  kind: Pod
+  result: skip

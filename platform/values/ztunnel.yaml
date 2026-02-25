@@ -1,0 +1,20 @@
+# ztunnel — L4 node proxy (Rust DaemonSet)
+# Chart: istio/ztunnel v1.28.3
+#
+# Provides:
+#   - Automatic mTLS between all ambient-enrolled pods
+#   - SPIFFE identity (one per service account)
+#   - Connection-level authorization policies
+#   - HBONE tunneling to waypoint proxies
+#
+# Runs on every node. When a namespace is labeled with
+# istio.io/dataplane-mode=ambient, ztunnel transparently captures
+# all traffic from pods in that namespace.
+#
+# Must tolerate ALL node taints to run on every node in the cluster
+# (platform, gateway, and agents node groups).
+
+tolerations:
+  - key: workload
+    operator: Exists
+    effect: NoSchedule

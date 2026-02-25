@@ -1,0 +1,16 @@
+# Bind the tenant-agent-developer ClusterRole to the tenant team's group
+# in this namespace only. Tenants can create Agents, MCPServers, Gateways,
+# HTTPRoutes, and Backends within their namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-agent-developer-binding
+  namespace: {{ TENANT_NS }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-agent-developer
+subjects:
+  - kind: Group
+    name: "tenant-{{ TENANT_NAME }}-developers"
+    apiGroup: rbac.authorization.k8s.io

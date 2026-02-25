@@ -1,0 +1,29 @@
+# Default ModelConfig — platform-managed LLM configuration for tenants.
+#
+# Tenants reference this as "default-model-config" in their Agent specs.
+# The real API key is injected by agentgateway-proxy at the gateway layer.
+# The dummy secret below exists only because LiteLLM requires ANTHROPIC_API_KEY
+# to be non-empty in the pod environment (it validates before making HTTP calls).
+#
+# Deploy: kubectl apply -f modelconfig.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-dummy
+  namespace: {{ TENANT_NS }}
+type: Opaque
+stringData:
+  api-key: "not-a-real-key"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: {{ TENANT_NS }}
+spec:
+  provider: Anthropic
+  model: claude-3-5-sonnet
+  apiKeySecret: anthropic-dummy
+  apiKeySecretKey: api-key
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/llm/default/anthropic

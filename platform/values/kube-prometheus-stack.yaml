@@ -1,0 +1,57 @@
+# kube-prometheus-stack — Infrastructure monitoring
+# Prometheus scrapes kagent + agentgateway metrics.
+# Grafana provides dashboards + MCP tool endpoint for kagent's grafana-mcp agent.
+
+prometheus:
+  prometheusSpec:
+    # Scrape all ServiceMonitors/PodMonitors across all namespaces
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+grafana:
+  enabled: true
+  adminPassword: "admin"   # Override via secret in production
+
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 2Gi
+
+  # Auto-discover dashboards from all namespaces
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+
+  # Additional datasources can be added here
+  additionalDataSources: []
+
+alertmanager:
+  enabled: true
+
+# Node exporters run on all nodes — tolerate every custom taint
+nodeExporter:
+  enabled: true
+  tolerations:
+    - key: workload
+      operator: Exists
+      effect: NoSchedule

@@ -1,0 +1,64 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: auto-expose-httproute
+policies:
+- ../../../platform/manifests/kyverno-auto-expose.yaml
+resources:
+- a2a-agent.yaml
+- a2a-agent-no-annotation.yaml
+- llm-backend.yaml
+- mcp-backend.yaml
+- llm-backend-with-alias.yaml
+- llm-backend-no-annotation.yaml
+results:
+# 1. A2A agent with expose annotation → generates HTTPRoute
+- policy: auto-expose-httproute
+  rule: expose-a2a-agent
+  isGeneratingPolicy: true
+  resources:
+  - tenant-alpha/my-assistant
+  kind: Agent
+  result: pass
+  generatedResource: expected-a2a-route.yaml
+# 2. A2A agent WITHOUT annotation → skipped
+- policy: auto-expose-httproute
+  rule: expose-a2a-agent
+  resources:
+  - tenant-alpha/private-agent
+  kind: Agent
+  result: skip
+# 3. LLM backend with expose annotation → generates HTTPRoute
+- policy: auto-expose-httproute
+  rule: expose-llm-backend
+  isGeneratingPolicy: true
+  resources:
+  - tenant-beta/openai
+  kind: AgentgatewayBackend
+  result: pass
+  generatedResource: expected-llm-route.yaml
+# 4. MCP backend with expose annotation → generates HTTPRoute
+- policy: auto-expose-httproute
+  rule: expose-mcp-backend
+  isGeneratingPolicy: true
+  resources:
+  - tenant-alpha/my-mcp-tools
+  kind: AgentgatewayBackend
+  result: pass
+  generatedResource: expected-mcp-route.yaml
+# 5. LLM backend with alias → generates HTTPRoute with alias path
+- policy: auto-expose-httproute
+  rule: expose-llm-backend
+  isGeneratingPolicy: true
+  resources:
+  - agentgateway-system/anthropic
+  kind: AgentgatewayBackend
+  result: pass
+  generatedResource: expected-llm-alias-route.yaml
+# 6. Backend WITHOUT annotation → skipped
+- policy: auto-expose-httproute
+  rule: expose-llm-backend
+  resources:
+  - tenant-beta/internal-backend
+  kind: AgentgatewayBackend
+  result: skip

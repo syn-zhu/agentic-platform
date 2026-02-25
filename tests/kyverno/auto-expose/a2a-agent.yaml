@@ -1,0 +1,20 @@
+# Input: Agent CR with expose annotation → should generate A2A HTTPRoute
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: my-assistant
+  namespace: tenant-alpha
+  uid: "test-uid-001"
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  description: "Test agent"
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: "You are a test agent."
+    a2aConfig:
+      skills:
+        - id: test
+          name: Test
+          description: "Test skill"

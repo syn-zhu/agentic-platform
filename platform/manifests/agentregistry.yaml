@@ -1,0 +1,224 @@
+# AgentRegistry — centralized MCP server / agent / skill registry
+#
+# Provides:
+#   - REST API (port 8080): browse, search, publish registry entries
+#   - MCP Streamable HTTP (port 8090): expose registry tools to agents
+#   - Built-in UI at /registry
+#
+# Auth: OIDC via Keycloak (agents realm), tokens exchanged for short-lived
+#        Ed25519 JWTs with permission-based access control.
+#
+# Database: PostgreSQL 17 on shared RDS (agentregistry DB with pgvector).
+#
+# Image build:
+#   cd vendor/agentregistry
+#   touch .env
+#   docker build --platform linux/amd64 \
+#     -f docker/server.Dockerfile \
+#     -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.0 .
+#   docker push 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.0
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentregistry
+  namespace: agentregistry
+  labels:
+    app: agentregistry
+
+---
+# ClusterRole for discovering kagent CRDs across all namespaces.
+# AgentRegistry lists Agents, MCPServers, and RemoteMCPServers on-demand
+# to populate the "Deployments" view alongside its own managed deployments.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentregistry-discovery
+  labels:
+    app: agentregistry
+rules:
+  - apiGroups: ["kagent.dev"]
+    resources: ["agents", "mcpservers", "remotemcpservers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kagent.dev"]
+    resources: ["agents", "mcpservers", "remotemcpservers"]
+    verbs: ["create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentregistry-discovery
+  labels:
+    app: agentregistry
+subjects:
+  - kind: ServiceAccount
+    name: agentregistry
+    namespace: agentregistry
+roleRef:
+  kind: ClusterRole
+  name: agentregistry-discovery
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentregistry-config
+  namespace: agentregistry
+data:
+  # Server
+  AGENT_REGISTRY_SERVER_ADDRESS: ":8080"
+  AGENT_REGISTRY_MCP_PORT: "8090"
+
+  # OIDC — Keycloak agents realm
+  AGENT_REGISTRY_OIDC_ENABLED: "true"
+  AGENT_REGISTRY_OIDC_ISSUER: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+  AGENT_REGISTRY_OIDC_CLIENT_ID: "agentregistry"
+
+  # Permissions (all authenticated users get full access for now)
+  AGENT_REGISTRY_OIDC_READ_PERMISSIONS: "*"
+  AGENT_REGISTRY_OIDC_DEPLOY_PERMISSIONS: "*"
+  AGENT_REGISTRY_OIDC_EDIT_PERMISSIONS: "*"
+  AGENT_REGISTRY_OIDC_PUBLISH_PERMISSIONS: "*"
+  AGENT_REGISTRY_OIDC_PUSH_PERMISSIONS: "*"
+  AGENT_REGISTRY_OIDC_DELETE_PERMISSIONS: "*"
+
+  # Seed the registry with ~500 known MCP servers on first start
+  AGENT_REGISTRY_DISABLE_BUILTIN_SEED: "false"
+
+  # Embeddings / Semantic Search (Voyage AI voyage-4, 1024 dims via MongoDB)
+  AGENT_REGISTRY_EMBEDDINGS_ENABLED: "true"
+  AGENT_REGISTRY_EMBEDDINGS_PROVIDER: "openai"
+  AGENT_REGISTRY_EMBEDDINGS_MODEL: "voyage-4"
+  AGENT_REGISTRY_EMBEDDINGS_DIMENSIONS: "1024"
+  AGENT_REGISTRY_OPENAI_BASE_URL: "https://ai.mongodb.com/v1"
+  AGENT_REGISTRY_EMBEDDINGS_ON_PUBLISH: "true"
+
+  # Docker Compose reconciliation (not applicable in K8s)
+  AGENT_REGISTRY_RECONCILE_ON_STARTUP: "false"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentregistry
+  namespace: agentregistry
+  labels:
+    app: agentregistry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentregistry
+  template:
+    metadata:
+      labels:
+        app: agentregistry
+    spec:
+      serviceAccountName: agentregistry
+      nodeSelector:
+        node-role: platform
+      containers:
+        - name: server
+          image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.3
+          ports:
+            - name: http-api
+              containerPort: 8080
+            - name: mcp
+              containerPort: 8090
+          envFrom:
+            - configMapRef:
+                name: agentregistry-config
+            - secretRef:
+                name: agentregistry-db-credentials
+            - secretRef:
+                name: agentregistry-auth
+            - secretRef:
+                name: agentregistry-openai
+          startupProbe:
+            httpGet:
+              path: /v0/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /v0/health
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v0/health
+              port: 8080
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentregistry
+  namespace: agentregistry
+  labels:
+    app: agentregistry
+spec:
+  type: ClusterIP
+  selector:
+    app: agentregistry
+  ports:
+    - name: http-api
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+    - name: mcp
+      protocol: TCP
+      port: 8090
+      targetPort: 8090
+      appProtocol: kgateway.dev/mcp
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentregistry-route
+  namespace: agentregistry
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: platform
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /registry
+      backendRefs:
+        - name: agentregistry
+          port: 8080
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agentregistry
+  namespace: agentregistry
+  labels:
+    app: agentregistry
+spec:
+  selector:
+    matchLabels:
+      app: agentregistry
+  endpoints:
+    - port: http-api
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

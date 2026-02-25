@@ -1,0 +1,10 @@
+*.env
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.pem
+*.key
+secrets.yaml
+.claude/
+.memory/
+.DS_Store

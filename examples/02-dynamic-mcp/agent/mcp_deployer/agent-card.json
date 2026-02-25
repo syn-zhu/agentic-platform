@@ -1,0 +1,19 @@
+{
+  "name": "mcp-deployer",
+  "description": "Discovers MCP servers in the registry, deploys them on-demand to Kubernetes, and calls their tools dynamically",
+  "url": "localhost:8080",
+  "version": "0.0.1",
+  "capabilities": {
+    "streaming": true
+  },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [
+    {
+      "id": "dynamic-mcp",
+      "name": "Dynamic MCP Deployment",
+      "description": "Search the MCP server catalog, deploy servers to Kubernetes, and call their tools at runtime",
+      "tags": ["mcp", "deploy", "registry", "tools", "dynamic"]
+    }
+  ]
+}

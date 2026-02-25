@@ -1,0 +1,166 @@
+# kagent Controller + kmcp + Built-in Agents
+# Chart: oci://ghcr.io/kagent-dev/kagent/helm/kagent v0.7.13
+#
+# Integration:
+#   - OTEL tracing → Langfuse (via OTLP/HTTP with Basic auth)
+#   - Watch ALL namespaces (tenants self-service deploy Agents)
+#   - Anthropic Claude as default LLM provider
+#   - Grafana MCP tool connects to kube-prometheus-stack
+#   - kgateway-agent manages AgentGateway resources
+#
+# ── Patched controller image ──
+#
+# The controller is patched to propagate trace context (traceparent/tracestate)
+# end-to-end and enable A2A discovery for agent Services.
+# Source: vendor/kagent (branch fix/agent-service-a2a-appprotocol, PR #1297)
+#
+# Rebuild controller image:
+#   cd vendor/kagent
+#   make controller-manifests                  # regenerate CRDs + copy to helm chart
+#   make build-controller \
+#     DOCKER_REGISTRY=701761900767.dkr.ecr.us-east-1.amazonaws.com \
+#     DOCKER_REPO=agentic-platform \
+#     CONTROLLER_IMAGE_NAME=kagent-controller \
+#     CONTROLLER_IMAGE_TAG=v0.7.13-patched
+#
+# Deploy updated CRDs (from repo root):
+#   cd vendor/kagent
+#   helm upgrade --install kagent-crds helm/kagent-crds -n kagent-system
+#
+# Deploy updated controller (from agentic-platform/platform/):
+#   helmfile -l name=kagent apply
+
+# ═══════════════════════════════════════════════════════
+# Database: use in-cluster SQLite for simplicity
+# For production HA, switch to postgres with RDS
+# ═══════════════════════════════════════════════════════
+database:
+  type: sqlite
+  sqlite:
+    databaseName: kagent.db
+
+# ═══════════════════════════════════════════════════════
+# Controller
+# ═══════════════════════════════════════════════════════
+controller:
+  replicas: 1
+  loglevel: "info"
+
+  # Patched image — see build instructions at top of file
+  image:
+    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
+    repository: "agentic-platform/kagent-controller"
+    tag: "v0.7.13-patched"
+
+  # Watch ALL namespaces — simplifies tenant onboarding
+  # (no controller restart needed when adding new tenants)
+  watchNamespaces: []
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # OTEL auth is handled by the otel-collector (no need to inject headers into agent pods)
+  env: []
+
+# ═══════════════════════════════════════════════════════
+# LLM Provider — Anthropic Claude (platform default)
+# Tenants can override with their own ModelConfig in their namespace
+#
+# NOTE: The real Anthropic API key lives in agentgateway-system
+# (anthropic-api-secret). The gateway injects it when forwarding
+# requests upstream. Agents only need a dummy key to satisfy
+# LiteLLM's non-empty validation.
+# ═══════════════════════════════════════════════════════
+providers:
+  default: anthropic
+  anthropic:
+    provider: Anthropic
+    model: "sonnet-4"
+    apiKeySecretRef: kagent-anthropic
+    apiKeySecretKey: ANTHROPIC_API_KEY
+    apiKey: "not-a-real-key"
+    config:
+      baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/llm/default/anthropic
+
+# ═══════════════════════════════════════════════════════
+# kmcp subchart — manages MCPServer pod lifecycle
+# ═══════════════════════════════════════════════════════
+kmcp:
+  enabled: true
+  nameOverride: "kmcp"
+  image:
+    tag: "0.2.6"
+
+# ═══════════════════════════════════════════════════════
+# Built-in tool server
+# ═══════════════════════════════════════════════════════
+kagent-tools:
+  enabled: true
+  fullnameOverride: kagent-tools
+
+# ═══════════════════════════════════════════════════════
+# Built-in Agents (platform-level)
+# ═══════════════════════════════════════════════════════
+agents:
+  k8s-agent:
+    enabled: true
+  kgateway-agent:
+    enabled: true
+  observability-agent:
+    enabled: true
+  promql-agent:
+    enabled: true
+  helm-agent:
+    enabled: true
+  # Disabled — not needed in this environment
+  istio-agent:
+    enabled: false
+  argo-rollouts-agent:
+    enabled: false
+  cilium-policy-agent:
+    enabled: false
+  cilium-manager-agent:
+    enabled: false
+  cilium-debug-agent:
+    enabled: false
+
+# ═══════════════════════════════════════════════════════
+# MCP Tools
+# ═══════════════════════════════════════════════════════
+tools:
+  grafana-mcp:
+    enabled: true
+  querydoc:
+    enabled: true
+
+grafana-mcp:
+  grafana:
+    url: "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local:80/api"
+    secretRef: "grafana-mcp-token"
+
+# ═══════════════════════════════════════════════════════
+# OTEL Tracing → OTEL Collector → Langfuse
+# kagent agent pods use gRPC OTLP (hardcoded in kagent-core).
+# Langfuse only accepts HTTP OTLP. The collector bridges the two.
+# Auth is handled by the collector (not injected into agent pods).
+# ═══════════════════════════════════════════════════════
+otel:
+  tracing:
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: "otel-collector.langfuse.svc.cluster.local:4317"
+        timeout: 15
+        insecure: true
+  logging:
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: "otel-collector.langfuse.svc.cluster.local:4317"
+        timeout: 15
+        insecure: true

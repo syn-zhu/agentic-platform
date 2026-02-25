@@ -1,0 +1,2 @@
+# AgentGateway CRDs — no custom values needed
+# Installs: AgentgatewayBackend, AgentgatewayPolicy, AgentgatewayParameters CRDs

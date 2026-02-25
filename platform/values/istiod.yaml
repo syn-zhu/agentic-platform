@@ -1,0 +1,22 @@
+# Istiod — Istio control plane (ambient mode)
+# Chart: istio/istiod v1.28.3
+#
+# Ambient mode enables:
+#   - ztunnel L4 DaemonSet (mTLS, SPIFFE identity, connection-level authz)
+#   - Waypoint proxy support (L7, deployed per-namespace via Gateway API)
+#   - HBONE tunneling protocol for pod-to-pod encryption
+#
+# AgentGateway integrates as a pluggable waypoint proxy, replacing the default
+# Envoy waypoint with AI-native L7 processing (MCP/A2A protocol awareness).
+
+profile: ambient
+
+pilot:
+  # Reduced resource requests for dev/POC sizing
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi

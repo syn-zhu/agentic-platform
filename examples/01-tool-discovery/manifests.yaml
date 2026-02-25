@@ -1,0 +1,273 @@
+# Example 01: Agent Discovery & Invocation
+#
+# Deploys a platform assistant agent that discovers deployed agents via the
+# AgentRegistry deployment tracker, then dynamically invokes them via A2A.
+#
+# Prerequisites:
+#   1. Platform deployed (platform/manifests/)
+#   2. kagent-agents RemoteMCPServer applied (platform/manifests/kagent-agents-remotemcpserver.yaml)
+#
+# Deploy:  kubectl apply -f manifests.yaml
+# Cleanup: kubectl delete -f manifests.yaml
+
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-discovery
+  labels:
+    platform.agentic.io/gateway-discovery: "true"
+    platform.agentic.io/tenant: "true"
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: agentgateway-waypoint
+    istio.io/ingress-use-waypoint: "true"
+---
+# ── RBAC ───────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-agent-developer-binding
+  namespace: example-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-agent-developer
+subjects:
+  - kind: Group
+    name: "tenant-discovery-developers"
+    apiGroup: rbac.authorization.k8s.io
+---
+# ── Network Policy ─────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-discovery
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-discovery
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    - from:
+        - ipBlock:
+            cidr: 169.254.7.127/32
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-discovery
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentregistry
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# ── Istio Authorization Policy ─────────────────────────────────────────────────
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-discovery
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - example-discovery
+    - from:
+        - source:
+            namespaces:
+              - agentgateway-system
+    - from:
+        - source:
+            namespaces:
+              - kagent-system
+    - from:
+        - source:
+            namespaces:
+              - istio-system
+    - from:
+        - source:
+            namespaces:
+              - monitoring
+---
+# ── Per-Tenant Waypoint ────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-waypoint
+  namespace: example-discovery
+  labels:
+    platform.agentic.io/component: agentgateway
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# ── LLM Configuration ─────────────────────────────────────────────────────────
+# Dummy secret — the real API key is injected by AgentGateway at the proxy layer.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-dummy
+  namespace: example-discovery
+type: Opaque
+stringData:
+  api-key: "not-a-real-key"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: example-discovery
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-20250514
+  apiKeySecret: anthropic-dummy
+  apiKeySecretKey: api-key
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/llm/default/anthropic
+---
+# ── Agent: Platform Assistant ────────────────────────────────────────────────
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: platform-assistant
+  namespace: example-discovery
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  description: "Discovers deployed agents on the platform and invokes them via A2A"
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a platform assistant. You help users accomplish tasks by discovering
+      and dynamically invoking other AI agents running on the platform.
+
+      ## Tools
+
+      You have two tools:
+
+      ### Discovery (from AgentRegistry)
+      - `list_deployments` — lists all agents and MCP servers currently deployed on
+        the platform. Returns name, namespace, description, type, and status for
+        each deployment. Use this to find the right agent for a user's request.
+
+      ### Invocation (from kagent)
+      - `invoke_agent` — sends a task to a live agent via the A2A protocol. Takes:
+          - `agent`: reference in `namespace/name` format (e.g. `kagent-system/k8s-agent`)
+          - `task`: the task description in natural language
+
+      ## Workflow
+
+      When a user asks you to do something:
+
+      1. **Discover**: Call `list_deployments` to see what agents are available.
+      2. **Pick**: Choose the best agent for the task based on its description.
+         Agents have a `resourceType` of `Agent` and a `namespace/name` reference.
+      3. **Invoke**: Call `invoke_agent` with the agent's `namespace/name` and a
+         clear, specific task description.
+      4. **Report**: Summarize the result back to the user.
+
+      ## Guidelines
+
+      - Always discover first — call `list_deployments` before invoking.
+      - Only invoke agents (`resourceType: Agent`). MCP servers are tool servers
+        used by agents, not directly invokable by you.
+      - When invoking, write detailed task descriptions so the agent has full context.
+      - If no deployed agent matches the user's request, tell them what is available.
+      - You can invoke multiple agents if the task requires it.
+    tools:
+      # AgentRegistry — discover deployed agents and servers
+      - type: McpServer
+        mcpServer:
+          name: agentregistry
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          namespace: kagent-system
+          toolNames:
+            - list_deployments
+      # kagent built-in — invoke agents via A2A
+      - type: McpServer
+        mcpServer:
+          name: kagent-agents
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          namespace: kagent-system
+          toolNames:
+            - invoke_agent
+    a2aConfig:
+      skills:
+        - id: agent-discovery
+          name: Agent Discovery
+          description: "Discover agents and MCP servers currently deployed on the platform"
+          tags:
+            - registry
+            - discovery
+            - deployments
+        - id: agent-invocation
+          name: Agent Invocation
+          description: "Dynamically invoke other AI agents on the platform via A2A to accomplish tasks"
+          tags:
+            - a2a
+            - invocation
+            - delegation

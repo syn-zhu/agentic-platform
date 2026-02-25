@@ -1,0 +1,80 @@
+# AgentGateway controller + proxy — installed from agentgateway chart
+# with patched images for Istio ambient waypoint support.
+#
+# This single controller manages both:
+#   - "agentgateway" GatewayClass — ingress proxies (NLB, gateway nodes)
+#   - "agentgateway-waypoint" GatewayClass — waypoint proxies (ClusterIP, agent nodes)
+#
+# The agentgateway-waypoint GatewayClass is created manually (see
+# manifests/agentgateway-waypoint-parameters.yaml), not by the controller.
+#
+# ── Patched controller image ──
+#
+# The controller is built from vendor/agentgateway (branch waypoint) to support:
+#   - Istio ambient mesh waypoint proxies: HBONE/PROXY listener protocols,
+#     Protocol_HBONE xDS mapping, dataplaneMode label passthrough, dns-capture
+# Source: vendor/agentgateway (branch waypoint)
+#
+# Rebuild controller image:
+#   cd vendor/agentgateway
+#   GOARCH=amd64 make agentgateway-controller-docker VERSION=v0.12.0-waypoint
+#
+# Tag and push to ECR:
+#   docker tag ghcr.io/agentgateway-dev/agentgateway-controller:v0.12.0-waypoint \
+#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway-controller:v0.12.0-waypoint
+#   docker push \
+#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway-controller:v0.12.0-waypoint
+#
+# ── Patched proxy image ──
+#
+# The proxy is built from the same vendor/agentgateway repo (branch waypoint).
+# Source: vendor/agentgateway
+#
+# Rebuild proxy image:
+#   cd vendor/agentgateway
+#   docker build --platform linux/amd64 \
+#     --build-arg VERSION=0.12.0-waypoint --no-cache \
+#     --build-arg GIT_REVISION=$(git rev-parse --short HEAD) \
+#     -t agentgateway:0.12.0-waypoint .
+#
+# Tag and push to ECR:
+#   docker tag agentgateway:0.12.0-waypoint \
+#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway:0.12.0-waypoint
+#   docker push \
+#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway:0.12.0-waypoint
+#
+# ── Deploy ──
+#
+#   cd agentic-platform/platform
+#   helmfile -l name=agentgateway apply
+
+# Proxy (dataplane) image — used by all Gateway pods (ingress + waypoint)
+image:
+  registry: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform
+  tag: "0.12.0-waypoint"
+  pullPolicy: Always
+
+# Controller image
+controller:
+  image:
+    registry: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform
+    repository: agentgateway-controller
+    tag: "v0.12.0-waypoint"
+  replicaCount: 1
+  logLevel: info
+
+# Watch tenant namespaces with this label for Gateway, HTTPRoute, Backend resources
+discoveryNamespaceSelectors:
+  - matchLabels:
+      platform.agentic.io/gateway-discovery: "true"
+
+# Link GatewayClasses to their respective AgentgatewayParameters
+# The controller only auto-creates the "agentgateway" class;
+# "agentgateway-waypoint" is created manually but still needs its params ref here.
+gatewayClassParametersRefs:
+  agentgateway:
+    name: agentgateway-config
+    namespace: agentgateway-system
+  agentgateway-waypoint:
+    name: agentgateway-waypoint-config
+    namespace: agentgateway-system

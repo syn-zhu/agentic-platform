@@ -1,0 +1,16 @@
+# Input: MCP AgentgatewayBackend with expose annotation → should generate MCP HTTPRoute
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: my-mcp-tools
+  namespace: tenant-alpha
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  mcp:
+    targets:
+      - name: my-mcp-server
+        static:
+          host: my-mcp-server.tenant-alpha.svc.cluster.local
+          port: 80
+          protocol: SSE

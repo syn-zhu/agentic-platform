@@ -1,0 +1,64 @@
+# ClickHouse for Langfuse analytics (bitnami/clickhouse)
+# Runs in-cluster because no AWS managed ClickHouse equivalent exists.
+# 1 shard × 2 replicas for data redundancy, 3 keeper pods for quorum.
+#
+# NOTE: Istio ambient mesh wraps all pod-to-pod traffic in HBONE on port
+# 15008.  The bitnami chart's auto-generated NetworkPolicies only allow
+# application ports, so we must add port 15008 via extraIngress.
+
+global:
+  security:
+    allowInsecureImages: true
+
+replicaCount: 2
+shards: 1
+
+# Allow ztunnel HBONE traffic (port 15008) through NetworkPolicy
+networkPolicy:
+  extraIngress:
+    - ports:
+        - port: 15008
+          protocol: TCP
+
+image:
+  registry: public.ecr.aws
+  repository: bitnami/clickhouse
+
+keeper:
+  replicaCount: 3
+  networkPolicy:
+    extraIngress:
+      - ports:
+          - port: 15008
+            protocol: TCP
+  image:
+    registry: public.ecr.aws
+    repository: bitnami/clickhouse-keeper
+  persistence:
+    storageClass: gp3
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 512Mi
+auth:
+  username: default
+  existingSecret: langfuse-clickhouse-credentials
+  existingSecretKey: CLICKHOUSE_PASSWORD
+
+persistence:
+  enabled: true
+  storageClass: gp3
+  size: 10Gi
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1
+    memory: 2Gi
+

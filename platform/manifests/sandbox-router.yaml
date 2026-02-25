@@ -1,0 +1,167 @@
+# Sandbox Router — dynamic reverse proxy for agent sandboxes
+#
+# Routes requests to the correct Sandbox pod based on headers:
+#   X-Sandbox-ID:        sandbox name (required)
+#   X-Sandbox-Namespace: target namespace (default: "default")
+#   X-Sandbox-Port:      target port (default: 8080)
+#
+# Deployed as a platform-level service in agentgateway-system.
+# A single HTTPRoute directs all /sandbox/ traffic here, avoiding
+# the need for per-sandbox routes.
+#
+# Source: https://github.com/kubernetes-sigs/agent-sandbox/tree/main/clients/python/agentic-sandbox-client/sandbox-router
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandbox-router-code
+  namespace: agentgateway-system
+data:
+  sandbox_router.py: |
+    import httpx
+    from fastapi import FastAPI, Request, HTTPException
+    from fastapi.responses import StreamingResponse
+
+    app = FastAPI()
+
+    DEFAULT_SANDBOX_PORT = 8080
+    DEFAULT_NAMESPACE = "default"
+    client = httpx.AsyncClient(timeout=180.0)
+
+    @app.get("/healthz")
+    async def health_check():
+        return {"status": "ok"}
+
+    @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    async def proxy_request(request: Request, full_path: str):
+        sandbox_id = request.headers.get("X-Sandbox-ID")
+        if not sandbox_id:
+            raise HTTPException(status_code=400, detail="X-Sandbox-ID header is required.")
+
+        namespace = request.headers.get("X-Sandbox-Namespace", DEFAULT_NAMESPACE)
+        if not namespace.replace("-", "").isalnum():
+            raise HTTPException(status_code=400, detail="Invalid namespace format.")
+
+        try:
+            port = int(request.headers.get("X-Sandbox-Port", DEFAULT_SANDBOX_PORT))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid port format.")
+
+        target_host = f"{sandbox_id}.{namespace}.svc.cluster.local"
+        target_url = f"http://{target_host}:{port}/{full_path}"
+
+        print(f"Proxying request for sandbox '{sandbox_id}' in '{namespace}' to: {target_url}")
+
+        try:
+            headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+            req = client.build_request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=await request.body(),
+            )
+            resp = await client.send(req, stream=True)
+            return StreamingResponse(
+                content=resp.aiter_bytes(),
+                status_code=resp.status_code,
+                headers=resp.headers,
+            )
+        except httpx.ConnectError as e:
+            print(f"ERROR: Connection to sandbox at {target_url} failed: {e}")
+            raise HTTPException(status_code=502, detail=f"Could not connect to sandbox: {sandbox_id}")
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            raise HTTPException(status_code=500, detail="Internal proxy error.")
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-router
+  namespace: agentgateway-system
+  labels:
+    app: sandbox-router
+spec:
+  type: ClusterIP
+  selector:
+    app: sandbox-router
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-router
+  namespace: agentgateway-system
+  labels:
+    app: sandbox-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-router
+  template:
+    metadata:
+      labels:
+        app: sandbox-router
+    spec:
+      initContainers:
+        - name: install-deps
+          image: python:3.12-slim
+          command: ["pip", "install", "--no-cache-dir", "--target=/deps", "fastapi", "uvicorn", "httpx"]
+          volumeMounts:
+            - name: deps
+              mountPath: /deps
+      containers:
+        - name: router
+          image: python:3.12-slim
+          command:
+            - /bin/sh
+            - -c
+            - |
+              export PYTHONPATH=/deps:$PYTHONPATH
+              export PATH=/deps/bin:$PATH
+              cd /app
+              exec uvicorn sandbox_router:app --host 0.0.0.0 --port 8080
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+            - name: deps
+              mountPath: /deps
+              readOnly: true
+      volumes:
+        - name: code
+          configMap:
+            name: sandbox-router-code
+        - name: deps
+          emptyDir: {}

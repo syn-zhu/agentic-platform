@@ -1,0 +1,34 @@
+# RemoteMCPServer — exposes AgentRegistry MCP tools to all tenant agents
+#
+# AgentRegistry runs a dedicated MCP Streamable HTTP server on port 8090.
+# This RemoteMCPServer resource wraps that endpoint so kagent agents can
+# reference it as a tool source:
+#
+#   tools:
+#     - type: McpServer
+#       mcpServer:
+#         name: agentregistry
+#         kind: RemoteMCPServer
+#         apiGroup: kagent.dev
+#         namespace: kagent-system
+#
+# Available tools (16):
+#   list_servers, get_server, get_server_readme,
+#   list_agents, get_agent,
+#   list_skills, get_skill,
+#   deploy_server, deploy_agent,
+#   list_deployments, get_deployment, update_deployment_config, remove_deployment,
+#   registry_health, registry_version
+
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: agentregistry
+  namespace: kagent-system
+spec:
+  description: "Agent Registry — discover and deploy MCP servers, agents, and skills"
+  protocol: STREAMABLE_HTTP
+  url: http://agentregistry.agentregistry.svc.cluster.local:8090/mcp
+  timeout: 30s
+  allowedNamespaces:
+    from: All

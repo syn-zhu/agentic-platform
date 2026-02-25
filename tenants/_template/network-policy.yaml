@@ -1,0 +1,96 @@
+# Network isolation for tenant namespace.
+# Allows:
+#   Ingress: same namespace, kagent-system, agentgateway-system, istio-system (ztunnel),
+#            kubelet probes (169.254.7.127 — Istio CNI SNAT)
+#   Egress:  same namespace, DNS, langfuse, kagent-system, agentgateway-system,
+#            agentregistry, istio-system (ztunnel HBONE + istiod CA/xDS),
+#            external HTTPS (LLM APIs)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: {{ TENANT_NS }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from same namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ TENANT_NS }}
+    # Allow from kagent-system (controller reaches agent pods)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    # Allow from agentgateway-system (proxy reaches agent services)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    # Allow from istio-system (ztunnel proxies all mesh traffic)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # Allow kubelet health probes. Istio CNI rewrites the probe source
+    # to 169.254.7.127 (link-local SNAT), and VPC CNI tc-bpf enforces
+    # NetworkPolicy AFTER this rewrite, so we must allow this IP.
+    - from:
+        - ipBlock:
+            cidr: 169.254.7.127/32
+  egress:
+    # Allow to same namespace (agent pods → MCP server pods)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ TENANT_NS }}
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow to Langfuse (OTEL traces)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+    # Allow to kagent-system (tool server, controller API)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    # Allow to agentgateway-system
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    # Allow to agentregistry (registry API + MCP tools)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentregistry
+    # Allow to istio-system (ztunnel HBONE tunnels + istiod CA/xDS for waypoint)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # Allow external HTTPS (LLM APIs: api.anthropic.com, api.openai.com, etc.)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

@@ -1,0 +1,23 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kagent-traceprop
+policies:
+- ../../../platform/manifests/kyverno-kagent-traceprop.yaml
+resources:
+- declarative-agent.yaml
+- non-declarative-agent.yaml
+results:
+- policy: kagent-traceprop
+  rule: inject-disable-aiohttp
+  resources:
+  - tenant-alpha/test-agent
+  kind: Agent
+  result: pass
+  patchedResources: expected-mutated-agent.yaml
+- policy: kagent-traceprop
+  rule: inject-disable-aiohttp
+  resources:
+  - tenant-alpha/react-agent
+  kind: Agent
+  result: skip

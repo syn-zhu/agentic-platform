@@ -1,0 +1,33 @@
+# HTTPRoute for Sandbox Router via AgentGateway
+#
+# Routes /sandbox/* traffic on the platform listener (port 80) to the
+# sandbox-router service. The router uses X-Sandbox-ID / X-Sandbox-Namespace
+# headers to proxy to the correct sandbox pod.
+#
+# Uses the platform listener (not tenants) because this is platform
+# infrastructure — lives in agentgateway-system, same namespace as the Gateway.
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: sandbox-router-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-proxy
+      namespace: agentgateway-system
+      sectionName: platform
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /sandbox
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: sandbox-router
+          port: 8080

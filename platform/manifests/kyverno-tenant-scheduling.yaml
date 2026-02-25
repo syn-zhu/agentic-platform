@@ -1,0 +1,41 @@
+# Kyverno ClusterPolicy — auto-injects scheduling constraints for tenant workloads.
+#
+# Any Pod created in a namespace labeled platform.agentic.io/tenant=true
+# gets the agents node toleration + nodeSelector injected automatically.
+# This ensures tenant workloads always land on the agents node group,
+# without tenants needing to know about the infrastructure topology.
+#
+# Works together with the workload=agents:NoSchedule taint on agent nodes
+# and the workload=platform:NoSchedule taint on platform nodes.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: tenant-workload-scheduling
+  annotations:
+    policies.kyverno.io/title: Inject agents node scheduling on tenant Pods
+    policies.kyverno.io/category: Workload Isolation
+    policies.kyverno.io/description: >-
+      Auto-injects nodeSelector and tolerations into Pods created in tenant
+      namespaces (labeled platform.agentic.io/tenant=true) so they schedule
+      on the agents node group.
+spec:
+  rules:
+    - name: inject-agents-scheduling
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchLabels:
+                  platform.agentic.io/tenant: "true"
+      mutate:
+        patchStrategicMerge:
+          spec:
+            nodeSelector:
+              node-role: agents
+            tolerations:
+              - key: workload
+                operator: Equal
+                value: agents
+                effect: NoSchedule

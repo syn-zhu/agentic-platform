@@ -1,0 +1,11 @@
+# Input: AgentgatewayBackend WITHOUT expose annotation → should NOT generate HTTPRoute
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: internal-backend
+  namespace: tenant-beta
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4o-mini

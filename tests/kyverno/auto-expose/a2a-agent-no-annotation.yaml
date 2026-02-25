@@ -1,0 +1,13 @@
+# Input: Agent CR WITHOUT expose annotation → should NOT generate HTTPRoute
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: private-agent
+  namespace: tenant-alpha
+  uid: "test-uid-002"
+spec:
+  description: "Private agent with no expose annotation"
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: "You are a private agent."

@@ -1,0 +1,164 @@
+environments:
+  default:
+    values:
+      - environments/defaults.yaml
+  dev:
+    values:
+      - environments/defaults.yaml
+      - environments/dev.yaml
+---
+repositories:
+  - name: istio
+    url: https://istio-release.storage.googleapis.com/charts
+  - name: langfuse
+    url: https://langfuse.github.io/langfuse-k8s
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+  - name: bitnami
+    url: https://charts.bitnami.com/bitnami
+  - name: kyverno
+    url: https://kyverno.github.io/kyverno
+  - name: kiali
+    url: https://kiali.org/helm-charts
+
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 600
+
+releases:
+  # ════════════════════════════════════════════════════
+  # Phase 0: Istio Ambient Mesh (L4 foundation)
+  # ════════════════════════════════════════════════════
+
+  - name: istio-base
+    namespace: istio-system
+    chart: istio/base
+    version: "1.28.3"
+
+  - name: istiod
+    namespace: istio-system
+    chart: istio/istiod
+    version: "1.28.3"
+    values:
+      - values/istiod.yaml
+    needs:
+      - istio-system/istio-base
+
+  - name: istio-cni
+    namespace: istio-system
+    chart: istio/cni
+    version: "1.28.3"
+    values:
+      - values/istio-cni.yaml
+    needs:
+      - istio-system/istiod
+
+  - name: ztunnel
+    namespace: istio-system
+    chart: istio/ztunnel
+    version: "1.28.3"
+    values:
+      - values/ztunnel.yaml
+    needs:
+      - istio-system/istio-cni
+
+  - name: kiali-operator
+    namespace: kiali-operator
+    chart: kiali/kiali-operator
+    values:
+      - values/kiali.yaml
+    needs:
+      - istio-system/istiod
+
+  # ════════════════════════════════════════════════════
+  # Phase 1: CRDs (must install before controllers)
+  # ════════════════════════════════════════════════════
+
+  - name: agentgateway-crds
+    namespace: agentgateway-system
+    chart: ../vendor/agentgateway/controller/install/helm/agentgateway-crds
+    values:
+      - values/agentgateway-crds.yaml
+
+  - name: kagent-crds
+    namespace: kagent-system
+    chart: ../vendor/kagent/helm/kagent-crds
+    values:
+      - values/kagent-crds.yaml
+
+  # ════════════════════════════════════════════════════
+  # Phase 2: Observability Foundation
+  # ════════════════════════════════════════════════════
+
+  - name: clickhouse
+    namespace: langfuse
+    chart: bitnami/clickhouse
+    version: "9.4.3"
+    values:
+      - values/clickhouse.yaml
+
+  - name: langfuse
+    namespace: langfuse
+    chart: langfuse/langfuse
+    version: "1.5.19"
+    values:
+      - values/langfuse.yaml
+    needs:
+      - langfuse/clickhouse
+
+  - name: kube-prometheus-stack
+    namespace: monitoring
+    chart: prometheus-community/kube-prometheus-stack
+    values:
+      - values/kube-prometheus-stack.yaml
+
+  - name: keycloak
+    namespace: keycloak
+    chart: bitnami/keycloak
+    version: "25.2.0"
+    values:
+      - values/keycloak.yaml
+
+  # ════════════════════════════════════════════════════
+  # Phase 2b: Policy Engine
+  # ════════════════════════════════════════════════════
+
+  - name: kyverno
+    namespace: kyverno
+    chart: kyverno/kyverno
+    version: "3.3.4"
+    values:
+      - values/kyverno.yaml
+
+  # ════════════════════════════════════════════════════
+  # Phase 3: Controllers
+  # ════════════════════════════════════════════════════
+
+  # AgentGateway controller — manages both ingress and waypoint proxies.
+  # Installed from local vendor chart (patched for Istio ambient waypoint support).
+  # Source: vendor/agentgateway (branch waypoint).
+  # See values/agentgateway.yaml for build/push/deploy instructions.
+
+  - name: agentgateway
+    namespace: agentgateway-system
+    chart: ../vendor/agentgateway/controller/install/helm/agentgateway
+    values:
+      - values/agentgateway.yaml
+    needs:
+      - agentgateway-system/agentgateway-crds
+      - langfuse/langfuse
+
+  # kagent controller + kmcp + built-in agents.
+  # Uses patched controller image for trace context propagation and A2A discovery.
+  # See values/kagent.yaml for build/push/deploy instructions.
+
+  - name: kagent
+    namespace: kagent-system
+    chart: ../vendor/kagent/helm/kagent
+    values:
+      - values/kagent.yaml
+    needs:
+      - kagent-system/kagent-crds
+      - agentgateway-system/agentgateway
+      - langfuse/langfuse

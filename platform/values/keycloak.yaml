@@ -1,0 +1,68 @@
+# Keycloak — Platform Identity Provider
+# Chart: bitnami/keycloak v25.2.0
+#
+# Integration:
+#   - External PostgreSQL (shared RDS with Langfuse, separate 'keycloak' database)
+#   - AgentGateway JWT validation via AgentgatewayPolicy
+#   - Single "agents" realm with tenant claims for multi-tenancy
+
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: public.ecr.aws
+  repository: bitnami/keycloak
+
+# ═══════════════════════════════════════════════════════
+# Admin credentials
+# ═══════════════════════════════════════════════════════
+auth:
+  adminUser: admin
+  existingSecret: keycloak-admin-credentials
+  passwordSecretKey: admin-password
+
+# ═══════════════════════════════════════════════════════
+# Server mode
+# ═══════════════════════════════════════════════════════
+# POC: run in dev mode (HTTP). For production, set production: true
+# and configure TLS termination at the load balancer.
+production: false
+proxy: edge
+httpRelativePath: /
+
+# ═══════════════════════════════════════════════════════
+# External PostgreSQL (shared RDS instance)
+# ═══════════════════════════════════════════════════════
+postgresql:
+  enabled: false
+
+externalDatabase:
+  host: "agentic-platform-langfuse.csv6iaouck0m.us-east-1.rds.amazonaws.com"
+  port: 5432
+  user: keycloak
+  database: keycloak
+  existingSecret: keycloak-db-credentials
+  existingSecretPasswordKey: password
+
+# ═══════════════════════════════════════════════════════
+# Resources
+# ═══════════════════════════════════════════════════════
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ═══════════════════════════════════════════════════════
+# Service
+# ═══════════════════════════════════════════════════════
+service:
+  type: ClusterIP
+  ports:
+    http: 8080
+

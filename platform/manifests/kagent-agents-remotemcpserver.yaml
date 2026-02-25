@@ -1,0 +1,35 @@
+# RemoteMCPServer — exposes kagent's built-in agent-management MCP tools
+#
+# The kagent controller hosts a Streamable HTTP MCP server at /mcp that
+# provides tools for listing and invoking kagent agents via A2A.
+#
+# This RemoteMCPServer resource wraps that endpoint so agents in any
+# namespace can reference it as a tool source:
+#
+#   tools:
+#     - type: McpServer
+#       mcpServer:
+#         name: kagent-agents
+#         kind: RemoteMCPServer
+#         apiGroup: kagent.dev
+#         namespace: kagent-system
+#         toolNames:
+#           - invoke_agent
+#           - list_agents
+#
+# Available tools:
+#   invoke_agent — Invoke any kagent agent via A2A (input: namespace/name + task)
+#   list_agents  — List all accepted & deploymentReady agents in the cluster
+
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: kagent-agents
+  namespace: kagent-system
+spec:
+  description: "kagent agent invocation — list and invoke kagent agents via A2A"
+  protocol: STREAMABLE_HTTP
+  url: http://kagent-controller.kagent-system.svc.cluster.local:8083/mcp
+  timeout: 60s
+  allowedNamespaces:
+    from: All

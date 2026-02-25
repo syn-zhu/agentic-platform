@@ -1,0 +1,72 @@
+
+# AgentgatewayParameters — configures the ingress agentgateway data plane proxy
+# Linked via gatewayClassParametersRefs["agentgateway"] in agentgateway Helm values.
+#
+# Configures:
+#   - Load balancer (NLB with cross-zone balancing)
+#   - Proxy scheduling (nodeSelector + tolerations for gateway node group)
+#   - OTEL tracing to Langfuse with GenAI semantic conventions
+#   - Admin UI (ADMIN_ADDR), logging, and resource limits
+#
+# NOTE: This is for the INGRESS proxy only (north-south traffic).
+# Waypoint proxies use agentgateway-waypoint-config instead.
+#
+# Tracing is sent via gRPC OTLP to the OTEL collector, which bridges
+# to Langfuse over HTTP (with auth). This avoids the missing reqwest-client
+# issue in the agentgateway opentelemetry-otlp dependency.
+
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: agentgateway-config
+  namespace: agentgateway-system
+spec:
+  image:
+    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform"
+    repository: "agentgateway"
+    tag: "0.12.0-waypoint"
+  env:
+    - name: ADMIN_ADDR
+      value: "0.0.0.0:19000"
+  logging:
+    level: info
+    format: json
+  rawConfig:
+    config:
+      tracing:
+        otlpEndpoint: http://otel-collector.langfuse.svc.cluster.local:4317
+        otlpProtocol: grpc
+        # No auth headers — the OTEL collector handles Langfuse auth
+        randomSampling: true
+        fields:
+          add:
+            # Remap OpenTelemetry standard fields to Langfuse-expected conventions
+            span.name: '"openai.chat"'
+            gen_ai.system: 'llm.provider'
+            gen_ai.prompt: 'flattenRecursive(llm.prompt)'
+            gen_ai.completion: 'flattenRecursive(llm.completion)'
+            gen_ai.usage.completion_tokens: 'llm.outputTokens'
+            gen_ai.usage.prompt_tokens: 'llm.inputTokens'
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+  service:
+    metadata:
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+        service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+  deployment:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            node-role: gateway
+          tolerations:
+            - key: workload
+              operator: Equal
+              value: gateway
+              effect: NoSchedule

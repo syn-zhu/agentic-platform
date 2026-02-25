@@ -1,0 +1,24 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: tenant-workload-scheduling
+policies:
+- ../../../platform/manifests/kyverno-tenant-scheduling.yaml
+resources:
+- tenant-pod.yaml
+- non-tenant-pod.yaml
+variables: variables.yaml
+results:
+- policy: tenant-workload-scheduling
+  rule: inject-agents-scheduling
+  resources:
+  - tenant-alpha/test-pod
+  kind: Pod
+  result: pass
+  patchedResources: expected-mutated-pod.yaml
+- policy: tenant-workload-scheduling
+  rule: inject-agents-scheduling
+  resources:
+  - default/default-pod
+  kind: Pod
+  result: skip

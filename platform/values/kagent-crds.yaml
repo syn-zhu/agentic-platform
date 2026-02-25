@@ -1,0 +1,2 @@
+# kagent CRDs — no custom values needed
+# Installs: Agent, ModelConfig, RemoteMCPServer, MCPServer CRDs (+ kmcp CRDs as subchart)

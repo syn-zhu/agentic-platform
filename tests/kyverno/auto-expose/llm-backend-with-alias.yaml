@@ -1,0 +1,14 @@
+# Input: AI AgentgatewayBackend with expose + alias → path should use alias instead of namespace
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic
+  namespace: agentgateway-system
+  annotations:
+    platform.agentic.io/expose: "true"
+    platform.agentic.io/expose-alias: "default"
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: claude-sonnet-4-20250514

@@ -1,0 +1,16 @@
+# Istio CNI — node agent for transparent traffic redirection
+# Chart: istio/cni v1.28.3
+#
+# Runs as DaemonSet on every node. Configures iptables rules to redirect
+# traffic from ambient-enrolled pods through ztunnel without sidecars.
+#
+# Must tolerate ALL node taints to run on every node in the cluster
+# (platform, gateway, and agents node groups).
+
+profile: ambient
+
+cni:
+  tolerations:
+    - key: workload
+      operator: Exists
+      effect: NoSchedule

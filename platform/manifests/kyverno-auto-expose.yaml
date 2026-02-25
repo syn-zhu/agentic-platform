@@ -1,0 +1,183 @@
+# Kyverno ClusterPolicy — auto-generates HTTPRoutes for exposed resources.
+#
+# Opt-in: add annotation `platform.agentic.io/expose: "true"` to your Agent CR
+# or AgentgatewayBackend. Kyverno detects the resource type and generates an
+# HTTPRoute with the correct path prefix and URLRewrite filter.
+#
+# Generated paths:
+#   Agent CR (A2A)           → /a2a/{ns}/{name}
+#   AgentgatewayBackend (AI) → /llm/{ns}/{name}
+#   AgentgatewayBackend (MCP)→ /mcp/{ns}/{name}
+#
+# Optional: `platform.agentic.io/expose-alias` overrides the {ns} segment.
+# Example: expose-alias: "default" → /llm/default/anthropic
+#
+# All generated routes:
+#   - Attach to the agentgateway-proxy Gateway on port 80 (platform listener)
+#   - Include a URLRewrite filter that strips the path prefix
+#   - Are labeled platform.agentic.io/auto-generated=true for easy querying
+#   - Are kept in sync with the source resource (synchronize: true)
+#   - Are deleted when the source resource is deleted
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: auto-expose-httproute
+  annotations:
+    policies.kyverno.io/title: Auto-generate HTTPRoutes for exposed resources
+    policies.kyverno.io/category: AgentGateway Routing
+    policies.kyverno.io/description: >-
+      Watches Agent CRs and AgentgatewayBackends annotated with
+      platform.agentic.io/expose=true, and generates HTTPRoutes with
+      /{type}/{ns}/{name} path prefixes on the platform listener (port 80).
+spec:
+  rules:
+    # ─────────────────────────────────────────────────────
+    # Rule 1: A2A agents — Agent CR → /a2a/{ns}/{name}
+    # ─────────────────────────────────────────────────────
+    - name: expose-a2a-agent
+      skipBackgroundRequests: false
+      match:
+        any:
+          - resources:
+              kinds:
+                - kagent.dev/v1alpha2/Agent
+      preconditions:
+        all:
+          - key: "{{ request.object.metadata.annotations.\"platform.agentic.io/expose\" || '' }}"
+            operator: Equals
+            value: "true"
+      generate:
+        synchronize: true
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        name: "{{ request.object.metadata.name }}"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          metadata:
+            labels:
+              platform.agentic.io/auto-generated: "true"
+              platform.agentic.io/route-type: a2a
+            ownerReferences:
+              - apiVersion: kagent.dev/v1alpha2
+                kind: Agent
+                name: "{{ request.object.metadata.name }}"
+                uid: "{{ request.object.metadata.uid }}"
+          spec:
+            parentRefs:
+              - name: agentgateway-proxy
+                namespace: agentgateway-system
+                sectionName: platform
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: "/a2a/{{ request.object.metadata.annotations.\"platform.agentic.io/expose-alias\" || request.object.metadata.namespace }}/{{ request.object.metadata.name }}"
+                filters:
+                  - type: URLRewrite
+                    urlRewrite:
+                      path:
+                        type: ReplacePrefixMatch
+                        replacePrefixMatch: /
+                backendRefs:
+                  - name: "{{ request.object.metadata.name }}"
+                    port: 8080
+
+    # ─────────────────────────────────────────────────────
+    # Rule 2: LLM backends — AgentgatewayBackend (ai) → /llm/{ns}/{name}
+    # ─────────────────────────────────────────────────────
+    - name: expose-llm-backend
+      skipBackgroundRequests: false
+      match:
+        any:
+          - resources:
+              kinds:
+                - agentgateway.dev/v1alpha1/AgentgatewayBackend
+      preconditions:
+        all:
+          - key: "{{ request.object.metadata.annotations.\"platform.agentic.io/expose\" || '' }}"
+            operator: Equals
+            value: "true"
+          - key: "{{ request.object.spec.ai || '' }}"
+            operator: NotEquals
+            value: ""
+      generate:
+        synchronize: true
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        name: "{{ request.object.metadata.name }}"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          metadata:
+            labels:
+              platform.agentic.io/auto-generated: "true"
+              platform.agentic.io/route-type: llm
+          spec:
+            parentRefs:
+              - name: agentgateway-proxy
+                namespace: agentgateway-system
+                sectionName: platform
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: "/llm/{{ request.object.metadata.annotations.\"platform.agentic.io/expose-alias\" || request.object.metadata.namespace }}/{{ request.object.metadata.name }}"
+                filters:
+                  - type: URLRewrite
+                    urlRewrite:
+                      path:
+                        type: ReplacePrefixMatch
+                        replacePrefixMatch: /
+                backendRefs:
+                  - name: "{{ request.object.metadata.name }}"
+                    group: agentgateway.dev
+                    kind: AgentgatewayBackend
+
+    # ─────────────────────────────────────────────────────
+    # Rule 3: MCP backends — AgentgatewayBackend (mcp) → /mcp/{ns}/{name}
+    # ─────────────────────────────────────────────────────
+    - name: expose-mcp-backend
+      skipBackgroundRequests: false
+      match:
+        any:
+          - resources:
+              kinds:
+                - agentgateway.dev/v1alpha1/AgentgatewayBackend
+      preconditions:
+        all:
+          - key: "{{ request.object.metadata.annotations.\"platform.agentic.io/expose\" || '' }}"
+            operator: Equals
+            value: "true"
+          - key: "{{ request.object.spec.mcp || '' }}"
+            operator: NotEquals
+            value: ""
+      generate:
+        synchronize: true
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        name: "{{ request.object.metadata.name }}"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          metadata:
+            labels:
+              platform.agentic.io/auto-generated: "true"
+              platform.agentic.io/route-type: mcp
+          spec:
+            parentRefs:
+              - name: agentgateway-proxy
+                namespace: agentgateway-system
+                sectionName: platform
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: "/mcp/{{ request.object.metadata.annotations.\"platform.agentic.io/expose-alias\" || request.object.metadata.namespace }}/{{ request.object.metadata.name }}"
+                filters:
+                  - type: URLRewrite
+                    urlRewrite:
+                      path:
+                        type: ReplacePrefixMatch
+                        replacePrefixMatch: /
+                backendRefs:
+                  - name: "{{ request.object.metadata.name }}"
+                    group: agentgateway.dev
+                    kind: AgentgatewayBackend

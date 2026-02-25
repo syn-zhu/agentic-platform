@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ TENANT_NS }}
+  labels:
+    # Required: enables AgentGateway namespace discovery
+    platform.agentic.io/gateway-discovery: "true"
+    # Required: allows HTTPRoutes to attach to agentgateway-proxy
+    platform.agentic.io/tenant: "true"
+    # Istio Ambient Mesh: enroll tenant pods in L4 mesh (mTLS, SPIFFE identity)
+    istio.io/dataplane-mode: ambient
+    # Route L7 traffic through per-tenant AgentGateway waypoint proxy
+    istio.io/use-waypoint: agentgateway-waypoint
+    # Route north-south (ingress) traffic through the waypoint too.
+    # Without this, agentgateway-proxy (outside the mesh) connects directly
+    # to pod IPs via EDS, bypassing ztunnel and the waypoint.
+    istio.io/ingress-use-waypoint: "true"

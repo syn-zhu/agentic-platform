@@ -1,0 +1,98 @@
+# AgentgatewayParameters — waypoint-specific configuration
+# Linked via gatewayClassParametersRefs["agentgateway-waypoint"] in agentgateway Helm values.
+#
+# Configures per-tenant waypoint proxies for Istio Ambient Mesh L7 processing:
+#   - Istio integration (istiod CA certs, SPIFFE identity, trust domain)
+#   - ClusterIP service (mesh-internal only — no NLB)
+#   - Agent node scheduling (co-located with agent pods)
+#   - OTEL tracing to Langfuse
+#
+# Tracing is sent via gRPC OTLP to the OTEL collector, which bridges
+# to Langfuse over HTTP (with auth). This avoids the missing reqwest-client
+# issue in the agentgateway opentelemetry-otlp dependency.
+#
+# NOTE on HBONE waypoint traffic:
+#   ztunnel connects to waypoint proxies via HBONE (HTTP/2 CONNECT over mTLS)
+#   on port 15008 — this is the default behavior, no GatewayClass annotation needed.
+#   Traffic flow:
+#     client pod (ambient) → ztunnel → HBONE:15008 → waypoint pod (not ambient) → backend
+#   The proxy terminates HBONE and extracts the inner HTTP request.
+#   Unmatched requests are passed through to the original destination service.
+#
+# NOTE on dataplaneMode: none (not ambient):
+#   Waypoint proxies must NOT be enrolled in ambient mesh (dataplaneMode: none).
+#   With ambient enrollment, ztunnel's eBPF intercepts port 15008, preventing
+#   the waypoint from binding to it.  Native Istio waypoints also use none —
+#   the waypoint IS the L7 endpoint, it doesn't need ztunnel interception.
+#   Outbound connections (TLS origination to backends) go directly from the
+#   waypoint without ztunnel wrapping.
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: agentgateway-waypoint
+spec:
+  controllerName: agentgateway.dev/agentgateway
+  parametersRef:
+    group: agentgateway.dev
+    kind: AgentgatewayParameters
+    name: agentgateway-waypoint-config
+    namespace: agentgateway-system
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: agentgateway-waypoint-config
+  namespace: agentgateway-system
+spec:
+  istio:
+    caAddress: "https://istiod.istio-system.svc:15012"
+    trustDomain: "cluster.local"
+  image:
+    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform"
+    repository: "agentgateway"
+    tag: "0.12.0-waypoint"
+  logging:
+    level: info
+    format: json
+  rawConfig:
+    config:
+      tracing:
+        otlpEndpoint: http://otel-collector.langfuse.svc.cluster.local:4317
+        otlpProtocol: grpc
+        # No auth headers — the OTEL collector handles Langfuse auth
+        randomSampling: true
+        fields:
+          add:
+            span.name: '"openai.chat"'
+            gen_ai.system: 'llm.provider'
+            gen_ai.prompt: 'flattenRecursive(llm.prompt)'
+            gen_ai.completion: 'flattenRecursive(llm.completion)'
+            gen_ai.usage.completion_tokens: 'llm.outputTokens'
+            gen_ai.usage.prompt_tokens: 'llm.inputTokens'
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  service:
+    metadata:
+      annotations: {}  # No NLB — mesh-internal only
+    spec:
+      type: ClusterIP  # Override default LoadBalancer — waypoints are mesh-internal
+  deployment:
+    spec:
+      template:
+        metadata:
+          labels:
+            istio.io/dataplane-mode: none   # Waypoints must NOT be enrolled in ambient mesh
+        spec:
+          nodeSelector:
+            node-role: agents  # Run waypoints on agent nodes (co-located with agent pods)
+          tolerations:
+            - key: workload
+              operator: Equal
+              value: agents
+              effect: NoSchedule

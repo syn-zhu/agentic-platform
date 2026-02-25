@@ -1,0 +1,33 @@
+# AgentGateway Proxy — multi-tenant entry point
+#
+# All HTTPRoutes (platform + tenant) attach to this Gateway on port 80.
+# Kyverno auto-generates HTTPRoutes for resources annotated with
+# platform.agentic.io/expose=true, so tenants never create routes manually.
+#
+# The GatewayClass "agentgateway" is auto-created by the agentgateway controller.
+# All data plane proxies inherit Langfuse tracing from AgentgatewayParameters.
+#
+# Protocol detection is automatic via appProtocol on backend Services:
+#   - kgateway.dev/a2a  → A2A agent traffic
+#   - kgateway.dev/mcp  → MCP server traffic
+#   - (none / AgentgatewayBackend) → AI/LLM traffic
+#
+# Generated path convention:
+#   /a2a/{ns}/{name}  — A2A agents
+#   /llm/{ns}/{name}  — LLM backends (AI)
+#   /mcp/{ns}/{name}  — MCP backends
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+  - name: platform
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: All

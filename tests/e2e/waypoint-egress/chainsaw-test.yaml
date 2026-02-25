@@ -1,0 +1,163 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: waypoint-egress
+spec:
+  description: |
+    Verifies that egress traffic to external AI APIs flows through the
+    AgentGateway waypoint with TLS origination and credential injection.
+
+    Self-contained: creates an ambient-enrolled namespace, deploys a waypoint
+    Gateway + egress resources, runs assertions, then tears everything down.
+
+    Requires ANTHROPIC_API_KEY environment variable to be set.
+
+    Traffic flow:
+      test-client (HTTP:80) -> ztunnel -> HBONE:15008 -> waypoint
+        -> TLS origination -> api.anthropic.com:443
+
+  # Chainsaw creates this namespace (if it doesn't exist) and deletes it after.
+  namespaceTemplate:
+    metadata:
+      labels:
+        istio.io/dataplane-mode: ambient
+        istio.io/use-waypoint: agentgateway-waypoint
+        platform.agentic.io/gateway-discovery: "true"
+
+  timeouts:
+    apply: 30s
+    assert: 120s
+    exec: 60s
+    cleanup: 120s
+
+  # Collect diagnostics on any step failure
+  catch:
+    - podLogs:
+        selector: gateway.networking.k8s.io/gateway-name=agentgateway-waypoint
+        tail: 20
+    - events: {}
+
+  steps:
+    # ── Setup ──────────────────────────────────────────────────────────
+    - name: create-api-secret
+      try:
+        - script:
+            content: |
+              if [ -z "$ANTHROPIC_API_KEY" ]; then
+                echo "ERROR: ANTHROPIC_API_KEY environment variable is not set"
+                exit 1
+              fi
+              kubectl create secret generic anthropic-api-secret \
+                -n $NAMESPACE \
+                --from-literal=Authorization="$ANTHROPIC_API_KEY"
+
+    - name: deploy-waypoint
+      try:
+        - apply:
+            file: waypoint.yaml
+
+    - name: deploy-egress-resources
+      try:
+        - apply:
+            file: egress-anthropic.yaml
+
+    - name: deploy-test-client
+      try:
+        - apply:
+            file: test-client.yaml
+
+    - name: wait-for-waypoint
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              for i in $(seq 1 60); do
+                STATUS=$(kubectl get gateway agentgateway-waypoint -n $NAMESPACE \
+                  -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null)
+                if [ "$STATUS" = "True" ]; then
+                  echo "Programmed"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "Timeout waiting for Gateway to be Programmed"
+              exit 1
+
+    - name: wait-for-pod
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              kubectl wait -n $NAMESPACE pod/test-client --for=condition=Ready --timeout=90s
+
+    # ── Tests ──────────────────────────────────────────────────────────
+
+    # Verify egress resources exist
+    - name: egress-resources-exist
+      try:
+        - assert:
+            resource:
+              apiVersion: networking.istio.io/v1
+              kind: ServiceEntry
+              metadata:
+                name: anthropic-api
+        - assert:
+            resource:
+              apiVersion: agentgateway.dev/v1alpha1
+              kind: AgentgatewayBackend
+              metadata:
+                name: anthropic-egress
+        - assert:
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                name: anthropic-egress
+
+    # Anthropic API request returns 200 through waypoint
+    - name: anthropic-egress-returns-200
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              kubectl exec -n $NAMESPACE test-client -- \
+                curl -s -o /dev/null -w '%{http_code}' \
+                -X POST http://api.anthropic.com/v1/messages \
+                -H 'Content-Type: application/json' \
+                -H 'anthropic-version: 2023-06-01' \
+                -d '{"model":"claude-sonnet-4-20250514","max_tokens":5,"messages":[{"role":"user","content":"Say ok"}]}'
+            check:
+              ($stdout): "200"
+      catch:
+        - script:
+            content: |
+              echo "=== Waypoint logs ==="
+              kubectl logs -n $NAMESPACE -l gateway.networking.k8s.io/gateway-name=agentgateway-waypoint --tail=20
+
+    # Waypoint logs show the anthropic-egress route was matched
+    - name: waypoint-log-confirms-egress-route
+      try:
+        - script:
+            timeout: 15s
+            content: |
+              LOGS=$(kubectl logs -n $NAMESPACE \
+                -l gateway.networking.k8s.io/gateway-name=agentgateway-waypoint \
+                --tail=10)
+              echo "$LOGS"
+              echo "$LOGS" | grep -q 'anthropic-egress'
+
+    # Waypoint logs show LLM protocol detection
+    - name: waypoint-detects-llm-protocol
+      try:
+        - script:
+            timeout: 15s
+            content: |
+              LOGS=$(kubectl logs -n $NAMESPACE \
+                -l gateway.networking.k8s.io/gateway-name=agentgateway-waypoint \
+                --tail=10)
+              echo "$LOGS"
+              echo "$LOGS" | grep -q '"protocol":"llm"'
+
+    # TODO: Add prompt-guard-blocks-credit-card test once prompt guard is configured.
+    # It should verify that requests containing credit card numbers (e.g. 4111-1111-1111-1111)
+    # are rejected with a 4xx status code.

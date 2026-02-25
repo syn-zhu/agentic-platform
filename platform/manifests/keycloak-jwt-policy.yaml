@@ -1,0 +1,34 @@
+# AgentgatewayPolicy — JWT validation using Keycloak "agents" realm
+#
+# Attaches to the Gateway to validate JWT tokens issued by Keycloak.
+# The gateway validates the token signature via JWKS, checks the issuer
+# and audience, then makes claims available for CEL-based authorization.
+#
+# Apply this AFTER Keycloak is running and the "agents" realm is configured.
+# Do NOT apply during initial Keycloak deployment — verify Keycloak first.
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agent-gateway
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+          audiences:
+            - "agent-gateway"
+          jwks:
+            remote:
+              jwksPath: "/realms/agents/protocol/openid-connect/certs"
+    authorization:
+      policy:
+        matchExpressions:
+          # Require a valid tenant claim exists in the JWT
+          - "has(jwt.claims.tenant)"
