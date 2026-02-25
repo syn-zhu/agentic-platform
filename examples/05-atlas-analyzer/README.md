@@ -12,7 +12,43 @@ An agent that analyzes MongoDB Atlas cluster performance — slow queries, index
 
 ## Architecture
 
-![Architecture](architecture.drawio.svg)
+```
+                    example-atlas-analyzer namespace
+┌────────────────────────────────────────────────────────────┐
+│                                                            │
+│  MCPServer CR ──(kmcp operator)──► Deployment + Service    │
+│  "mongodb-mcp-server"              mongodb-mcp-server      │
+│                                    ┌────────────────────┐  │
+│                                    │ mongodb/mongodb-    │  │
+│                                    │ mcp-server:latest   │  │
+│                                    │                     │  │
+│                                    │ HTTP transport :3000│  │
+│                                    │ READ_ONLY = true    │  │
+│                                    │                     │  │
+│                                    │ Atlas API: Secret   │  │
+│                                    │ DB auth:  IRSA/IAM  │  │
+│                                    └─────────┬──────────┘  │
+│                                              │ /mcp        │
+│                                              │             │
+│  Agent CR                                    │             │
+│  "atlas-analyzer" ───────(MCP over HTTP)─────┘             │
+│  ┌──────────────────────────────────────────────────┐      │
+│  │  5 analysis procedures in system prompt          │      │
+│  │                                                  │      │
+│  │  Atlas tools:  atlas-list-clusters,              │      │
+│  │    atlas-inspect-cluster,                        │      │
+│  │    atlas-get-performance-advisor,                │      │
+│  │    atlas-list-alerts, ...                        │      │
+│  │                                                  │      │
+│  │  DB tools:  find, aggregate, explain,            │      │
+│  │    collection-indexes, db-stats, ...             │      │
+│  └──────────────────────────────────────────────────┘      │
+└────────────────────────────────────────────────────────────┘
+         │                             │
+         ▼ (A2A via waypoint)          ▼ (HTTPS + TLS)
+   AgentGateway proxy           cloud.mongodb.com
+                                + Atlas cluster endpoint
+```
 
 **How authentication works:**
 - **Atlas API** (management tools like `atlas-list-clusters`): OAuth2 client credentials from the `atlas-credentials` Secret (`MDB_MCP_API_CLIENT_ID` + `MDB_MCP_API_CLIENT_SECRET`), injected via `envFrom`.
