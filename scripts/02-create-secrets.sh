@@ -38,9 +38,10 @@ ENCRYPTION_KEY=$(openssl rand -hex 32)
 ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' | head -c 20)
 CLICKHOUSE_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' | head -c 20)
 
-# Langfuse API keys (deterministic names for easy reference)
-LANGFUSE_PUBLIC_KEY="pk-lf-platform-$(openssl rand -hex 8)"
-LANGFUSE_SECRET_KEY="sk-lf-platform-$(openssl rand -hex 16)"
+# Langfuse API keys — match Langfuse's internal format (pk-lf-<uuid>, sk-lf-<uuid>).
+# These are passed to Langfuse via LANGFUSE_INIT_* env vars so it registers them on first boot.
+LANGFUSE_PUBLIC_KEY="pk-lf-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+LANGFUSE_SECRET_KEY="sk-lf-$(uuidgen | tr '[:upper:]' '[:lower:]')"
 
 # Base64 encode for Basic auth: public_key:secret_key
 LANGFUSE_BASIC_AUTH=$(echo -n "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" | base64 -w0 2>/dev/null || echo -n "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" | base64)

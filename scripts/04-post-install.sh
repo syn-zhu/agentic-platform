@@ -48,12 +48,8 @@ echo "Applying platform RBAC..."
 kubectl apply -f "$ROOT_DIR/platform/manifests/platform-rbac.yaml"
 
 # ── 6. OTEL Collector (gRPC-to-HTTP bridge for kagent + agentgateway → Langfuse) ──
+# NOTE: otel-collector-auth secret is created by 02-create-secrets.sh — not recreated here.
 echo "Applying OTEL Collector..."
-BASIC_AUTH="${LANGFUSE_BASIC_AUTH:-$(echo -n 'pk:sk' | base64)}"
-kubectl create secret generic otel-collector-auth \
-  --namespace langfuse \
-  --from-literal=AUTH_HEADER="Basic ${BASIC_AUTH}" \
-  --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "$ROOT_DIR/platform/manifests/otel-collector.yaml"
 
 # ── 7. Agent Sandbox (isolated agent runtimes) ──
