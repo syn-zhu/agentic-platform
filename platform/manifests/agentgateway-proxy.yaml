@@ -24,6 +24,13 @@ metadata:
   namespace: agentgateway-system
 spec:
   gatewayClassName: agentgateway
+  # Internal NLB — no public internet exposure.
+  # All agent traffic is in-cluster (via ClusterIP DNS).
+  # The NLB is only needed for the Gateway API contract.
+  infrastructure:
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+      service.beta.kubernetes.io/aws-load-balancer-internal: "true"
   listeners:
   - name: platform
     protocol: HTTP
