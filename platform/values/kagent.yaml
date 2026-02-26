@@ -8,10 +8,10 @@
 #   - Grafana MCP tool connects to kube-prometheus-stack
 #   - kgateway-agent manages AgentGateway resources
 #
-# ── Patched controller image ──
+# ── Patched images ──
 #
-# The controller is patched to propagate trace context (traceparent/tracestate)
-# end-to-end and enable A2A discovery for agent Services.
+# Both the controller and agent images are patched for end-to-end trace
+# context propagation (traceparent/tracestate) and A2A discovery.
 # Source: vendor/kagent (branch fix/agent-service-a2a-appprotocol, PR #1297)
 #
 # Rebuild controller image:
@@ -23,11 +23,17 @@
 #     CONTROLLER_IMAGE_NAME=kagent-controller \
 #     CONTROLLER_IMAGE_TAG=v0.7.13-patched
 #
+# Rebuild agent image (thin patch on upstream):
+#   cd vendor/kagent
+#   docker buildx build --platform linux/amd64 --push \
+#     -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/kagent-app:v0.7.13-patched \
+#     -f python/Dockerfile.patch ./python
+#
 # Deploy updated CRDs (from repo root):
 #   cd vendor/kagent
 #   helm upgrade --install kagent-crds helm/kagent-crds -n kagent-system
 #
-# Deploy updated controller (from agentic-platform/platform/):
+# Deploy updated controller + agent image (from agentic-platform/platform/):
 #   helmfile -l name=kagent apply
 
 # ═══════════════════════════════════════════════════════
@@ -50,6 +56,16 @@ controller:
   image:
     registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
     repository: "agentic-platform/kagent-controller"
+    tag: "v0.7.13-patched"
+
+  # Patched agent image — adds AioHttpClientInstrumentor to tracing setup
+  # so litellm's default aiohttp transport is instrumented for OTEL trace propagation.
+  # Build: docker buildx build --platform linux/amd64 --load \
+  #   -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/kagent-app:v0.7.13-patched \
+  #   -f python/Dockerfile.patch ./python
+  agentImage:
+    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
+    repository: "agentic-platform/kagent-app"
     tag: "v0.7.13-patched"
 
   # Watch ALL namespaces — simplifies tenant onboarding
