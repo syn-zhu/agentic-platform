@@ -81,6 +81,10 @@ kubectl apply -f "$ROOT_DIR/platform/manifests/agentgateway-proxy.yaml"
 kubectl apply -f "$ROOT_DIR/platform/manifests/platform-rbac.yaml"
 kubectl apply -f "$ROOT_DIR/platform/manifests/platform-tools-remotemcpserver.yaml"
 
+# EverMemOS (long-term memory system — secrets created by 02-create-secrets.sh)
+echo "Applying EverMemOS..."
+kubectl apply -f "$ROOT_DIR/platform/manifests/evermemos.yaml"
+
 echo ""
 
 # ════════════════════════════════════════════════════

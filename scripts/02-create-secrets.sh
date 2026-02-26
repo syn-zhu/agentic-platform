@@ -155,6 +155,27 @@ else
   echo "  To enable semantic search later, set OPENAI_API_KEY and re-run this script."
 fi
 
+# ── 6. evermemos namespace secrets ──
+echo "Creating secrets in evermemos namespace..."
+
+EVERMEMOS_MONGODB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+
+kubectl create secret generic evermemos-secrets \
+  --namespace evermemos \
+  --from-literal=MONGODB_USERNAME="admin" \
+  --from-literal=MONGODB_PASSWORD="$EVERMEMOS_MONGODB_PASSWORD" \
+  --from-literal=LLM_API_KEY="${EVERMEMOS_OPENROUTER_API_KEY:-}" \
+  --from-literal=VECTORIZE_API_KEY="${EVERMEMOS_DEEPINFRA_API_KEY:-}" \
+  --from-literal=RERANK_API_KEY="${EVERMEMOS_DEEPINFRA_API_KEY:-}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+if [[ -z "${EVERMEMOS_OPENROUTER_API_KEY:-}" ]]; then
+  echo "  WARNING: EVERMEMOS_OPENROUTER_API_KEY not set — LLM calls will fail until set."
+fi
+if [[ -z "${EVERMEMOS_DEEPINFRA_API_KEY:-}" ]]; then
+  echo "  WARNING: EVERMEMOS_DEEPINFRA_API_KEY not set — embedding/reranking will fail until set."
+fi
+
 # ── Append generated secrets to .env ──
 cat >> "$ENV_FILE" <<EOF
 
@@ -169,6 +190,7 @@ LANGFUSE_SECRET_KEY=$LANGFUSE_SECRET_KEY
 LANGFUSE_BASIC_AUTH=$LANGFUSE_BASIC_AUTH
 KEYCLOAK_ADMIN_PASSWORD=$KEYCLOAK_ADMIN_PASSWORD
 AGENTREGISTRY_JWT_KEY=$AGENTREGISTRY_JWT_KEY
+EVERMEMOS_MONGODB_PASSWORD=$EVERMEMOS_MONGODB_PASSWORD
 EOF
 
 echo ""

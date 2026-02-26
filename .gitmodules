@@ -10,3 +10,6 @@
 [submodule "vendor/kmcp"]
 	path = vendor/kmcp
 	url = https://github.com/syn-zhu/kmcp.git
+[submodule "vendor/evermemos"]
+	path = vendor/evermemos
+	url = https://github.com/syn-zhu/EverMemOS.git

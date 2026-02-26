@@ -1,0 +1,742 @@
+# EverMemOS — long-term memory system for AI agents
+#
+# Provides:
+#   - REST API (port 1995): memory storage, retrieval, and search
+#   - Health check at GET /health
+#
+# Infrastructure:
+#   - MongoDB 7.0 (document store, Beanie ODM)
+#   - Elasticsearch 8.11.0 (BM25 full-text search)
+#   - Milvus 2.5.2 + etcd + MinIO (vector search, HNSW/COSINE, 1024 dims)
+#   - Redis 7.2 (caching and request tracking)
+#
+# External AI services (DeepInfra):
+#   - Embedding: Qwen3-Embedding-4B (1024 dims)
+#   - Reranker: Qwen3-Reranker-4B
+#   - LLM: OpenRouter (configurable model)
+#
+# Tenant mode:
+#   TENANT_NON_TENANT_MODE=true  (non-tenant, single instance — current default)
+#   TENANT_NON_TENANT_MODE=false (multi-tenant, requires HTTP middleware for tenant extraction)
+#
+# Secrets are created by 02-create-secrets.sh (not in this manifest).
+# The evermemos namespace is created by namespaces.yaml.
+#
+# Image build:
+#   cd /path/to/EverMemOS
+#   docker build --platform linux/amd64 \
+#     -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.0 .
+#   docker push 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.0
+
+# =====================================================================
+# ConfigMap
+# =====================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evermemos-config
+  namespace: evermemos
+  labels:
+    app: evermemos
+data:
+  # Application
+  MEMSYS_HOST: "0.0.0.0"
+  MEMSYS_PORT: "1995"
+  LOG_LEVEL: "INFO"
+  ENV: "production"
+  MEMORY_LANGUAGE: "en"
+
+  # Tenant mode — set to "false" to enable multi-tenant mode
+  TENANT_NON_TENANT_MODE: "true"
+  TENANT_SINGLE_TENANT_ID: ""
+
+  # MongoDB (in-cluster)
+  MONGODB_HOST: "evermemos-mongodb"
+  MONGODB_PORT: "27017"
+  MONGODB_DATABASE: "memsys"
+  MONGODB_URI_PARAMS: "socketTimeoutMS=15000&authSource=admin"
+
+  # Elasticsearch (in-cluster)
+  ES_HOSTS: "http://evermemos-elasticsearch:9200"
+  ES_USERNAME: ""
+  ES_PASSWORD: ""
+  ES_VERIFY_CERTS: "false"
+  SELF_ES_INDEX_NS: "memsys"
+
+  # Milvus (in-cluster)
+  MILVUS_HOST: "evermemos-milvus"
+  MILVUS_PORT: "19530"
+  SELF_MILVUS_COLLECTION_NS: "memsys"
+
+  # Redis (in-cluster)
+  REDIS_HOST: "evermemos-redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "8"
+  REDIS_SSL: "false"
+
+  # LLM (external — OpenRouter)
+  LLM_PROVIDER: "openai"
+  LLM_MODEL: "x-ai/grok-4-fast"
+  LLM_BASE_URL: "https://openrouter.ai/api/v1"
+  LLM_TEMPERATURE: "0.3"
+  LLM_MAX_TOKENS: "32768"
+
+  # Embedding — DeepInfra (external API, no GPU required)
+  VECTORIZE_PROVIDER: "deepinfra"
+  VECTORIZE_BASE_URL: "https://api.deepinfra.com/v1/openai"
+  VECTORIZE_MODEL: "Qwen/Qwen3-Embedding-4B"
+  VECTORIZE_DIMENSIONS: "1024"
+  VECTORIZE_TIMEOUT: "30"
+  VECTORIZE_MAX_RETRIES: "3"
+  VECTORIZE_BATCH_SIZE: "10"
+  VECTORIZE_MAX_CONCURRENT: "5"
+  VECTORIZE_ENCODING_FORMAT: "float"
+  VECTORIZE_FALLBACK_PROVIDER: "none"
+  VECTORIZE_FALLBACK_BASE_URL: ""
+  VECTORIZE_FALLBACK_API_KEY: ""
+
+  # Reranker — DeepInfra (external API, no GPU required)
+  RERANK_PROVIDER: "deepinfra"
+  RERANK_BASE_URL: "https://api.deepinfra.com/v1/inference"
+  RERANK_MODEL: "Qwen/Qwen3-Reranker-4B"
+  RERANK_TIMEOUT: "30"
+  RERANK_MAX_RETRIES: "3"
+  RERANK_BATCH_SIZE: "10"
+  RERANK_MAX_CONCURRENT: "5"
+  RERANK_FALLBACK_PROVIDER: "none"
+  RERANK_FALLBACK_BASE_URL: ""
+  RERANK_FALLBACK_API_KEY: ""
+
+# =====================================================================
+# Secrets — created by 02-create-secrets.sh, referenced here via envFrom.
+# Secret name: evermemos-secrets
+# Keys: MONGODB_USERNAME, MONGODB_PASSWORD, LLM_API_KEY,
+#        VECTORIZE_API_KEY, RERANK_API_KEY
+# =====================================================================
+
+# =====================================================================
+# MongoDB 7.0
+# =====================================================================
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evermemos-mongodb
+  namespace: evermemos
+  labels:
+    app: evermemos-mongodb
+spec:
+  serviceName: evermemos-mongodb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evermemos-mongodb
+  template:
+    metadata:
+      labels:
+        app: evermemos-mongodb
+    spec:
+      nodeSelector:
+        node-role: platform
+      containers:
+        - name: mongodb
+          image: mongo:7.0
+          ports:
+            - name: mongo
+              containerPort: 27017
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: "admin"
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: evermemos-secrets
+                  key: MONGODB_PASSWORD
+            - name: MONGO_INITDB_DATABASE
+              value: "memsys"
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          startupProbe:
+            exec:
+              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evermemos-mongodb
+  namespace: evermemos
+  labels:
+    app: evermemos-mongodb
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: evermemos-mongodb
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+
+# =====================================================================
+# Elasticsearch 8.11.0
+# =====================================================================
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evermemos-elasticsearch
+  namespace: evermemos
+  labels:
+    app: evermemos-elasticsearch
+spec:
+  serviceName: evermemos-elasticsearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evermemos-elasticsearch
+  template:
+    metadata:
+      labels:
+        app: evermemos-elasticsearch
+    spec:
+      nodeSelector:
+        node-role: platform
+      initContainers:
+        - name: sysctl
+          image: busybox:1.36
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+          ports:
+            - name: http
+              containerPort: 9200
+          env:
+            - name: discovery.type
+              value: "single-node"
+            - name: xpack.security.enabled
+              value: "false"
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+            - name: bootstrap.memory_lock
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+          startupProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 30Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evermemos-elasticsearch
+  namespace: evermemos
+  labels:
+    app: evermemos-elasticsearch
+spec:
+  type: ClusterIP
+  selector:
+    app: evermemos-elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+
+# =====================================================================
+# Milvus Stack — etcd (metadata) + MinIO (object storage) + Standalone
+# =====================================================================
+
+# --- Milvus etcd ---
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evermemos-milvus-etcd
+  namespace: evermemos
+  labels:
+    app: evermemos-milvus-etcd
+spec:
+  serviceName: evermemos-milvus-etcd
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evermemos-milvus-etcd
+  template:
+    metadata:
+      labels:
+        app: evermemos-milvus-etcd
+    spec:
+      nodeSelector:
+        node-role: platform
+      containers:
+        - name: etcd
+          image: quay.io/coreos/etcd:v3.5.5
+          command:
+            - etcd
+            - -advertise-client-urls=http://127.0.0.1:2479
+            - -listen-client-urls=http://0.0.0.0:2479
+            - --data-dir=/etcd
+          env:
+            - name: ETCD_AUTO_COMPACTION_MODE
+              value: "revision"
+            - name: ETCD_AUTO_COMPACTION_RETENTION
+              value: "1000"
+            - name: ETCD_QUOTA_BACKEND_BYTES
+              value: "4294967296"
+            - name: ETCD_SNAPSHOT_COUNT
+              value: "50000"
+          ports:
+            - name: client
+              containerPort: 2479
+          volumeMounts:
+            - name: data
+              mountPath: /etcd
+          startupProbe:
+            exec:
+              command: ["etcdctl", "--endpoints=http://127.0.0.1:2479", "endpoint", "health"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            exec:
+              command: ["etcdctl", "--endpoints=http://127.0.0.1:2479", "endpoint", "health"]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evermemos-milvus-etcd
+  namespace: evermemos
+  labels:
+    app: evermemos-milvus-etcd
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: evermemos-milvus-etcd
+  ports:
+    - name: client
+      port: 2479
+      targetPort: 2479
+
+# --- Milvus MinIO ---
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evermemos-milvus-minio
+  namespace: evermemos
+  labels:
+    app: evermemos-milvus-minio
+spec:
+  serviceName: evermemos-milvus-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evermemos-milvus-minio
+  template:
+    metadata:
+      labels:
+        app: evermemos-milvus-minio
+    spec:
+      nodeSelector:
+        node-role: platform
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+          command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ACCESS_KEY
+              value: "minioadmin"
+            - name: MINIO_SECRET_KEY
+              value: "minioadmin"
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /minio_data
+          startupProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evermemos-milvus-minio
+  namespace: evermemos
+  labels:
+    app: evermemos-milvus-minio
+spec:
+  type: ClusterIP
+  selector:
+    app: evermemos-milvus-minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+
+# --- Milvus Standalone ---
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evermemos-milvus
+  namespace: evermemos
+  labels:
+    app: evermemos-milvus
+spec:
+  serviceName: evermemos-milvus
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evermemos-milvus
+  template:
+    metadata:
+      labels:
+        app: evermemos-milvus
+    spec:
+      nodeSelector:
+        node-role: platform
+      containers:
+        - name: milvus
+          image: milvusdb/milvus:v2.5.2
+          command: ["milvus", "run", "standalone"]
+          env:
+            - name: ETCD_ENDPOINTS
+              value: "evermemos-milvus-etcd:2479"
+            - name: MINIO_ADDRESS
+              value: "evermemos-milvus-minio:9000"
+          ports:
+            - name: grpc
+              containerPort: 19530
+            - name: metrics
+              containerPort: 9091
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/milvus
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 9091
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 18
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9091
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9091
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evermemos-milvus
+  namespace: evermemos
+  labels:
+    app: evermemos-milvus
+spec:
+  type: ClusterIP
+  selector:
+    app: evermemos-milvus
+  ports:
+    - name: grpc
+      port: 19530
+      targetPort: 19530
+
+# =====================================================================
+# Redis 7.2
+# =====================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evermemos-redis
+  namespace: evermemos
+  labels:
+    app: evermemos-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evermemos-redis
+  template:
+    metadata:
+      labels:
+        app: evermemos-redis
+    spec:
+      nodeSelector:
+        node-role: platform
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          startupProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            failureThreshold: 10
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evermemos-redis
+  namespace: evermemos
+  labels:
+    app: evermemos-redis
+spec:
+  type: ClusterIP
+  selector:
+    app: evermemos-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+
+# =====================================================================
+# EverMemOS Application
+# =====================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evermemos
+  namespace: evermemos
+  labels:
+    app: evermemos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evermemos
+  template:
+    metadata:
+      labels:
+        app: evermemos
+    spec:
+      nodeSelector:
+        node-role: platform
+      containers:
+        - name: evermemos
+          image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.1
+          ports:
+            - name: http
+              containerPort: 1995
+          envFrom:
+            - configMapRef:
+                name: evermemos-config
+            - secretRef:
+                name: evermemos-secrets
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 1995
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 1995
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 1995
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evermemos
+  namespace: evermemos
+  labels:
+    app: evermemos
+spec:
+  type: ClusterIP
+  selector:
+    app: evermemos
+  ports:
+    - name: http
+      protocol: TCP
+      port: 1995
+      targetPort: 1995

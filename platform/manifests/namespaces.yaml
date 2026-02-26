@@ -53,3 +53,11 @@ metadata:
     platform.agentic.io/component: agentregistry
     platform.agentic.io/gateway-discovery: "true"
     istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: evermemos
+  labels:
+    platform.agentic.io/component: evermemos
+    istio.io/dataplane-mode: ambient
