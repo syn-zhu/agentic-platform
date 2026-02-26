@@ -16,24 +16,24 @@
 #
 # Rebuild controller image:
 #   cd vendor/kagent
-#   make controller-manifests                  # regenerate CRDs + copy to helm chart
+#   make controller-manifests
 #   make build-controller \
 #     DOCKER_REGISTRY=701761900767.dkr.ecr.us-east-1.amazonaws.com \
 #     DOCKER_REPO=agentic-platform \
 #     CONTROLLER_IMAGE_NAME=kagent-controller \
 #     CONTROLLER_IMAGE_TAG=v0.7.13-patched
 #
-# Rebuild agent image (thin patch on upstream):
+# Rebuild agent image:
 #   cd vendor/kagent
-#   docker buildx build --platform linux/amd64 --push \
-#     -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/kagent-app:v0.7.13-patched \
-#     -f python/Dockerfile.patch ./python
+#   make build-kagent-adk build-app \
+#     DOCKER_REGISTRY=701761900767.dkr.ecr.us-east-1.amazonaws.com \
+#     DOCKER_REPO=agentic-platform \
+#     KAGENT_ADK_IMAGE_TAG=v0.7.13-patched \
+#     APP_IMAGE_NAME=kagent-app \
+#     APP_IMAGE_TAG=v0.7.13-patched
 #
-# Deploy updated CRDs (from repo root):
-#   cd vendor/kagent
-#   helm upgrade --install kagent-crds helm/kagent-crds -n kagent-system
-#
-# Deploy updated controller + agent image (from agentic-platform/platform/):
+# Deploy:
+#   cd agentic-platform/platform
 #   helmfile -l name=kagent apply
 
 # ═══════════════════════════════════════════════════════
@@ -58,11 +58,7 @@ controller:
     repository: "agentic-platform/kagent-controller"
     tag: "v0.7.13-patched"
 
-  # Patched agent image — adds AioHttpClientInstrumentor to tracing setup
-  # so litellm's default aiohttp transport is instrumented for OTEL trace propagation.
-  # Build: docker buildx build --platform linux/amd64 --load \
-  #   -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/kagent-app:v0.7.13-patched \
-  #   -f python/Dockerfile.patch ./python
+  # Patched agent image — see build instructions at top of file
   agentImage:
     registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
     repository: "agentic-platform/kagent-app"
