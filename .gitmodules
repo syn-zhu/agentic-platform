@@ -1,0 +1,12 @@
+[submodule "vendor/agentgateway"]
+	path = vendor/agentgateway
+	url = https://github.com/syn-zhu/agentgateway.git
+[submodule "vendor/agentregistry"]
+	path = vendor/agentregistry
+	url = https://github.com/syn-zhu/agentregistry.git
+[submodule "vendor/kagent"]
+	path = vendor/kagent
+	url = https://github.com/syn-zhu/kagent.git
+[submodule "vendor/kmcp"]
+	path = vendor/kmcp
+	url = https://github.com/syn-zhu/kmcp.git
