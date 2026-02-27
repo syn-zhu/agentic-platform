@@ -38,8 +38,6 @@ platform/
 │   ├── sandbox-router-route.yaml          # HTTPRoute for /sandbox/* traffic
 │   ├── platform-tools-remotemcpserver.yaml    # Shared tool server (cross-namespace)
 │   ├── kyverno-auto-expose.yaml           # Auto-generate HTTPRoutes from annotations
-│   ├── kyverno-a2a-appprotocol.yaml       # Inject appProtocol on agent Services
-│   ├── kyverno-kagent-traceprop.yaml      # Inject trace propagation env var
 │   ├── kyverno-platform-scheduling.yaml   # Inject platform node scheduling
 │   └── kyverno-tenant-scheduling.yaml     # Inject agent node scheduling
 ```
@@ -201,8 +199,6 @@ The `{ns}` segment defaults to the resource's namespace, but `platform.agentic.i
 |--------|---------|----------|
 | **`kyverno-platform-scheduling.yaml`** | Pods in namespaces with `platform.agentic.io/component` label, no existing `nodeSelector` | Injects `nodeSelector: {node-role: platform}` + toleration for `workload=platform` |
 | **`kyverno-tenant-scheduling.yaml`** | Pods in namespaces with `platform.agentic.io/tenant: "true"` label | Injects `nodeSelector: {node-role: agents}` + toleration for `workload=agents` |
-| **`kyverno-a2a-appprotocol.yaml`** | Services with `app: kagent` label and `expose: "true"` annotation | Adds `appProtocol: kgateway.dev/a2a` to ports (signals A2A protocol to AgentGateway) |
-| **`kyverno-kagent-traceprop.yaml`** | Declarative-type Agent CRs | Injects `DISABLE_AIOHTTP_TRANSPORT=True` env var (forces httpx for W3C traceparent propagation) |
 
 ## Environments
 

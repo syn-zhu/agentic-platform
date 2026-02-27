@@ -1,10 +1,8 @@
 # Kyverno — policy-based mutation & generation for the agentic platform.
 #
 # Policies (in platform/manifests/):
-#   1. kyverno-a2a-appprotocol.yaml  — injects appProtocol on exposed agent Services
-#   2. kyverno-kagent-traceprop.yaml — injects DISABLE_AIOHTTP_TRANSPORT on Agents
-#   3. kyverno-auto-expose.yaml      — auto-generates HTTPRoutes for exposed resources
-#   4. kyverno-tenant-scheduling.yaml — injects scheduling on tenant Pods
+#   1. kyverno-auto-expose.yaml      — auto-generates HTTPRoutes for exposed resources
+#   2. kyverno-tenant-scheduling.yaml — injects scheduling on tenant Pods
 admissionController:
   replicas: 1
   resources:
@@ -26,8 +24,6 @@ admissionController:
             - get
             - list
             - watch
-            - patch
-            - update
         # HTTPRoute — needed for auto-expose generate policy validation
         - apiGroups:
             - gateway.networking.k8s.io

@@ -59,8 +59,6 @@ kubectl apply -f "$ROOT_DIR/platform/manifests/sandbox-router-route.yaml"
 
 # ── 9. Kyverno policies ──
 echo "Applying Kyverno policies..."
-kubectl apply -f "$ROOT_DIR/platform/manifests/kyverno-a2a-appprotocol.yaml"
-kubectl apply -f "$ROOT_DIR/platform/manifests/kyverno-kagent-traceprop.yaml"
 kubectl apply -f "$ROOT_DIR/platform/manifests/kyverno-tenant-scheduling.yaml"
 kubectl apply -f "$ROOT_DIR/platform/manifests/kyverno-auto-expose.yaml"
 
