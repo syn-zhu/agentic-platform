@@ -140,6 +140,10 @@ kubectl rollout status deployment/evermemos-redis -n evermemos --timeout=60s
 echo "Waiting for EverMemOS application to be ready..."
 kubectl rollout status deployment/evermemos -n evermemos --timeout=180s
 
+# ── 14. EverMemOS AgentGateway Waypoint ──
+echo "Applying EverMemOS waypoint gateway..."
+kubectl apply -f "$ROOT_DIR/platform/manifests/evermemos-gateway.yaml"
+
 echo ""
 echo "=== Post-install manifests applied ==="
 echo ""
@@ -154,6 +158,7 @@ echo "  kubectl get pods -n agentregistry"
 echo "  kubectl get remotemcpservers -n kagent-system agentregistry"
 echo "  kubectl get pods -n kagent-system -l app.kubernetes.io/name=grafana-mcp"
 echo "  kubectl get pods -n evermemos"
+echo "  kubectl get gateway -n evermemos"
 echo ""
 echo "Access UIs: ./port-forward.sh"
 echo ""

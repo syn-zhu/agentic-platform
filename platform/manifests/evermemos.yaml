@@ -731,6 +731,10 @@ metadata:
   namespace: evermemos
   labels:
     app: evermemos
+    # Route traffic to this service through the agentgateway waypoint
+    # for Langfuse tracing, timeouts, and future policy enforcement.
+    # Internal infra services (MongoDB, ES, Milvus, Redis) are NOT labeled.
+    istio.io/use-waypoint: evermemos-waypoint
 spec:
   type: ClusterIP
   selector:

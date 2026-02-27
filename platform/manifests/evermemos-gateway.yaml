@@ -1,0 +1,68 @@
+# EverMemOS AgentGateway Waypoint — transparent L7 proxy for memory API traffic
+#
+# Deploys an agentgateway waypoint proxy in the evermemos namespace.
+# The evermemos Service (port 1995) is labeled with istio.io/use-waypoint,
+# so all agent traffic to evermemos.evermemos.svc.cluster.local:1995
+# is transparently routed through this waypoint.
+#
+# What this gives us:
+#   - Langfuse tracing on every memory API call (inherited from agentgateway-waypoint-config)
+#   - 60s request timeout (covers agentic retrieval which can take 2-5s, extraction up to 60s)
+#   - mTLS with L7 visibility (source SPIFFE identity available for future per-tenant policies)
+#   - Extensible: add AgentgatewayPolicy CRs for rate limiting, JWT auth, header injection
+#
+# What agents do: nothing changes. They call evermemos via kube DNS as before.
+#
+# Internal infrastructure (MongoDB, ES, Milvus, Redis) is NOT routed through
+# the waypoint — only the evermemos app Service is labeled.
+
+# =====================================================================
+# Waypoint Gateway
+# =====================================================================
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: evermemos-waypoint
+  namespace: evermemos
+  labels:
+    platform.agentic.io/component: evermemos
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      protocol: HTTP
+      port: 15008
+      allowedRoutes:
+        namespaces:
+          from: All
+
+# =====================================================================
+# Platform Policy — timeouts
+# =====================================================================
+#
+# Tracing is already configured at the GatewayClass level
+# (agentgateway-waypoint-config has OTLP -> Langfuse), so every request
+# through this waypoint is automatically traced without per-policy config.
+#
+# The 60s timeout covers:
+#   - Standard search (hybrid/RRF): 200-600ms
+#   - Agentic retrieval: 2-5s
+#   - Memory extraction (async, but can block on flush): up to 60s
+
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: evermemos-platform-policy
+  namespace: evermemos
+  labels:
+    platform.agentic.io/component: evermemos
+spec:
+  targetRefs:
+    - kind: Gateway
+      name: evermemos-waypoint
+      group: gateway.networking.k8s.io
+  traffic:
+    timeouts:
+      request: "60s"
