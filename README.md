@@ -28,6 +28,7 @@ The platform combines two open-source projects — [AgentGateway](https://github
 | **Prometheus + Grafana** | Metrics collection, dashboards, alerting | `monitoring` |
 | **Kyverno** | Policy engine — 5 mutation/generation policies for scheduling, routing, and protocol detection | `kyverno` |
 | **OTEL Collector** | Bridges agent gRPC OTLP to Langfuse HTTP OTLP endpoint | `langfuse` |
+| **EverMemOS** | Long-term memory system — REST API for memory storage, retrieval, and hybrid search (BM25 + vector + reranker). Backed by MongoDB, Elasticsearch, Milvus, and Redis | `evermemos` |
 
 ## Node Groups
 
@@ -35,7 +36,7 @@ The EKS cluster uses three tainted node groups to isolate workload types:
 
 | Node Group | Instance | Taint | Workloads |
 |------------|----------|-------|-----------|
-| **platform** | t3.large (1-3) | `workload=platform:NoSchedule` | Controllers, Langfuse, Prometheus, Keycloak, Kyverno |
+| **platform** | t3.large (1-3) | `workload=platform:NoSchedule` | Controllers, Langfuse, Prometheus, Keycloak, Kyverno, EverMemOS |
 | **agents** | t3.large (1-3) | `workload=agents:NoSchedule` | Tenant agent pods, MCP servers, waypoint proxies |
 | **gateway** | t3.medium (1-2) | `workload=gateway:NoSchedule` | AgentGateway ingress proxy (NLB-backed) |
 
@@ -76,7 +77,7 @@ Tenants can:
 ├── tests/            # Kyverno unit tests and Chainsaw e2e integration tests
 │   ├── kyverno/            # 5 policy test suites
 │   └── e2e/                # 2 Chainsaw test suites (passthrough, egress)
-└── vendor/           # Patched forks of agentgateway and kagent
+└── vendor/           # Patched forks of agentgateway, kagent, and evermemos
 ```
 
 See individual directory READMEs for detailed documentation.
@@ -90,6 +91,8 @@ See individual directory READMEs for detailed documentation.
 - `kyverno` CLI (for running policy tests)
 - `chainsaw` (for e2e tests)
 - An Anthropic API key
+- An OpenRouter API key (for EverMemOS LLM)
+- A DeepInfra API key (for EverMemOS embedding/reranking)
 
 ### Deployment Pipeline
 
@@ -182,12 +185,13 @@ Prometheus scrapes metrics from all namespaces. Grafana dashboards are auto-disc
 
 ## Vendored Dependencies
 
-The `vendor/` directory contains patched forks of the two core projects:
+The `vendor/` directory contains patched forks of three projects:
 
 - **agentgateway** (Rust) — Patched for Istio Ambient waypoint integration and HBONE protocol support. Branch: `waypoint`.
 - **kagent** (Go/Python/TypeScript) — Patched for trace context propagation (traceparent/tracestate). Natively supports `appProtocol: kgateway.dev/a2a` on agent Services and OTEL instrumentation of aiohttp/httpx.
+- **evermemos** (Python) — Patched to remove hard dependency on `.env` file, allowing configuration entirely via Kubernetes ConfigMap and Secret. Image built from vendor source and pushed to ECR.
 
-Both are upstream-tracking forks. Changes are scoped to features not yet merged upstream.
+All are upstream-tracking forks. Changes are scoped to features not yet merged upstream.
 
 ## External Dependencies (AWS)
 
@@ -196,4 +200,4 @@ Both are upstream-tracking forks. Changes are scoped to features not yet merged 
 | RDS PostgreSQL 17 | Keycloak + Langfuse database | `db.t4g.small`, encrypted, 20GB gp3 |
 | ElastiCache Redis | Langfuse session/cache | `cache.t4g.small`, transit encryption |
 | S3 | Langfuse event/media uploads | `agentic-platform-langfuse-{env}`, AES256, no public access |
-| EBS (gp3) | Persistent volumes for ClickHouse, Prometheus, Grafana | Provisioned via EBS CSI driver |
+| EBS (gp3) | Persistent volumes for ClickHouse, Prometheus, Grafana, EverMemOS (MongoDB, Elasticsearch, Milvus, etcd, MinIO) | Provisioned via EBS CSI driver |

@@ -39,7 +39,9 @@ platform/
 │   ├── platform-tools-remotemcpserver.yaml    # Shared tool server (cross-namespace)
 │   ├── kyverno-auto-expose.yaml           # Auto-generate HTTPRoutes from annotations
 │   ├── kyverno-platform-scheduling.yaml   # Inject platform node scheduling
-│   └── kyverno-tenant-scheduling.yaml     # Inject agent node scheduling
+│   ├── kyverno-tenant-scheduling.yaml     # Inject agent node scheduling
+│   ├── evermemos.yaml                     # EverMemOS long-term memory system (all resources)
+│   └── evermemos-gateway.yaml             # EverMemOS waypoint Gateway + AgentgatewayPolicy
 ```
 
 ## Helmfile Deployment Phases
@@ -108,6 +110,7 @@ Defined in `manifests/namespaces.yaml`. Labels control mesh enrollment and Kyver
 | `langfuse` | `component: langfuse` | ambient |
 | `monitoring` | `component: monitoring` | ambient |
 | `keycloak` | `component: keycloak` | — |
+| `evermemos` | `component: evermemos` | ambient |
 | `kyverno` | (managed by Helm) | — |
 
 All labels use the `platform.agentic.io/` prefix. The `istio.io/dataplane-mode: ambient` label enrolls a namespace in the mesh (L4 mTLS via ztunnel). `agentgateway-system` is _not_ enrolled — it hosts the ingress gateway proxy. North-south traffic reaches meshed backends via the `istio.io/ingress-use-waypoint` feature, which routes ingress traffic through tenant waypoints for L7 policy enforcement.
@@ -177,6 +180,32 @@ The router constructs `{id}.{namespace}.svc.cluster.local:{port}` and proxies th
 
 **`platform-tools-remotemcpserver.yaml`** — A `RemoteMCPServer` in `kagent-system` with `allowedNamespaces.from: All`. Points at the kagent-tools server. Any tenant agent can reference `platform-tools` as a cross-namespace tool source.
 
+### EverMemOS (Long-Term Memory)
+
+**`evermemos.yaml`** — Complete deployment of the EverMemOS long-term memory system. A single manifest defines all resources in the `evermemos` namespace:
+
+| Resource | Kind | Purpose |
+|----------|------|---------|
+| `evermemos-config` | ConfigMap | Application config: endpoints, AI provider settings, tenant mode |
+| `evermemos-mongodb` | StatefulSet + Service | Document store (MongoDB 7.0, 20Gi PVC) |
+| `evermemos-elasticsearch` | StatefulSet + Service | BM25 full-text search (ES 8.11.0, 30Gi PVC) |
+| `evermemos-milvus-etcd` | StatefulSet + Service | Milvus metadata store (etcd 3.5.5, 5Gi PVC) |
+| `evermemos-milvus-minio` | StatefulSet + Service | Milvus object storage (MinIO, 20Gi PVC) |
+| `evermemos-milvus` | StatefulSet + Service | Vector search (Milvus 2.5.2, HNSW/COSINE 1024 dims, 20Gi PVC) |
+| `evermemos-redis` | Deployment + Service | Caching and request tracking (Redis 7.2) |
+| `evermemos` | Deployment + Service | REST API on port 1995 (custom ECR image v1.0.1) |
+
+The app Service is labeled `istio.io/use-waypoint: evermemos-waypoint` so agent traffic is routed through the waypoint for tracing. Internal infrastructure services (MongoDB, ES, Milvus, Redis) are not routed through the waypoint.
+
+External AI services (no GPU required):
+- **Embedding**: DeepInfra — Qwen3-Embedding-4B (1024 dims)
+- **Reranker**: DeepInfra — Qwen3-Reranker-4B
+- **LLM**: OpenRouter (configurable model)
+
+Multi-tenant mode is enabled (`TENANT_NON_TENANT_MODE=false`).
+
+**`evermemos-gateway.yaml`** — Deploys an AgentGateway waypoint proxy for the `evermemos` namespace. Provides Langfuse tracing on every memory API call and a 60-second request timeout. Includes an `AgentgatewayPolicy` for timeout configuration.
+
 ## Kyverno Policies
 
 Five ClusterPolicies enforce platform conventions automatically. All use the `platform.agentic.io/` annotation and label namespace.
@@ -234,6 +263,7 @@ The platform expects these secrets to be pre-created by `scripts/02-create-secre
 | `anthropic-api-secret` | agentgateway-system | Real Anthropic API key (post-install substitution) |
 | `kagent-anthropic` | kagent-system | Dummy key for LiteLLM validation |
 | `grafana-mcp-token` | kagent-system | Grafana API token (created by post-install script) |
+| `evermemos-secrets` | evermemos | MongoDB credentials, OpenRouter API key, DeepInfra API key (embedding + reranking) |
 
 ## Resource Budgets
 
@@ -253,3 +283,10 @@ Representative resource requests/limits for key components:
 | OTEL Collector | 50m / 64Mi | 200m / 256Mi | platform |
 | Sandbox Router | 50m / 64Mi | 250m / 256Mi | platform |
 | Kyverno (admission) | 100m / 128Mi | 100m / 384Mi | platform |
+| EverMemOS app | 100m / 256Mi | 1 / 1Gi | platform |
+| EverMemOS MongoDB | 100m / 256Mi | 1 / 2Gi | platform |
+| EverMemOS Elasticsearch | 200m / 1Gi | 2 / 2Gi | platform |
+| EverMemOS Milvus | 250m / 1Gi | 2 / 4Gi | platform |
+| EverMemOS etcd | 100m / 256Mi | 500m / 512Mi | platform |
+| EverMemOS MinIO | 100m / 256Mi | 500m / 1Gi | platform |
+| EverMemOS Redis | 100m / 128Mi | 250m / 256Mi | platform |
