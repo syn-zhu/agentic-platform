@@ -48,7 +48,7 @@ data:
   MEMORY_LANGUAGE: "en"
 
   # Tenant mode — set to "false" to enable multi-tenant mode
-  TENANT_NON_TENANT_MODE: "true"
+  TENANT_NON_TENANT_MODE: "false"
   TENANT_SINGLE_TENANT_ID: ""
 
   # MongoDB (in-cluster)
