@@ -1,0 +1,47 @@
+# Cluster Autoscaler — scales EKS node groups based on pending pod scheduling.
+#
+# IRSA: uses the cluster-autoscaler ServiceAccount created by eksctl
+# with the cluster-autoscaler IAM policy attached.
+
+autoDiscovery:
+  clusterName: agentic-platform
+
+awsRegion: us-east-1
+
+rbac:
+  serviceAccount:
+    create: false
+    name: cluster-autoscaler
+    annotations:
+      # IRSA annotation is set by eksctl when creating the service account
+      eks.amazonaws.com/role-arn: ""
+
+# Scale-down configuration
+extraArgs:
+  # Wait 10 minutes after scale-up before considering scale-down
+  scale-down-delay-after-add: "10m"
+  # Node must be underutilized for 10 minutes before scale-down
+  scale-down-unneeded-time: "10m"
+  # Scale down if node utilization is below 50%
+  scale-down-utilization-threshold: "0.5"
+  # Don't evict pods with local storage (StatefulSet PVCs are fine — this
+  # controls emptyDir/hostPath which we don't use for persistence)
+  skip-nodes-with-local-storage: "false"
+  # Allow evicting kube-system pods (except DaemonSets, which are always skipped)
+  skip-nodes-with-system-pods: "false"
+  # Balance similar node groups (keeps platform nodes even across AZs)
+  balance-similar-node-groups: "true"
+  # Expander: least-waste picks the node group that wastes the least CPU/memory
+  expander: "least-waste"
+
+# Schedule on platform nodes (no taint — default landing zone)
+nodeSelector:
+  node-role: platform
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi

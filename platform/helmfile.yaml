@@ -20,6 +20,8 @@ repositories:
     url: https://kyverno.github.io/kyverno
   - name: kiali
     url: https://kiali.org/helm-charts
+  - name: autoscaler
+    url: https://kubernetes.github.io/autoscaler
 
 helmDefaults:
   createNamespace: true
@@ -70,6 +72,17 @@ releases:
       - values/kiali.yaml
     needs:
       - istio-system/istiod
+
+  # ════════════════════════════════════════════════════
+  # Cluster Autoscaler (scales node groups on pending pods)
+  # ════════════════════════════════════════════════════
+
+  - name: cluster-autoscaler
+    namespace: kube-system
+    chart: autoscaler/cluster-autoscaler
+    version: "9.44.0"
+    values:
+      - values/cluster-autoscaler.yaml
 
   # ════════════════════════════════════════════════════
   # Phase 1: CRDs (must install before controllers)

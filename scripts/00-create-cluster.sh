@@ -26,6 +26,13 @@ aws iam create-policy \
   --policy-document "file://$ROOT_DIR/cluster/iam-policies/langfuse-s3-policy.json" \
   2>/dev/null || echo "  Policy langfuse-s3-access already exists, skipping."
 
+# Create the IAM policy for Cluster Autoscaler (idempotent)
+echo "Creating IAM policy cluster-autoscaler..."
+aws iam create-policy \
+  --policy-name cluster-autoscaler \
+  --policy-document "file://$ROOT_DIR/cluster/iam-policies/cluster-autoscaler-policy.json" \
+  2>/dev/null || echo "  Policy cluster-autoscaler already exists, skipping."
+
 # Create EKS cluster
 echo "Creating EKS cluster (this will take ~15-20 minutes)..."
 eksctl create cluster -f "$CLUSTER_CONFIG"

@@ -28,6 +28,11 @@ iam:
         namespace: kube-system
       wellKnownPolicies:
         ebsCSIController: true
+    - metadata:
+        name: cluster-autoscaler
+        namespace: kube-system
+      attachPolicyARNs:
+        - "arn:aws:iam::${ACCOUNT_ID}:policy/cluster-autoscaler"
 
 addons:
   - name: vpc-cni
@@ -46,9 +51,9 @@ managedNodeGroups:
   # need specialty nodes.  No tolerations required.
   - name: platform
     instanceType: t3.large
-    minSize: 1
-    maxSize: 3
-    desiredCapacity: 2
+    minSize: 2
+    maxSize: 5
+    desiredCapacity: 3
     labels:
       node-role: platform
     volumeSize: 30
@@ -61,7 +66,7 @@ managedNodeGroups:
   - name: agents
     instanceType: t3.large
     minSize: 1
-    maxSize: 3
+    maxSize: 5
     desiredCapacity: 1
     labels:
       node-role: agents
