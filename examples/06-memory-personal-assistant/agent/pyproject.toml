@@ -1,0 +1,13 @@
+[project]
+name = "personal-assistant"
+version = "0.1.0"
+description = "BYO ADK agent with long-term memory via EverMemOS"
+requires-python = ">=3.13"
+dependencies = [
+    "google-adk>=1.25.0",
+    "requests>=2.31.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

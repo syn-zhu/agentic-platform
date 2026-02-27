@@ -20,6 +20,7 @@ Self-contained demos showcasing the agentic-platform's capabilities. Each exampl
 | 03 | [Governed AI Egress](03-governed-egress/) | Per-tenant waypoint, prompt guards (PII filtering), credential injection |
 | 04 | [Skills](04-skills/) | Pre-loaded OCI skills (instructions + scripts), registry skill discovery |
 | 05 | [Atlas Performance Analyzer](05-atlas-analyzer/) | MongoDB MCP server via kmcp, Atlas cluster performance analysis, scoped tool access |
+| 06 | [Memory Personal Assistant](06-memory-personal-assistant/) | Long-term memory via EverMemOS, programmatic memory integration, waypoint tracing |
 
 ## Usage
 

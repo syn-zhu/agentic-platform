@@ -1,0 +1,279 @@
+# Example 06: Personal Assistant with Long-Term Memory (EverMemOS)
+#
+# Demonstrates programmatic memory integration with EverMemOS:
+#   - Conversation metadata setup (scene: assistant)
+#   - Message-by-message storage (user + assistant messages)
+#   - Hybrid retrieval (profile fetch + episodic/foresight search)
+#   - Memory-augmented LLM prompts
+#
+# The agent calls EverMemOS directly via kube DNS. Traffic to the evermemos
+# Service is transparently routed through the AgentGateway waypoint for
+# Langfuse tracing and timeout enforcement (60s).
+#
+# Prerequisites:
+#   1. Platform deployed (platform/manifests/)
+#   2. EverMemOS deployed and healthy:
+#        kubectl get pods -n evermemos
+#   3. EverMemOS gateway applied:
+#        kubectl apply -f ../../platform/manifests/evermemos-gateway.yaml
+#
+# Deploy:  kubectl apply -f manifests.yaml
+# Cleanup: kubectl delete -f manifests.yaml
+
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-memory
+  labels:
+    platform.agentic.io/gateway-discovery: "true"
+    platform.agentic.io/tenant: "true"
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: agentgateway-waypoint
+    istio.io/ingress-use-waypoint: "true"
+---
+# ── RBAC ───────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-agent-developer-binding
+  namespace: example-memory
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-agent-developer
+subjects:
+  - kind: Group
+    name: "tenant-memory-developers"
+    apiGroup: rbac.authorization.k8s.io
+---
+# ── Network Policy ─────────────────────────────────────────────────────────────
+# Key difference from other examples: this tenant needs egress to the evermemos
+# namespace for direct memory API calls.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-memory
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-memory
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # ztunnel inbound
+    - from:
+        - ipBlock:
+            cidr: 169.254.7.127/32
+  egress:
+    # Same-namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-memory
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Langfuse (tracing)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+    # kagent controller
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    # AgentGateway (LLM proxy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    # AgentRegistry
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentregistry
+    # Istio control plane
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # ── EverMemOS ──
+    # Agents in this namespace can call the EverMemOS API directly.
+    # Traffic is transparently routed through the evermemos-waypoint
+    # (AgentGateway) for tracing, timeouts, and policy enforcement.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: evermemos
+      ports:
+        - protocol: TCP
+          port: 1995
+    # External HTTPS (for direct LLM calls if not using AgentGateway)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# ── Istio Authorization Policy ─────────────────────────────────────────────────
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-memory
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - example-memory
+    - from:
+        - source:
+            namespaces:
+              - agentgateway-system
+    - from:
+        - source:
+            namespaces:
+              - kagent-system
+    - from:
+        - source:
+            namespaces:
+              - istio-system
+    - from:
+        - source:
+            namespaces:
+              - monitoring
+---
+# ── Per-Tenant Waypoint ────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-waypoint
+  namespace: example-memory
+  labels:
+    platform.agentic.io/component: agentgateway
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# ── LLM Configuration ─────────────────────────────────────────────────────────
+# Dummy secret -- the real API key is injected by AgentGateway at the proxy layer.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-dummy
+  namespace: example-memory
+type: Opaque
+stringData:
+  api-key: "not-a-real-key"
+---
+# ── Agent: Personal Assistant with Memory (BYO) ───────────────────────────────
+# A BYO (Bring Your Own) agent built on Google ADK that integrates with
+# EverMemOS for long-term memory. Memory operations happen transparently
+# through ADK callbacks:
+#
+#   - before_model_callback: stores the user message in EverMemOS, retrieves
+#     relevant memories (profile + episodic search), and injects them into
+#     the system instruction before each LLM call.
+#
+#   - after_model_callback: stores the assistant's response in EverMemOS
+#     for future memory extraction.
+#
+# The agent itself sees an enriched system prompt with memory context --
+# no explicit memory tools are needed for the basic flow.
+#
+# To build and push the container image:
+#   cd agent/
+#   docker build -t <registry>/personal-assistant:v0.1.0 .
+#   docker push <registry>/personal-assistant:v0.1.0
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: personal-assistant
+  namespace: example-memory
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  type: BYO
+  description: >-
+    A personal assistant with long-term memory via EverMemOS. Remembers user
+    preferences, past conversations, and context across sessions using ADK
+    callbacks for transparent memory integration.
+  byo:
+    deployment:
+      image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/personal-assistant:v0.1.0
+      args: ["personal_assistant"]
+      replicas: 1
+      env:
+        # LLM (via AgentGateway proxy -- dummy key, real one injected at gateway)
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-dummy
+              key: api-key
+        # EverMemOS connection
+        - name: EVERMEMOS_URL
+          value: "http://evermemos.evermemos.svc.cluster.local:1995"
+        - name: EVERMEMOS_TIMEOUT
+          value: "30"
+        - name: EVERMEMOS_SEARCH_TIMEOUT
+          value: "60"
+        # Memory scoping
+        - name: MEMORY_USER_ID
+          value: "user"
+        - name: MEMORY_ASSISTANT_ID
+          value: "assistant"
+        - name: MEMORY_GROUP_ID
+          value: "assistant_user"
+        # kagent BYO agent registration
+        - name: KAGENT_URL
+          value: "http://kagent-controller.kagent-system.svc.cluster.local:8083"
+        - name: KAGENT_NAME
+          value: "personal-assistant"
+        - name: KAGENT_NAMESPACE
+          value: "example-memory"
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi

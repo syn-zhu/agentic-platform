@@ -1,0 +1,19 @@
+{
+  "name": "personal-assistant",
+  "description": "A personal assistant with long-term memory via EverMemOS. Remembers user preferences, past conversations, and context across sessions.",
+  "url": "localhost:8080",
+  "version": "0.0.1",
+  "capabilities": {
+    "streaming": true
+  },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [
+    {
+      "id": "personal-assistant",
+      "name": "Personal Assistant",
+      "description": "Conversational assistant with long-term memory. Remembers details across sessions using EverMemOS.",
+      "tags": ["memory", "personal-assistant", "evermemos"]
+    }
+  ]
+}
