@@ -37,7 +37,7 @@ The EKS cluster uses three tainted node groups to isolate workload types:
 
 | Node Group | Instance | Taint | Workloads |
 |------------|----------|-------|-----------|
-| **platform** | t3.large (2-5) | — (untainted, default landing zone) | Controllers, Langfuse, Prometheus, Keycloak, Kyverno, EverMemOS |
+| **platform** | t3.large (2-6) | — (untainted, default landing zone) | Controllers, Langfuse, Prometheus, Keycloak, Kyverno, EverMemOS |
 | **agents** | t3.large (1-5) | `workload=agents:NoSchedule` | Tenant agent pods, MCP servers, waypoint proxies |
 | **gateway** | t3.medium (1-2) | `workload=gateway:NoSchedule` | AgentGateway ingress proxy (NLB-backed) |
 

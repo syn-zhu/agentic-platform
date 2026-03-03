@@ -23,7 +23,8 @@ platform/
 │   ├── langfuse.yaml
 │   ├── kube-prometheus-stack.yaml
 │   ├── keycloak.yaml
-│   └── kyverno.yaml
+│   ├── kyverno.yaml
+│   └── cluster-autoscaler.yaml
 ├── manifests/                             # Post-install Kubernetes manifests
 │   ├── namespaces.yaml                    # Platform namespace definitions + labels
 │   ├── platform-rbac.yaml                 # tenant-agent-developer ClusterRole
@@ -59,6 +60,12 @@ Installs the zero-sidecar service mesh foundation. All four charts are pinned to
 | `istio-cni` | `istio/cni` | DaemonSet for transparent traffic redirection (tolerates all taints) |
 | `ztunnel` | `istio/ztunnel` | L4 per-node proxy — mTLS, SPIFFE identity, HBONE tunneling |
 | `kiali-operator` | `kiali/kiali-operator` | Service mesh observability UI |
+
+### Cluster Autoscaler
+
+| Release | Chart | Version | Purpose |
+|---------|-------|---------|---------|
+| `cluster-autoscaler` | `autoscaler/cluster-autoscaler` | 9.44.0 | Scales EKS node groups based on pending pod scheduling. Uses IRSA for ASG permissions. |
 
 ### Phase 1 — CRDs
 
@@ -279,7 +286,7 @@ Representative resource requests/limits for key components:
 | Langfuse web | 100m / 128Mi | 500m / 512Mi | platform |
 | ClickHouse | 200m / 512Mi | 1 / 2Gi | platform |
 | ClickHouse Keeper | 50m / 128Mi | 250m / 512Mi | platform |
-| Prometheus | 100m / 256Mi | 500m / 512Mi | platform |
+| Prometheus | 200m / 512Mi | 1 / 2Gi | platform |
 | OTEL Collector | 50m / 64Mi | 200m / 256Mi | platform |
 | Sandbox Router | 50m / 64Mi | 250m / 256Mi | platform |
 | Kyverno (admission) | 100m / 128Mi | 100m / 384Mi | platform |
@@ -290,3 +297,4 @@ Representative resource requests/limits for key components:
 | EverMemOS etcd | 100m / 256Mi | 500m / 512Mi | platform |
 | EverMemOS MinIO | 100m / 256Mi | 500m / 1Gi | platform |
 | EverMemOS Redis | 100m / 128Mi | 250m / 256Mi | platform |
+| Cluster Autoscaler | 50m / 64Mi | 100m / 128Mi | platform |
