@@ -29,6 +29,7 @@ The platform combines two open-source projects — [AgentGateway](https://github
 | **Kyverno** | Policy engine — 5 mutation/generation policies for scheduling, routing, and protocol detection | `kyverno` |
 | **OTEL Collector** | Bridges agent gRPC OTLP to Langfuse HTTP OTLP endpoint | `langfuse` |
 | **EverMemOS** | Long-term memory system — REST API for memory storage, retrieval, and hybrid search (BM25 + vector + reranker). Backed by MongoDB, Elasticsearch, Milvus, and Redis | `evermemos` |
+| **Cluster Autoscaler** | Automatically scales EKS node groups when pods are unschedulable due to resource pressure | `kube-system` |
 
 ## Node Groups
 
@@ -36,11 +37,11 @@ The EKS cluster uses three tainted node groups to isolate workload types:
 
 | Node Group | Instance | Taint | Workloads |
 |------------|----------|-------|-----------|
-| **platform** | t3.large (1-3) | `workload=platform:NoSchedule` | Controllers, Langfuse, Prometheus, Keycloak, Kyverno, EverMemOS |
-| **agents** | t3.large (1-3) | `workload=agents:NoSchedule` | Tenant agent pods, MCP servers, waypoint proxies |
+| **platform** | t3.large (2-5) | — (untainted, default landing zone) | Controllers, Langfuse, Prometheus, Keycloak, Kyverno, EverMemOS |
+| **agents** | t3.large (1-5) | `workload=agents:NoSchedule` | Tenant agent pods, MCP servers, waypoint proxies |
 | **gateway** | t3.medium (1-2) | `workload=gateway:NoSchedule` | AgentGateway ingress proxy (NLB-backed) |
 
-Kyverno policies automatically inject the correct `nodeSelector` and `tolerations` — platform operators and tenants don't need to specify them.
+Kyverno policies automatically inject the correct `nodeSelector` and `tolerations` — platform operators and tenants don't need to specify them. The Cluster Autoscaler monitors all three ASGs and adds/removes nodes based on pending pod scheduling pressure (scale-down threshold: 50% utilization, 10-minute cooldown).
 
 ## Multi-Tenancy
 
