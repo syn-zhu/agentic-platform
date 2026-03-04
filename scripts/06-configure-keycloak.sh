@@ -133,6 +133,12 @@ else
   echo "  ✗ agentregistry client not found (status: ${CLIENT_CHECK}). Check realm import."
 fi
 
+# ── Apply ingress authentication policy ──
+echo ""
+echo "Applying ingress authentication policy..."
+kubectl apply -f "$ROOT_DIR/platform/manifests/ingress-auth-policy.yaml"
+echo "  ✓ Ingress auth policy applied (JWT validation on ingress gateway)."
+
 echo ""
 echo "=== Keycloak configuration complete ==="
 echo ""

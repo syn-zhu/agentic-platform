@@ -1,0 +1,44 @@
+# Ingress Authentication Policy
+#
+# Enforces JWT authentication on all inbound traffic through the ingress
+# gateway (agentgateway-proxy). Every request must carry a valid Keycloak-
+# issued bearer token with the correct issuer, audience, and a tenant claim.
+#
+# What this enforces:
+#   1. Token signature validation via Keycloak JWKS endpoint
+#   2. Issuer must be the "agents" realm
+#   3. Audience must include "agent-gateway"
+#   4. Token must contain a "tenant" claim (multi-tenancy gate)
+#
+# Prerequisites: Keycloak must be running with the "agents" realm configured.
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: ingress-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: agentgateway-proxy
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+          audiences:
+            - "agent-gateway"
+          jwks:
+            remote:
+              jwksPath: "/realms/agents/protocol/openid-connect/certs"
+              backendRef:
+                group: ""
+                kind: Service
+                name: keycloak
+                namespace: keycloak
+                port: 8080
+    authorization:
+      policy:
+        matchExpressions:
+          - "has(jwt.claims.tenant)"

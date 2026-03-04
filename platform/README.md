@@ -32,7 +32,7 @@ platform/
 │   ├── agentgateway-parameters.yaml       # Ingress proxy config (NLB, tracing, gateway nodes)
 │   ├── agentgateway-waypoint-parameters.yaml  # Waypoint proxy config (ClusterIP, Istio CA, agent nodes)
 │   ├── anthropic-backend.yaml             # Default LLM backend (Claude Sonnet 4)
-│   ├── keycloak-jwt-policy.yaml           # JWT validation policy (Keycloak agents realm)
+│   ├── ingress-auth-policy.yaml           # Ingress authentication (JWT validation, tenant gate)
 │   ├── keycloak-agents-realm.json         # Keycloak realm import (tenants, OIDC)
 │   ├── otel-collector.yaml                # gRPC→HTTP OTLP bridge for Langfuse
 │   ├── sandbox-router.yaml                # Dynamic reverse proxy for agent sandboxes
@@ -149,7 +149,7 @@ client pod → ztunnel → HBONE:15008 → waypoint → backend pod
 
 ### Auth Policies
 
-**`keycloak-jwt-policy.yaml`** — JWT validation on the ingress gateway. Verifies tokens against Keycloak's JWKS endpoint, checks issuer and `agent-gateway` audience, and requires a `tenant` claim in the token. Apply only after Keycloak is running.
+**`ingress-auth-policy.yaml`** — Ingress authentication policy. Enforces JWT validation on all inbound traffic through the ingress gateway: verifies token signature via Keycloak JWKS, checks issuer and `agent-gateway` audience, and requires a `tenant` claim. Applied automatically by `06-configure-keycloak.sh`.
 
 ### Observability
 
