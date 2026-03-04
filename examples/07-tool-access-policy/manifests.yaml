@@ -1,0 +1,228 @@
+# Example 07: Multi-Layer Access Policy Enforcement
+#
+# Demonstrates three layers of authorization for an agentic platform:
+#   1. Ingress authentication -- valid JWT with tenant claim required
+#   2. Agent access control -- per-agent waypoint policy (tenant check)
+#   3. Tool access control -- per-tool waypoint policy (client role + agent SPIFFE)
+#
+# Prerequisites:
+#   1. Platform deployed (platform/manifests/) with Keycloak 26.5
+#   2. Run setup-tenant.sh to create users, clients, and role assignments
+#   3. Build and push the policy-mcp-server image (see mcp-server/)
+#
+# Deploy:  kubectl apply -f manifests.yaml
+# Cleanup: kubectl delete -f manifests.yaml
+
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-tool-policy
+  labels:
+    platform.agentic.io/gateway-discovery: "true"
+    platform.agentic.io/tenant: "true"
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: agentgateway-waypoint
+    istio.io/ingress-use-waypoint: "true"
+---
+# ── RBAC ───────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-agent-developer-binding
+  namespace: example-tool-policy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-agent-developer
+subjects:
+  - kind: Group
+    name: "tenant-tool-policy-developers"
+    apiGroup: rbac.authorization.k8s.io
+---
+# ── Network Policy ─────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-tool-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-tool-policy
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    - from:
+        - ipBlock:
+            cidr: 169.254.7.127/32
+  egress:
+    # Same namespace (agent <-> MCP server)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: example-tool-policy
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Langfuse (tracing)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: langfuse
+    # kagent controller
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent-system
+    # AgentGateway system (LLM proxy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentgateway-system
+    # AgentRegistry
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentregistry
+    # Istio control plane
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # Keycloak (token exchange)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keycloak
+    # External HTTPS (LLM APIs)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# ── Istio Authorization Policy ─────────────────────────────────────────────────
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenant-isolation
+  namespace: example-tool-policy
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - example-tool-policy
+    - from:
+        - source:
+            namespaces:
+              - agentgateway-system
+    - from:
+        - source:
+            namespaces:
+              - kagent-system
+    - from:
+        - source:
+            namespaces:
+              - istio-system
+    - from:
+        - source:
+            namespaces:
+              - monitoring
+---
+# ── Per-Tenant Waypoint ────────────────────────────────────────────────────────
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-waypoint
+  namespace: example-tool-policy
+  labels:
+    platform.agentic.io/component: agentgateway
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: agentgateway-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# ── LLM Configuration ─────────────────────────────────────────────────────────
+# Dummy secret -- the real API key is injected by AgentGateway at the proxy layer.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-dummy
+  namespace: example-tool-policy
+type: Opaque
+stringData:
+  api-key: "not-a-real-key"
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: default-model-config
+  namespace: example-tool-policy
+spec:
+  provider: Anthropic
+  model: claude-sonnet-4-20250514
+  apiKeySecret: anthropic-dummy
+  apiKeySecretKey: api-key
+  anthropic:
+    baseUrl: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/llm/default/anthropic
+---
+# ── MCP Server (deployed by kmcp operator) ────────────────────────────────────
+# Minimal Python MCP server with 4 role-differentiated tools:
+#   list_reports   -- any tenant member (analyst/operator/admin)
+#   read_report    -- any tenant member (analyst/operator/admin)
+#   execute_query  -- operator or admin only
+#   modify_config  -- admin only + specific agent only
+#
+# Access control is enforced by AgentgatewayPolicy CEL rules at the waypoint,
+# not by the server itself.
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: policy-mcp-server
+  namespace: example-tool-policy
+spec:
+  transportType: http
+  httpTransport:
+    targetPort: 3000
+    path: /mcp
+  deployment:
+    image: policy-mcp-server:latest  # TODO: replace with actual registry
+    port: 3000
+    env:
+      HOST: "0.0.0.0"
