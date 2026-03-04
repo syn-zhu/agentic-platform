@@ -2,7 +2,7 @@
   "realm": "agents",
   "enabled": true,
   "displayName": "Agentic Platform",
-  "registrationAllowed": false,
+  "registrationAllowed": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": false,
@@ -15,6 +15,13 @@
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
   "requiredCredentials": ["password"],
+  "groups": [
+    {
+      "name": "tenants",
+      "path": "/tenants",
+      "subGroups": []
+    }
+  ],
   "clients": [
     {
       "clientId": "agent-gateway",

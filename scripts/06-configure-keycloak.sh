@@ -23,20 +23,26 @@ if [[ ! -f "$REALM_FILE" ]]; then
   exit 1
 fi
 
+# ── Helper: run curl inside the cluster ──
+# Spins up an ephemeral pod to reach Keycloak's cluster-internal URL.
+kc_curl() {
+  kubectl run keycloak-curl-$RANDOM --rm -i --restart=Never \
+    --image=curlimages/curl:latest -n keycloak \
+    -- curl -s "$@" 2>/dev/null
+}
+
 # ── Wait for Keycloak to be ready ──
+# keycloakx chart deploys a StatefulSet
 echo "Waiting for Keycloak to be ready..."
-kubectl rollout status deployment/keycloak -n keycloak --timeout=180s >/dev/null 2>&1 || \
-  kubectl rollout status statefulset/keycloak -n keycloak --timeout=180s >/dev/null 2>&1
+kubectl rollout status statefulset/keycloak -n keycloak --timeout=180s >/dev/null 2>&1
 
 # ── Get admin token ──
 echo "Authenticating to Keycloak admin API..."
-ADMIN_TOKEN=$(kubectl run keycloak-auth --rm -i --restart=Never \
-  --image=curlimages/curl:latest -n keycloak \
-  -- curl -s -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+ADMIN_TOKEN=$(kc_curl -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -d "client_id=admin-cli" \
   -d "username=${ADMIN_USER}" \
   -d "password=${ADMIN_PASS}" \
-  -d "grant_type=password" 2>/dev/null \
+  -d "grant_type=password" \
   | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
 
 if [[ -z "$ADMIN_TOKEN" ]]; then
@@ -57,11 +63,9 @@ kubectl create configmap keycloak-realm-json \
 echo "Importing agents realm..."
 
 # Check if realm already exists
-REALM_EXISTS=$(kubectl run keycloak-realm-check --rm -i --restart=Never \
-  --image=curlimages/curl:latest -n keycloak \
-  -- curl -s -o /dev/null -w "%{http_code}" \
+REALM_EXISTS=$(kc_curl -o /dev/null -w "%{http_code}" \
   -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/agents" 2>/dev/null || echo "000")
+  "${KEYCLOAK_URL}/admin/realms/agents" || echo "000")
 
 if [[ "$REALM_EXISTS" == "200" ]]; then
   echo "  Realm 'agents' already exists — updating via partial import..."
@@ -107,47 +111,149 @@ fi
 # ── Verify OIDC discovery ──
 echo ""
 echo "Verifying OIDC discovery endpoint..."
-OIDC_STATUS=$(kubectl run keycloak-oidc-check --rm -i --restart=Never \
-  --image=curlimages/curl:latest -n keycloak \
-  -- curl -s -o /dev/null -w "%{http_code}" \
-  "${KEYCLOAK_URL}/realms/agents/.well-known/openid-configuration" 2>/dev/null || echo "000")
+OIDC_STATUS=$(kc_curl -o /dev/null -w "%{http_code}" \
+  "${KEYCLOAK_URL}/realms/agents/.well-known/openid-configuration" || echo "000")
 
 if [[ "$OIDC_STATUS" == "200" ]]; then
-  echo "  ✓ OIDC discovery endpoint is accessible."
+  echo "  OK — OIDC discovery endpoint is accessible."
 else
-  echo "  ✗ OIDC discovery returned HTTP ${OIDC_STATUS}. The realm may not have been created properly."
+  echo "  FAIL — OIDC discovery returned HTTP ${OIDC_STATUS}. The realm may not have been created properly."
 fi
 
 # ── Verify agentregistry client exists ──
 echo "Verifying agentregistry client..."
-CLIENT_CHECK=$(kubectl run keycloak-client-check --rm -i --restart=Never \
-  --image=curlimages/curl:latest -n keycloak \
-  -- curl -s \
+CLIENT_CHECK=$(kc_curl \
   -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/agents/clients?clientId=agentregistry" 2>/dev/null \
+  "${KEYCLOAK_URL}/admin/realms/agents/clients?clientId=agentregistry" \
   | python3 -c "import sys,json; clients=json.load(sys.stdin); print('found' if clients else 'missing')" 2>/dev/null || echo "error")
 
 if [[ "$CLIENT_CHECK" == "found" ]]; then
-  echo "  ✓ agentregistry client exists in agents realm."
+  echo "  OK — agentregistry client exists in agents realm."
 else
-  echo "  ✗ agentregistry client not found (status: ${CLIENT_CHECK}). Check realm import."
+  echo "  FAIL — agentregistry client not found (status: ${CLIENT_CHECK}). Check realm import."
 fi
 
-# ── Apply ingress authentication policy ──
+# ══════════════════════════════════════════════════════════════════
+# K8s OIDC Identity Provider (for federated client authentication)
+# ══════════════════════════════════════════════════════════════════
+# Allows K8s service account tokens to be used as client assertions
+# (client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer).
+# The IdP validates SA tokens against the cluster's OIDC discovery endpoint.
+
+echo ""
+echo "Configuring K8s OIDC identity provider..."
+
+# Get the cluster's OIDC issuer URL
+K8S_OIDC_ISSUER=$(kubectl get --raw /.well-known/openid-configuration \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['issuer'])")
+
+if [[ -z "$K8S_OIDC_ISSUER" ]]; then
+  echo "  WARNING: Could not determine K8s OIDC issuer. Skipping IdP configuration."
+else
+  # Check if IdP already exists
+  IDP_EXISTS=$(kc_curl -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/agents/identity-provider/instances/kubernetes" || echo "000")
+
+  IDP_JSON=$(cat <<IDPEOF
+{
+  "alias": "kubernetes",
+  "displayName": "Kubernetes Service Accounts",
+  "providerId": "oidc",
+  "enabled": true,
+  "trustEmail": false,
+  "storeToken": false,
+  "addReadTokenRoleOnCreate": false,
+  "config": {
+    "issuer": "${K8S_OIDC_ISSUER}",
+    "authorizationUrl": "${K8S_OIDC_ISSUER}/authorize",
+    "tokenUrl": "${K8S_OIDC_ISSUER}/token",
+    "jwksUrl": "${K8S_OIDC_ISSUER}/keys",
+    "clientId": "keycloak",
+    "clientSecret": "unused",
+    "clientAuthMethod": "client_secret_post",
+    "syncMode": "IMPORT",
+    "useJwksUrl": "true",
+    "validateSignature": "true"
+  }
+}
+IDPEOF
+)
+
+  if [[ "$IDP_EXISTS" == "200" ]]; then
+    echo "  K8s OIDC IdP already exists — updating..."
+    kc_curl -X PUT \
+      -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "${IDP_JSON}" \
+      "${KEYCLOAK_URL}/admin/realms/agents/identity-provider/instances/kubernetes" > /dev/null
+  else
+    echo "  Creating K8s OIDC identity provider..."
+    kc_curl -X POST \
+      -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "${IDP_JSON}" \
+      "${KEYCLOAK_URL}/admin/realms/agents/identity-provider/instances" > /dev/null
+  fi
+  echo "  OK — K8s OIDC IdP configured (issuer: ${K8S_OIDC_ISSUER})."
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Initial Access Token for Dynamic Client Registration (RFC 7591)
+# ══════════════════════════════════════════════════════════════════
+# Creates an IAT that tenant setup scripts use to register agent clients.
+# Stored as a K8s Secret in platform-system namespace.
+
+echo ""
+echo "Creating Initial Access Token for DCR..."
+
+kubectl create namespace platform-system --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
+
+IAT_RESPONSE=$(kc_curl -X POST \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"count": 100, "expiration": 0}' \
+  "${KEYCLOAK_URL}/admin/realms/agents/clients-initial-access")
+
+IAT_TOKEN=$(echo "$IAT_RESPONSE" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+
+if [[ -z "$IAT_TOKEN" ]]; then
+  echo "  WARNING: Failed to create IAT. DCR will not be available."
+  echo "  Response: ${IAT_RESPONSE}"
+else
+  kubectl create secret generic keycloak-initial-access-token \
+    --namespace platform-system \
+    --from-literal=token="$IAT_TOKEN" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "  OK — IAT stored as Secret 'keycloak-initial-access-token' in platform-system."
+  echo "  Remaining registrations: 100 (no expiration)."
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Apply ingress authentication policy
+# ══════════════════════════════════════════════════════════════════
+
 echo ""
 echo "Applying ingress authentication policy..."
 kubectl apply -f "$ROOT_DIR/platform/manifests/ingress-auth-policy.yaml"
-echo "  ✓ Ingress auth policy applied (JWT validation on ingress gateway)."
+echo "  OK — Ingress auth policy applied (JWT validation on ingress gateway)."
+
+# ══════════════════════════════════════════════════════════════════
+# Summary
+# ══════════════════════════════════════════════════════════════════
 
 echo ""
 echo "=== Keycloak configuration complete ==="
 echo ""
-echo "OIDC Issuer:  ${KEYCLOAK_URL}/realms/agents"
-echo "Clients:      agent-gateway, agentregistry"
+echo "OIDC Issuer:       ${KEYCLOAK_URL}/realms/agents"
+echo "Clients:           agent-gateway, agentregistry"
+echo "K8s OIDC IdP:      ${K8S_OIDC_ISSUER:-not configured}"
+echo "DCR IAT Secret:    platform-system/keycloak-initial-access-token"
 echo ""
-echo "Test token exchange:"
+echo "Test token (password grant):"
 echo "  curl -s -X POST ${KEYCLOAK_URL}/realms/agents/protocol/openid-connect/token \\"
-echo "    -d 'client_id=agentregistry' \\"
-echo "    -d 'username=testuser' \\"
-echo "    -d 'password=testpass123' \\"
+echo "    -d 'client_id=agent-gateway' \\"
+echo "    -d 'username=<user>' \\"
+echo "    -d 'password=<pass>' \\"
 echo "    -d 'grant_type=password'"

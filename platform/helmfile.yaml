@@ -22,6 +22,8 @@ repositories:
     url: https://kiali.org/helm-charts
   - name: autoscaler
     url: https://kubernetes.github.io/autoscaler
+  - name: codecentric
+    url: https://codecentric.github.io/helm-charts
 
 helmDefaults:
   createNamespace: true
@@ -128,8 +130,8 @@ releases:
 
   - name: keycloak
     namespace: keycloak
-    chart: bitnami/keycloak
-    version: "25.2.0"
+    chart: codecentric/keycloakx
+    version: "7.1.8"
     values:
       - values/keycloak.yaml
 

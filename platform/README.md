@@ -83,7 +83,7 @@ CRDs must exist before their controllers can start.
 | `clickhouse` | `bitnami/clickhouse` | 9.4.3 | Analytics database for Langfuse (2 replicas, 3 Keeper nodes) |
 | `langfuse` | `langfuse/langfuse` | 1.5.19 | LLM observability — OTEL ingestion, prompt/completion logging |
 | `kube-prometheus-stack` | `prometheus-community/kube-prometheus-stack` | — | Prometheus, Grafana, Alertmanager |
-| `keycloak` | `bitnami/keycloak` | 25.2.0 | Identity provider — JWT issuance, tenant claims |
+| `keycloak` | `codecentric/keycloakx` | 7.1.8 | Identity provider — JWT issuance, tenant claims, token exchange, DCR |
 
 ### Phase 2b — Policy Engine
 
@@ -150,6 +150,10 @@ client pod → ztunnel → HBONE:15008 → waypoint → backend pod
 ### Auth Policies
 
 **`ingress-auth-policy.yaml`** — Ingress authentication policy. Enforces JWT validation on all inbound traffic through the ingress gateway: verifies token signature via Keycloak JWKS, checks issuer and `agent-gateway` audience, and requires a `tenant` claim. Applied automatically by `06-configure-keycloak.sh`.
+
+**Multi-tenancy model:** Tenant isolation uses Keycloak groups (`/tenants/<name>`) for FGAP V2 admin scoping, and client roles on per-MCP-server Keycloak clients for service-specific RBAC. Client roles appear in tokens under `resource_access.<client_id>.roles`.
+
+> **TODO: Migrate to Keycloak Organizations.** Once org-scoped roles ship in Keycloak (tracked in [keycloak/keycloak#40585](https://github.com/keycloak/keycloak/issues/40585) and [#43507](https://github.com/keycloak/keycloak/issues/43507)), migrate from groups + client roles to Organizations. This gives tenant-scoped role definitions, built-in delegated admin, and org membership claims -- replacing the current workaround of FGAP V2 group scoping + per-client role vocabularies.
 
 ### Observability
 

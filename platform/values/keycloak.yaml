@@ -1,54 +1,64 @@
 # Keycloak — Platform Identity Provider
-# Chart: bitnami/keycloak v25.2.0
+# Chart: codecentric/keycloakx v7.1.8 (Keycloak 26.5.3)
 #
 # Integration:
 #   - External PostgreSQL (shared RDS with Langfuse, separate 'keycloak' database)
 #   - AgentGateway JWT validation via AgentgatewayPolicy
 #   - Single "agents" realm with tenant claims for multi-tenancy
+#   - Standard Token Exchange (RFC 8693) for agent-to-service audience scoping
+#   - Federated Client Authentication (K8s SA tokens as client assertions)
 
-global:
-  security:
-    allowInsecureImages: true
-
+# ═══════════════════════════════════════════════════════
+# Image
+# ═══════════════════════════════════════════════════════
 image:
-  registry: public.ecr.aws
-  repository: bitnami/keycloak
+  repository: quay.io/keycloak/keycloak
+  tag: "26.5.3"
+  pullPolicy: IfNotPresent
 
 # ═══════════════════════════════════════════════════════
-# Admin credentials
+# Start command with feature flags
 # ═══════════════════════════════════════════════════════
-auth:
-  adminUser: admin
-  existingSecret: keycloak-admin-credentials
-  passwordSecretKey: admin-password
+# - start-dev: HTTP mode, no hostname check (POC). For production use "start".
+# - client-auth-federated: allows K8s SA tokens as client assertions (preview)
+# - token-exchange-standard is enabled by default in 26.2+
+command:
+  - "/opt/keycloak/bin/kc.sh"
+  - "start-dev"
+  - "--http-port=8080"
+  - "--hostname-strict=false"
+  - "--features=client-auth-federated"
 
 # ═══════════════════════════════════════════════════════
-# Server mode
+# Admin credentials (via env vars — keycloakx pattern)
 # ═══════════════════════════════════════════════════════
-# POC: run in dev mode (HTTP). For production, set production: true
-# and configure TLS termination at the load balancer.
-production: false
-proxy: edge
-httpRelativePath: /
+extraEnv: |
+  - name: KEYCLOAK_ADMIN
+    value: admin
+  - name: KEYCLOAK_ADMIN_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-admin-credentials
+        key: admin-password
 
 # ═══════════════════════════════════════════════════════
 # External PostgreSQL (shared RDS instance)
 # ═══════════════════════════════════════════════════════
-postgresql:
-  enabled: false
+dbchecker:
+  enabled: true
 
-externalDatabase:
-  host: "agentic-platform-langfuse.csv6iaouck0m.us-east-1.rds.amazonaws.com"
+database:
+  vendor: postgres
+  hostname: "agentic-platform-langfuse.csv6iaouck0m.us-east-1.rds.amazonaws.com"
   port: 5432
-  user: keycloak
+  username: keycloak
   database: keycloak
   existingSecret: keycloak-db-credentials
-  existingSecretPasswordKey: password
 
 # ═══════════════════════════════════════════════════════
-# Resources
+# Replicas and resources
 # ═══════════════════════════════════════════════════════
-replicaCount: 1
+replicas: 1
 
 resources:
   requests:
@@ -63,6 +73,10 @@ resources:
 # ═══════════════════════════════════════════════════════
 service:
   type: ClusterIP
-  ports:
-    http: 8080
+  httpPort: 8080
 
+# ═══════════════════════════════════════════════════════
+# Health checks
+# ═══════════════════════════════════════════════════════
+health:
+  enabled: true
