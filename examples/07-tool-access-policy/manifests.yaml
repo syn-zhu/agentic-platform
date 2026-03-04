@@ -226,3 +226,143 @@ spec:
     port: 3000
     env:
       HOST: "0.0.0.0"
+---
+# ── AgentgatewayBackend (MCP static target) ────────────────────────────────
+# Routes MCP traffic through the waypoint to the policy-mcp-server.
+# Uses static target because kmcp-created Services lack labels for selectors.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: policy-mcp
+  namespace: example-tool-policy
+spec:
+  mcp:
+    targets:
+      - name: policy-mcp-server
+        static:
+          host: policy-mcp-server.example-tool-policy.svc.cluster.local
+          port: 3000
+          path: /mcp
+          protocol: StreamableHTTP
+---
+# ── HTTPRoute: MCP traffic through waypoint ────────────────────────────────
+# Without this explicit route, the waypoint's default passthrough bypasses the
+# MCP handler entirely. This route ensures traffic flows through the MCP code
+# path where AgentgatewayPolicy authentication and authorization are enforced.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: policy-mcp
+  namespace: example-tool-policy
+spec:
+  hostnames:
+    - policy-mcp-server.example-tool-policy.svc.cluster.local
+  parentRefs:
+    - name: agentgateway-waypoint
+  rules:
+    - backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: policy-mcp
+---
+# ── Tool Access Policy (Layer 3) ───────────────────────────────────────────
+# Per-tool authorization at the waypoint. Evaluates on every MCP tool call
+# and list_tools request. Uses OR semantics -- any matching rule allows.
+#
+# CEL variables:
+#   mcp.tool.name                                    -- the tool being called/listed
+#   jwt.resource_access["policy-mcp-server"].roles   -- client roles from exchanged token
+#   source.identity.serviceAccount                   -- agent SPIFFE identity via mesh mTLS
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tool-access-policy
+  namespace: example-tool-policy
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: policy-mcp
+  backend:
+    mcp:
+      authentication:
+        provider: Keycloak
+        issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+        audiences:
+          - "policy-mcp-server"
+        jwks:
+          jwksPath: "/realms/agents/protocol/openid-connect/certs"
+          backendRef:
+            group: ""
+            kind: Service
+            name: keycloak
+            namespace: keycloak
+            port: 8080
+      authorization:
+        policy:
+          matchExpressions:
+            # Rule 1: Any tenant member (analyst/operator/admin) can list/read reports
+            - 'mcp.tool.name in ["list_reports", "read_report"] && ("analyst" in jwt.resource_access["policy-mcp-server"].roles || "operator" in jwt.resource_access["policy-mcp-server"].roles || "admin" in jwt.resource_access["policy-mcp-server"].roles)'
+            # Rule 2: operator or admin can execute queries
+            - 'mcp.tool.name == "execute_query" && ("operator" in jwt.resource_access["policy-mcp-server"].roles || "admin" in jwt.resource_access["policy-mcp-server"].roles)'
+            # Rule 3: Only admin + specific agent can modify config
+            - 'mcp.tool.name == "modify_config" && "admin" in jwt.resource_access["policy-mcp-server"].roles && source.identity.serviceAccount == "tool-policy-agent"'
+---
+# ── HTTPRoute: Agent access through waypoint ───────────────────────────────
+# Routes traffic to the agent's Service through the waypoint so that the
+# agent access policy can be evaluated. This applies to both north-south
+# (user to agent) and east-west (agent to agent) traffic.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: tool-policy-agent-access
+  namespace: example-tool-policy
+spec:
+  hostnames:
+    - tool-policy-agent.example-tool-policy.svc.cluster.local
+  parentRefs:
+    - name: agentgateway-waypoint
+  rules:
+    - backendRefs:
+        - name: tool-policy-agent
+          port: 8080
+---
+# ── Agent Access Policy (Layer 2) ──────────────────────────────────────────
+# Per-agent authorization at the waypoint. Controls which callers can invoke
+# the agent. Uses the user's original JWT -- audience is agent-specific so
+# each agent can independently control who may invoke it.
+#
+# Audience validation happens here (not at ingress). The ingress gateway is
+# a transport layer and only checks issuer + tenant claim. Each agent is a
+# resource server and requires its own audience in the token.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: agent-access-policy
+  namespace: example-tool-policy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: tool-policy-agent-access
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+          audiences:
+            - "tool-policy-agent"
+          jwks:
+            remote:
+              jwksPath: "/realms/agents/protocol/openid-connect/certs"
+              backendRef:
+                group: ""
+                kind: Service
+                name: keycloak
+                namespace: keycloak
+                port: 8080
+    authorization:
+      policy:
+        matchExpressions:
+          # Only users in tenant "acme" can call this agent
+          - 'jwt.claims.tenant == "acme"'

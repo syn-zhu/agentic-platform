@@ -26,7 +26,7 @@
     {
       "clientId": "agent-gateway",
       "name": "Agent Gateway",
-      "description": "AgentGateway OIDC client for JWT validation and token exchange",
+      "description": "AgentGateway OIDC client for user authentication flows",
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
       "secret": "",
@@ -107,20 +107,6 @@
             "access.token.claim": "true",
             "claim.name": "email",
             "jsonType.label": "String"
-          }
-        },
-        {
-          "name": "agent-gateway-audience",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "consentRequired": false,
-          "config": {
-            "id.token.claim": "true",
-            "lightweight.claim": "true",
-            "introspection.token.claim": "true",
-            "access.token.claim": "true",
-            "included.custom.audience": "agent-gateway",
-            "userinfo.token.claim": "false"
           }
         },
         {

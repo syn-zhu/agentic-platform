@@ -149,7 +149,7 @@ client pod → ztunnel → HBONE:15008 → waypoint → backend pod
 
 ### Auth Policies
 
-**`ingress-auth-policy.yaml`** — Ingress authentication policy. Enforces JWT validation on all inbound traffic through the ingress gateway: verifies token signature via Keycloak JWKS, checks issuer and `agent-gateway` audience, and requires a `tenant` claim. Applied automatically by `06-configure-keycloak.sh`.
+**`ingress-auth-policy.yaml`** — Ingress authentication policy. Enforces JWT validation on all inbound traffic through the ingress gateway: verifies token signature via Keycloak JWKS, checks issuer, and requires a `tenant` claim. No audience check at ingress -- the ingress gateway is a transport layer, not a resource server. Audience validation belongs at the per-agent waypoint policy. Applied automatically by `06-configure-keycloak.sh`.
 
 **Multi-tenancy model:** Tenant isolation uses Keycloak groups (`/tenants/<name>`) for FGAP V2 admin scoping, and client roles on per-MCP-server Keycloak clients for service-specific RBAC. Client roles appear in tokens under `resource_access.<client_id>.roles`.
 

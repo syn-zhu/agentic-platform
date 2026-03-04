@@ -2,13 +2,16 @@
 #
 # Enforces JWT authentication on all inbound traffic through the ingress
 # gateway (agentgateway-proxy). Every request must carry a valid Keycloak-
-# issued bearer token with the correct issuer, audience, and a tenant claim.
+# issued bearer token with the correct issuer and a tenant claim.
 #
 # What this enforces:
 #   1. Token signature validation via Keycloak JWKS endpoint
 #   2. Issuer must be the "agents" realm
-#   3. Audience must include "agent-gateway"
-#   4. Token must contain a "tenant" claim (multi-tenancy gate)
+#   3. Token must contain a "tenant" claim (multi-tenancy gate)
+#
+# No audience check at ingress -- the ingress gateway is a transport layer,
+# not a resource server. Audience validation belongs at the per-agent waypoint
+# policy, where each agent can require its own audience.
 #
 # Prerequisites: Keycloak must be running with the "agents" realm configured.
 ---
@@ -27,8 +30,6 @@ spec:
       mode: Strict
       providers:
         - issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
-          audiences:
-            - "agent-gateway"
           jwks:
             remote:
               jwksPath: "/realms/agents/protocol/openid-connect/certs"
