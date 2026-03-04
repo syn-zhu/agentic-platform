@@ -155,6 +155,28 @@ grafana-mcp:
     url: "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local:80/api"
     secretRef: "grafana-mcp-token"
 
+# ── querydoc (doc2vec MCP server with custom databases) ──
+#
+# Custom image includes upstream 13 docs DBs + platform-specific databases
+# fetched from S3 at build time. Source: vendor/doc2vec (submodule)
+#
+# Deploy:
+#   OPENAI_API_KEY=sk-... helmfile -l name=kagent apply
+querydoc:
+  image:
+    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
+    repository: "agentic-platform/querydoc"
+    tag: "v1.0.0"
+  openai:
+    apiKey: {{ requiredEnv "OPENAI_API_KEY" }}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
 # ═══════════════════════════════════════════════════════
 # OTEL Tracing → OTEL Collector → Langfuse
 # kagent agent pods use gRPC OTLP (hardcoded in kagent-core).
