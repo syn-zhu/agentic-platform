@@ -166,9 +166,9 @@ querydoc:
   image:
     registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
     repository: "agentic-platform/querydoc"
-    tag: "v1.0.0"
+    tag: "v1.1.0"
   openai:
-    apiKey: {{ requiredEnv "OPENAI_API_KEY" }}
+    apiKey: {{ requiredEnv "OPENAI_API_KEY" | quote }}
   resources:
     requests:
       cpu: 100m

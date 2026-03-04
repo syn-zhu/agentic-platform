@@ -170,7 +170,7 @@ releases:
     namespace: kagent-system
     chart: ../vendor/kagent/helm/kagent
     values:
-      - values/kagent.yaml
+      - values/kagent.yaml.gotmpl
     needs:
       - kagent-system/kagent-crds
       - agentgateway-system/agentgateway
