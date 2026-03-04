@@ -13,3 +13,6 @@
 [submodule "vendor/evermemos"]
 	path = vendor/evermemos
 	url = https://github.com/syn-zhu/EverMemOS.git
+[submodule "vendor/doc2vec"]
+	path = vendor/doc2vec
+	url = https://github.com/syn-zhu/doc2vec.git
