@@ -2,7 +2,6 @@
   "realm": "agents",
   "enabled": true,
   "displayName": "Agentic Platform",
-  "displayNameHtml": "<div class=\"kc-logo-text\"><span>Agentic Platform</span></div>",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
@@ -16,9 +15,6 @@
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
   "requiredCredentials": ["password"],
-  "defaultRoles": ["offline_access", "uma_authorization"],
-  "scopeMappings": [],
-  "clientScopeMappings": {},
   "clients": [
     {
       "clientId": "agent-gateway",
@@ -43,8 +39,7 @@
         "access.token.lifespan": "300"
       },
       "fullScopeAllowed": true,
-      "defaultClientScopes": ["profile", "email"],
-      "optionalClientScopes": ["offline_access"]
+      "defaultClientScopes": ["profile", "email"]
     },
     {
       "clientId": "agentregistry",
@@ -65,8 +60,7 @@
       "frontchannelLogout": false,
       "protocol": "openid-connect",
       "fullScopeAllowed": true,
-      "defaultClientScopes": ["profile", "email"],
-      "optionalClientScopes": ["offline_access"]
+      "defaultClientScopes": ["profile", "email"]
     }
   ],
   "clientScopes": [
@@ -164,134 +158,5 @@
       ]
     }
   ],
-  "defaultDefaultClientScopes": ["profile", "email"],
-  "defaultOptionalClientScopes": ["offline_access"],
-  "browserSecurityHeaders": {
-    "contentSecurityPolicyReportOnly": "",
-    "xContentTypeOptions": "nosniff",
-    "xRobotsTag": "none",
-    "xFrameOptions": "SAMEORIGIN",
-    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
-    "xXSSProtection": "1; mode=block",
-    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
-  },
-  "smtpServer": {},
-  "eventsEnabled": false,
-  "eventsListeners": ["jboss-logging"],
-  "adminEventsEnabled": false,
-  "identityProviders": [],
-  "identityProviderMappers": [],
-  "components": {
-    "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy": [
-      {
-        "name": "Consent Required",
-        "providerId": "consent-required",
-        "subType": "anonymous",
-        "subComponents": {},
-        "config": {}
-      },
-      {
-        "name": "Full Scope Disabled",
-        "providerId": "scope",
-        "subType": "anonymous",
-        "subComponents": {},
-        "config": {}
-      },
-      {
-        "name": "Max Clients Limit",
-        "providerId": "max-clients",
-        "subType": "anonymous",
-        "subComponents": {},
-        "config": {
-          "max-clients": ["200"]
-        }
-      },
-      {
-        "name": "Allowed Protocol Mapper Types",
-        "providerId": "allowed-protocol-mappers",
-        "subType": "authenticated",
-        "subComponents": {},
-        "config": {
-          "allowed-protocol-mapper-types": [
-            "saml-role-list-mapper",
-            "oidc-usermodel-attribute-mapper",
-            "oidc-usermodel-property-mapper",
-            "oidc-address-mapper",
-            "saml-user-attribute-mapper",
-            "oidc-full-name-mapper",
-            "saml-user-property-mapper",
-            "oidc-sha256-pairwise-sub-mapper"
-          ]
-        }
-      },
-      {
-        "name": "Allowed Client Scopes",
-        "providerId": "allowed-client-templates",
-        "subType": "authenticated",
-        "subComponents": {},
-        "config": {
-          "allow-default-scopes": ["true"]
-        }
-      },
-      {
-        "name": "Allowed Protocol Mapper Types",
-        "providerId": "allowed-protocol-mappers",
-        "subType": "anonymous",
-        "subComponents": {},
-        "config": {
-          "allowed-protocol-mapper-types": [
-            "oidc-usermodel-property-mapper",
-            "oidc-sha256-pairwise-sub-mapper",
-            "oidc-usermodel-attribute-mapper",
-            "saml-user-property-mapper",
-            "oidc-full-name-mapper",
-            "oidc-address-mapper",
-            "saml-role-list-mapper",
-            "saml-user-attribute-mapper"
-          ]
-        }
-      }
-    ]
-  },
-  "users": [
-    {
-      "username": "testuser",
-      "enabled": true,
-      "email": "test@platform.internal",
-      "emailVerified": true,
-      "firstName": "Test",
-      "lastName": "User",
-      "attributes": {
-        "tenant": ["team-alpha"]
-      },
-      "credentials": [
-        {
-          "type": "password",
-          "value": "testpass123"
-        }
-      ],
-      "realmRoles": ["offline_access", "uma_authorization"],
-      "clientRoles": {}
-    }
-  ],
-  "roles": {
-    "realm": [
-      {
-        "name": "offline_access",
-        "description": "Offline access",
-        "composite": false,
-        "clientRole": false,
-        "containerId": "agents"
-      },
-      {
-        "name": "uma_authorization",
-        "description": "User-Managed Access",
-        "composite": false,
-        "clientRole": false,
-        "containerId": "agents"
-      }
-    ]
-  },
-  "groups": [],
-  "userManagedAccessAllowed": false
+  "defaultDefaultClientScopes": ["profile", "email"]
 }
