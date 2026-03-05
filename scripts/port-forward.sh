@@ -13,6 +13,7 @@
 #   keycloak      http://localhost:15004
 #   kiali         http://localhost:15005
 #   agentregistry http://localhost:15006
+#   openfga       http://localhost:15007
 set -euo pipefail
 
 export AWS_PROFILE="${AWS_PROFILE:-agentic-platform}"
@@ -38,7 +39,7 @@ stop_all() {
 
   # 2. Sweep for orphaned kubectl port-forwards on our ports
   local orphans
-  orphans=$(pgrep -f 'kubectl port-forward.*1500[0-6]:' 2>/dev/null || true)
+  orphans=$(pgrep -f 'kubectl port-forward.*1500[0-7]:' 2>/dev/null || true)
   for pid in $orphans; do
     # Skip if we already killed it above
     [[ -f "$PID_DIR"/*.pid ]] 2>/dev/null && grep -qr "^${pid}$" "$PID_DIR" 2>/dev/null && continue
@@ -106,6 +107,7 @@ fi
 start_forward "keycloak"      keycloak              svc/keycloak                       15004 8080
 start_forward "kiali"         istio-system          svc/kiali                          15005 20001
 start_forward "agentregistry" agentregistry         svc/agentregistry                  15006 8080
+start_forward "openfga"       openfga               svc/openfga                        15007 3000
 
 echo ""
 echo "Run '$0 stop' to kill all forwards."
