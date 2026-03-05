@@ -7,6 +7,7 @@
 [submodule "vendor/kagent"]
 	path = vendor/kagent
 	url = https://github.com/syn-zhu/kagent.git
+	branch = main
 [submodule "vendor/kmcp"]
 	path = vendor/kmcp
 	url = https://github.com/syn-zhu/kmcp.git
