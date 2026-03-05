@@ -1,0 +1,82 @@
+# OpenFGA -- Platform Authorization Store
+# Chart: openfga/openfga v0.2.55 (OpenFGA v1.11.6)
+#
+# Integration:
+#   - External PostgreSQL (shared RDS with Langfuse/Keycloak, separate 'openfga' database)
+#   - Multi-tenant: one store per tenant/example, shared server
+#   - openfga-envoy (ext_authz adapter) deployed separately via manifests
+#   - OTEL traces -> otel-collector -> Langfuse
+#   - Prometheus metrics via ServiceMonitor (scraped by kube-prometheus-stack)
+
+# ═══════════════════════════════════════════════════════
+# Replicas
+# ═══════════════════════════════════════════════════════
+replicaCount: 1
+
+# ═══════════════════════════════════════════════════════
+# Datastore (external PostgreSQL on shared RDS)
+# ═══════════════════════════════════════════════════════
+datastore:
+  engine: postgres
+  uriSecret: openfga-db-credentials
+
+# ═══════════════════════════════════════════════════════
+# Ports
+# ═══════════════════════════════════════════════════════
+# HTTP API: 8080 (store/model/tuple CRUD, health checks)
+# gRPC API: 8081 (used by openfga-envoy for Check calls)
+# Playground: 3000
+grpc:
+  addr: "0.0.0.0:8081"
+
+http:
+  enabled: true
+  addr: "0.0.0.0:8080"
+
+playground:
+  enabled: true
+  port: 3000
+
+# ═══════════════════════════════════════════════════════
+# Observability
+# ═══════════════════════════════════════════════════════
+# Metrics: Prometheus via ServiceMonitor (kube-prometheus-stack scrapes all namespaces)
+# Traces: OTLP -> otel-collector -> Langfuse (same path as kagent/agentgateway)
+telemetry:
+  metrics:
+    enabled: true
+    addr: "0.0.0.0:2112"
+    serviceMonitor:
+      enabled: true
+      additionalLabels: {}
+      scrapeInterval: 30s
+  trace:
+    enabled: true
+    otlp:
+      endpoint: "otel-collector.langfuse.svc.cluster.local:4317"
+      tls:
+        enabled: false
+    sampleRatio: 1
+
+# ═══════════════════════════════════════════════════════
+# Resources
+# ═══════════════════════════════════════════════════════
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# ═══════════════════════════════════════════════════════
+# Service
+# ═══════════════════════════════════════════════════════
+service:
+  type: ClusterIP
+
+# ═══════════════════════════════════════════════════════
+# Disable bundled PostgreSQL subchart (we use external RDS)
+# ═══════════════════════════════════════════════════════
+postgresql:
+  enabled: false
