@@ -1,0 +1,143 @@
+# OpenFGA platform manifests
+# - DB credentials secret (for the OpenFGA Helm chart)
+# - openfga-envoy Deployment + Service + ConfigMap
+#
+# The OpenFGA server itself is deployed via Helm (see helmfile.yaml).
+# openfga-envoy is vendored at vendor/openfga-envoy/ with a patch for
+# per-request store_id resolution (store_id_header -> overrides config-level store_id).
+#
+# BUILD openfga-envoy:
+#   cd vendor/openfga-envoy/extauthz
+#   docker build -t <ECR_REPO>/openfga-envoy:latest .
+#   docker push <ECR_REPO>/openfga-envoy:latest
+#   Then update the image below.
+
+# ═══════════════════════════════════════════════════════
+# Database credentials for the OpenFGA Helm chart
+# ═══════════════════════════════════════════════════════
+# The Helm chart reads datastore.uriSecret to get the connection string.
+# Create this secret before deploying:
+#   kubectl create secret generic openfga-db-credentials \
+#     -n openfga \
+#     --from-literal=uri="postgres://openfga:<password>@agentic-platform-langfuse.csv6iaouck0m.us-east-1.rds.amazonaws.com:5432/openfga?sslmode=require"
+
+# ═══════════════════════════════════════════════════════
+# openfga-envoy: Envoy ext_authz gRPC adapter for OpenFGA
+# ═══════════════════════════════════════════════════════
+# Shared platform-level instance that serves all tenants.
+# Uses the store_id_header config to accept a per-request OpenFGA store_id.
+# The waypoint sets x-fga-store-id from ext_authz requestMetadata.
+#
+# Port: 9002 (gRPC ext_authz v3)
+# Config: YAML file mounted via ConfigMap
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-envoy-config
+  namespace: openfga
+  labels:
+    app: openfga-envoy
+    platform.agentic.io/component: openfga
+data:
+  config.yaml: |
+    server:
+      api_url: "http://openfga.openfga.svc.cluster.local:8080"
+      # No default store_id -- overridden per-request via x-fga-store-id header.
+      store_id: ""
+      authorization_model_id: ""
+      # Accept per-request store_id from ext_authz requestMetadata.
+      store_id_header: "x-fga-store-id"
+    extraction_sets:
+      - name: default
+        user:
+          type: header
+          config:
+            name: x-fga-user
+        object:
+          type: header
+          config:
+            name: x-fga-object
+        relation:
+          type: header
+          config:
+            name: x-fga-relation
+    mode: ENFORCE
+    log:
+      level: info
+      format: json
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfga-envoy
+  namespace: openfga
+  labels:
+    app: openfga-envoy
+    platform.agentic.io/component: openfga
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openfga-envoy
+  template:
+    metadata:
+      labels:
+        app: openfga-envoy
+        platform.agentic.io/component: openfga
+    spec:
+      containers:
+        - name: openfga-envoy
+          # Built from vendor/openfga-envoy/extauthz (see BUILD instructions at top of file).
+          # ECR repo created by 01-create-aws-resources.sh.
+          image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/openfga-envoy:latest
+          args:
+            - "--config=/etc/openfga-envoy/config.yaml"
+          ports:
+            - containerPort: 9002
+              name: grpc
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/openfga-envoy
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          livenessProbe:
+            grpc:
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            grpc:
+              port: 9002
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: openfga-envoy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openfga-envoy
+  namespace: openfga
+  labels:
+    app: openfga-envoy
+    platform.agentic.io/component: openfga
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9002
+      targetPort: grpc
+      name: grpc
+      protocol: TCP
+  selector:
+    app: openfga-envoy

@@ -4,7 +4,7 @@
 # Integration:
 #   - External PostgreSQL (shared RDS with Langfuse, separate 'keycloak' database)
 #   - AgentGateway JWT validation via AgentgatewayPolicy
-#   - Single "agents" realm with tenant claims for multi-tenancy
+#   - Single "agents" realm with Keycloak Organizations for multi-tenancy
 #   - Standard Token Exchange (RFC 8693) for agent-to-service audience scoping
 #   - Federated Client Authentication (K8s SA tokens as client assertions)
 
