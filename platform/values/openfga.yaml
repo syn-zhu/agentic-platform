@@ -19,6 +19,10 @@ replicaCount: 1
 datastore:
   engine: postgres
   uriSecret: openfga-db-credentials
+  # Migration runs as a Helm post-install hook (Job). The default init container
+  # (waitForMigrations) tries to find the Job to verify it succeeded, but the
+  # hook delete policy cleans it up. Disable the wait -- migration still runs.
+  waitForMigrations: false
 
 # ═══════════════════════════════════════════════════════
 # Ports
