@@ -155,7 +155,17 @@ else
   echo "  To enable semantic search later, set OPENAI_API_KEY and re-run this script."
 fi
 
-# ── 6. evermemos namespace secrets ──
+# ── 6. openfga namespace secrets ──
+echo "Creating secrets in openfga namespace..."
+
+# OpenFGA uses the shared RDS instance with a dedicated 'openfga' DB user
+# (created by 01-create-aws-resources.sh). The Helm chart reads datastore.uriSecret.
+kubectl create secret generic openfga-db-credentials \
+  --namespace openfga \
+  --from-literal=uri="postgres://openfga:${OPENFGA_DB_PASSWORD}@${RDS_ENDPOINT}:5432/openfga?sslmode=require" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# ── 7. evermemos namespace secrets ──
 echo "Creating secrets in evermemos namespace..."
 
 EVERMEMOS_MONGODB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)

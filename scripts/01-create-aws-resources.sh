@@ -213,6 +213,51 @@ kubectl run psql-agentregistry-schema --rm -i --restart=Never \
   2>/dev/null || echo "  agentregistry schema grants may already exist."
 echo "  agentregistry database and user ready."
 
+# ── 6. Create OpenFGA database and dedicated user ──
+echo ""
+echo "Creating openfga database on RDS via in-cluster psql pod..."
+OPENFGA_DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+
+kubectl run psql-openfga-db --rm -i --restart=Never \
+  --image=postgres:17-alpine \
+  --env="PGPASSWORD=${DB_PASSWORD}" \
+  -- psql "postgresql://langfuse:${DB_PASSWORD}@${RDS_ENDPOINT}:5432/langfuse" \
+  -c "CREATE DATABASE openfga;" \
+  2>/dev/null || echo "  openfga database may already exist."
+
+echo "Creating dedicated openfga database user..."
+kubectl run psql-openfga-user --rm -i --restart=Never \
+  --image=postgres:17-alpine \
+  --env="PGPASSWORD=${DB_PASSWORD}" \
+  -- psql "postgresql://langfuse:${DB_PASSWORD}@${RDS_ENDPOINT}:5432/langfuse" \
+  -c "CREATE USER openfga WITH PASSWORD '${OPENFGA_DB_PASSWORD}';" \
+  -c "GRANT ALL PRIVILEGES ON DATABASE openfga TO openfga;" \
+  -c "ALTER DATABASE openfga OWNER TO openfga;" \
+  2>/dev/null || echo "  openfga user may already exist."
+
+kubectl run psql-openfga-schema --rm -i --restart=Never \
+  --image=postgres:17-alpine \
+  --env="PGPASSWORD=${DB_PASSWORD}" \
+  -- psql "postgresql://langfuse:${DB_PASSWORD}@${RDS_ENDPOINT}:5432/openfga" \
+  -c "GRANT ALL ON SCHEMA public TO openfga;" \
+  -c "ALTER SCHEMA public OWNER TO openfga;" \
+  2>/dev/null || echo "  openfga schema grants may already exist."
+echo "  openfga database and user ready."
+
+# ── 7. Create ECR repository for openfga-envoy ──
+echo ""
+echo "Creating ECR repository for openfga-envoy..."
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+
+aws ecr create-repository \
+  --repository-name "agentic-platform/openfga-envoy" \
+  --region "$REGION" \
+  --image-scanning-configuration scanOnPush=true \
+  --tags "Key=project,Value=agentic-platform" \
+  2>/dev/null || echo "  ECR repository may already exist."
+echo "  ECR repo: ${ECR_REGISTRY}/agentic-platform/openfga-envoy"
+
 # ── Save outputs to .env ──
 echo ""
 echo "=== AWS Resources Created ==="
@@ -229,6 +274,7 @@ REDIS_PASSWORD=$REDIS_PASSWORD
 S3_BUCKET=$S3_BUCKET
 S3_REGION=$REGION
 AGENTREGISTRY_DB_PASSWORD=$AGENTREGISTRY_DB_PASSWORD
+OPENFGA_DB_PASSWORD=$OPENFGA_DB_PASSWORD
 EOF
 
 echo "AWS outputs appended to $ENV_FILE"
