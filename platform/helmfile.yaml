@@ -24,6 +24,8 @@ repositories:
     url: https://kubernetes.github.io/autoscaler
   - name: codecentric
     url: https://codecentric.github.io/helm-charts
+  - name: openfga
+    url: https://openfga.github.io/helm-charts
 
 helmDefaults:
   createNamespace: true
@@ -134,6 +136,13 @@ releases:
     version: "7.1.8"
     values:
       - values/keycloak.yaml
+
+  - name: openfga
+    namespace: openfga
+    chart: openfga/openfga
+    version: "0.2.55"
+    values:
+      - values/openfga.yaml
 
   # ════════════════════════════════════════════════════
   # Phase 2b: Policy Engine
