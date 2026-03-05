@@ -2,6 +2,7 @@
   "realm": "agents",
   "enabled": true,
   "displayName": "Agentic Platform",
+  "organizationsEnabled": true,
   "registrationAllowed": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
@@ -15,13 +16,7 @@
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
   "requiredCredentials": ["password"],
-  "groups": [
-    {
-      "name": "tenants",
-      "path": "/tenants",
-      "subGroups": []
-    }
-  ],
+  "groups": [],
   "clients": [
     {
       "clientId": "agent-gateway",
@@ -46,7 +41,7 @@
         "access.token.lifespan": "300"
       },
       "fullScopeAllowed": true,
-      "defaultClientScopes": ["profile", "email"]
+      "defaultClientScopes": ["profile", "email", "organization"]
     },
     {
       "clientId": "agentregistry",
@@ -67,7 +62,7 @@
       "frontchannelLogout": false,
       "protocol": "openid-connect",
       "fullScopeAllowed": true,
-      "defaultClientScopes": ["profile", "email"]
+      "defaultClientScopes": ["profile", "email", "organization"]
     }
   ],
   "clientScopes": [
@@ -110,21 +105,6 @@
           }
         },
         {
-          "name": "tenant",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-usermodel-attribute-mapper",
-          "consentRequired": false,
-          "config": {
-            "introspection.token.claim": "true",
-            "userinfo.token.claim": "true",
-            "user.attribute": "tenant",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
-            "claim.name": "tenant",
-            "jsonType.label": "String"
-          }
-        },
-        {
           "name": "sub",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-sub-mapper",
@@ -149,7 +129,30 @@
           }
         }
       ]
+    },
+    {
+      "name": "organization",
+      "description": "Keycloak Organizations membership claim",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "organization",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-organization-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
-  "defaultDefaultClientScopes": ["profile", "email"]
+  "defaultDefaultClientScopes": ["profile", "email", "organization"]
 }
