@@ -25,8 +25,8 @@
 # Image build:
 #   cd /path/to/EverMemOS
 #   docker build --platform linux/amd64 \
-#     -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.0 .
-#   docker push 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.0
+#     -t 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.0 .
+#   docker push 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.0
 
 # =====================================================================
 # ConfigMap
@@ -689,7 +689,7 @@ spec:
         node-role: platform
       containers:
         - name: evermemos
-          image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.1
+          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/evermemos:v1.0.1
           ports:
             - name: http
               containerPort: 1995

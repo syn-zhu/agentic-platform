@@ -239,7 +239,7 @@ spec:
     callbacks for transparent memory integration.
   byo:
     deployment:
-      image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/personal-assistant:v0.1.0
+      image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/personal-assistant:v0.1.0
       args: ["personal_assistant"]
       replicas: 1
       env:

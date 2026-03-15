@@ -22,7 +22,7 @@ metadata:
   namespace: agentgateway-system
 spec:
   image:
-    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform"
+    registry: "268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform"
     repository: "agentgateway"
     tag: "0.12.0-waypoint"
   env:

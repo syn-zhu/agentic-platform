@@ -10,7 +10,7 @@
 
 postgresql:
   deploy: false
-  host: "agentic-platform-langfuse.csv6iaouck0m.us-east-1.rds.amazonaws.com"
+  host: "agentic-platform-langfuse.c8wxny7wgs2y.us-east-1.rds.amazonaws.com"
   port: 5432
   auth:
     username: langfuse
@@ -21,7 +21,7 @@ postgresql:
 
 redis:
   deploy: false
-  host: "master.agentic-platform-redis.eq2fwq.use1.cache.amazonaws.com"
+  host: "master.agentic-platform-redis.oay4mu.use1.cache.amazonaws.com"
   port: 6379
   tls:
     enabled: true

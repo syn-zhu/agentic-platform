@@ -143,6 +143,8 @@ releases:
     version: "0.2.55"
     values:
       - values/openfga.yaml
+    needs:
+      - monitoring/kube-prometheus-stack
 
   # ════════════════════════════════════════════════════
   # Phase 2b: Policy Engine

@@ -49,7 +49,7 @@ dbchecker:
 
 database:
   vendor: postgres
-  hostname: "agentic-platform-langfuse.csv6iaouck0m.us-east-1.rds.amazonaws.com"
+  hostname: "agentic-platform-langfuse.c8wxny7wgs2y.us-east-1.rds.amazonaws.com"
   port: 5432
   username: keycloak
   database: keycloak

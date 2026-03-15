@@ -18,7 +18,7 @@
 #   cd vendor/kagent
 #   make controller-manifests
 #   make build-controller \
-#     DOCKER_REGISTRY=701761900767.dkr.ecr.us-east-1.amazonaws.com \
+#     DOCKER_REGISTRY=268558157000.dkr.ecr.us-east-1.amazonaws.com \
 #     DOCKER_REPO=agentic-platform \
 #     CONTROLLER_IMAGE_NAME=kagent-controller \
 #     CONTROLLER_IMAGE_TAG=v0.7.13-patched
@@ -26,7 +26,7 @@
 # Rebuild agent image:
 #   cd vendor/kagent
 #   make build-kagent-adk build-app \
-#     DOCKER_REGISTRY=701761900767.dkr.ecr.us-east-1.amazonaws.com \
+#     DOCKER_REGISTRY=268558157000.dkr.ecr.us-east-1.amazonaws.com \
 #     DOCKER_REPO=agentic-platform \
 #     KAGENT_ADK_IMAGE_TAG=v0.7.13-patched \
 #     APP_IMAGE_NAME=kagent-app \
@@ -54,13 +54,13 @@ controller:
 
   # Patched image — see build instructions at top of file
   image:
-    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
+    registry: "268558157000.dkr.ecr.us-east-1.amazonaws.com"
     repository: "agentic-platform/kagent-controller"
     tag: "v0.7.13-patched"
 
   # Patched agent image — see build instructions at top of file
   agentImage:
-    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
+    registry: "268558157000.dkr.ecr.us-east-1.amazonaws.com"
     repository: "agentic-platform/kagent-app"
     tag: "v0.7.13-patched"
 
@@ -164,7 +164,7 @@ grafana-mcp:
 #   OPENAI_API_KEY=sk-... helmfile -l name=kagent apply
 querydoc:
   image:
-    registry: "701761900767.dkr.ecr.us-east-1.amazonaws.com"
+    registry: "268558157000.dkr.ecr.us-east-1.amazonaws.com"
     repository: "agentic-platform/querydoc"
     tag: "v1.2.0"
   openai:

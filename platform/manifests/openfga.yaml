@@ -91,7 +91,7 @@ spec:
         - name: openfga-envoy
           # Built from vendor/openfga-envoy/extauthz (see BUILD instructions at top of file).
           # ECR repo created by 01-create-aws-resources.sh.
-          image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/openfga-envoy:latest
+          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/openfga-envoy:latest
           args:
             - "--config=/etc/openfga-envoy/config.yaml"
           ports:

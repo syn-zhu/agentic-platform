@@ -261,7 +261,7 @@ spec:
     # allowing the pod to assume the IAM role for MongoDB MONGODB-AWS auth.
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "arn:aws:iam::701761900767:role/atlas-mcp-reader"
+        eks.amazonaws.com/role-arn: "arn:aws:iam::268558157000:role/atlas-mcp-reader"
         eks.amazonaws.com/sts-regional-endpoints: "true"
     resources:
       requests:

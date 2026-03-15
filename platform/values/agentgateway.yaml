@@ -21,9 +21,9 @@
 #
 # Tag and push to ECR:
 #   docker tag ghcr.io/agentgateway-dev/agentgateway-controller:v0.12.0-waypoint \
-#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway-controller:v0.12.0-waypoint
+#     268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway-controller:v0.12.0-waypoint
 #   docker push \
-#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway-controller:v0.12.0-waypoint
+#     268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway-controller:v0.12.0-waypoint
 #
 # ── Patched proxy image ──
 #
@@ -39,9 +39,9 @@
 #
 # Tag and push to ECR:
 #   docker tag agentgateway:0.12.0-waypoint \
-#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway:0.12.0-waypoint
+#     268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway:0.12.0-waypoint
 #   docker push \
-#     701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway:0.12.0-waypoint
+#     268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentgateway:0.12.0-waypoint
 #
 # ── Deploy ──
 #
@@ -50,14 +50,14 @@
 
 # Proxy (dataplane) image — used by all Gateway pods (ingress + waypoint)
 image:
-  registry: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform
+  registry: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform
   tag: "0.12.0-waypoint"
   pullPolicy: Always
 
 # Controller image
 controller:
   image:
-    registry: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform
+    registry: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform
     repository: agentgateway-controller
     tag: "v0.12.0-waypoint"
   replicaCount: 1

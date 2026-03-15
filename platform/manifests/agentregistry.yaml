@@ -15,8 +15,8 @@
 #   touch .env
 #   docker build --platform linux/amd64 \
 #     -f docker/server.Dockerfile \
-#     -t 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.0 .
-#   docker push 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.0
+#     -t 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.0 .
+#   docker push 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.0
 
 ---
 apiVersion: v1
@@ -122,7 +122,7 @@ spec:
         node-role: platform
       containers:
         - name: server
-          image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.3
+          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/agentregistry-server:v0.4.3
           ports:
             - name: http-api
               containerPort: 8080

@@ -197,7 +197,7 @@ spec:
   description: "Discovers MCP servers in the registry, connects to remote servers or deploys stdio servers on-demand, and calls their tools dynamically"
   byo:
     deployment:
-      image: 701761900767.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/mcp-deployer:v0.4.0
+      image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/mcp-deployer:v0.4.0
       args: ["mcp_deployer"]
       replicas: 1
       env:
