@@ -19,7 +19,6 @@ import (
 	"github.com/siyanzhu/agentic-platform/executor/internal/pasta"
 	"github.com/siyanzhu/agentic-platform/executor/internal/vm"
 	"github.com/siyanzhu/agentic-platform/executor/internal/vsock"
-	initpb "github.com/siyanzhu/agentic-platform/executor/internal/vsock/initpb"
 )
 
 // Runner orchestrates the full execution lifecycle:
@@ -99,21 +98,24 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		guestIP = ips[0].String()
 	}
 
-	initResp := &initpb.InitResponse{
-		Network: &initpb.NetworkConfig{
-			Ip: guestIP,
+	initCfg := &vsock.InitConfig{
+		Network: &vsock.NetworkConfig{
+			IP:        guestIP,
+			Gateway:   "169.254.1.1",
+			PrefixLen: 32,
+			MTU:       1500,
 		},
 		Files: r.guestFiles(),
 	}
 
 	vsockPath := filepath.Join(workDir, "vsock")
-	vsockSrv, err := vsock.NewServer(vsockPath, initResp)
+	vsockSrv, err := vsock.NewServer(vsockPath, initCfg)
 	if err != nil {
 		return fmt.Errorf("vsock server: %w", err)
 	}
 	defer vsockSrv.Close()
 
-	go vsockSrv.Serve(ctx)
+	go vsockSrv.Serve()
 
 	// Boot VM in pasta's dedicated netns.
 	bootCtx, bootCancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
@@ -196,22 +198,14 @@ func (r *Runner) teardown(ctx context.Context, log *slog.Logger, claimID, execID
 }
 
 // guestFiles returns the files to inject into the guest filesystem.
-func (r *Runner) guestFiles() []*initpb.FileConfig {
-	var files []*initpb.FileConfig
+func (r *Runner) guestFiles() []vsock.FileConfig {
+	var files []vsock.FileConfig
 
 	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
-		files = append(files, &initpb.FileConfig{
-			Path:    "/etc/resolv.conf",
-			Content: data,
-			Mode:    0644,
-		})
+		files = append(files, vsock.NewFileConfig("/etc/resolv.conf", data, "0644"))
 	}
 
-	files = append(files, &initpb.FileConfig{
-		Path:    "/etc/hosts",
-		Content: []byte("127.0.0.1 localhost\n::1 localhost\n"),
-		Mode:    0644,
-	})
+	files = append(files, vsock.NewFileConfig("/etc/hosts", []byte("127.0.0.1 localhost\n::1 localhost\n"), "0644"))
 
 	return files
 }

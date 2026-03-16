@@ -1,75 +1,93 @@
 package vsock
 
 import (
-	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
-
-	"github.com/containerd/ttrpc"
-	initpb "github.com/siyanzhu/agentic-platform/executor/internal/vsock/initpb"
 )
 
-// Server handles the vsock ttrpc protocol between the executor
-// (host) and the guest init process. Only serves the Init RPC
-// for config delivery — the executor talks to the agent directly
-// via pasta port forwarding on localhost.
-type Server struct {
-	listener net.Listener
-	ttrpc    *ttrpc.Server
-
-	// initResponse is set before VM boot and returned when
-	// the guest calls Init.
-	initResponse *initpb.InitResponse
-
-	closeOnce sync.Once
+// InitConfig is the JSON config sent to the guest init over vsock.
+// The guest init reads this with socat + jq.
+type InitConfig struct {
+	Network *NetworkConfig `json:"network,omitempty"`
+	Files   []FileConfig   `json:"files,omitempty"`
 }
 
-// NewServer creates a vsock ttrpc server listening on the given
-// Unix socket path (Firecracker proxies vsock to this socket).
-func NewServer(socketPath string, initResp *initpb.InitResponse) (*Server, error) {
+type NetworkConfig struct {
+	IP        string `json:"ip"`
+	Gateway   string `json:"gateway"`
+	PrefixLen int    `json:"prefix_len"`
+	MTU       int    `json:"mtu"`
+}
+
+type FileConfig struct {
+	Path          string `json:"path"`
+	ContentBase64 string `json:"content_base64"`
+	Mode          string `json:"mode"`
+}
+
+// NewFileConfig creates a FileConfig with base64-encoded content.
+func NewFileConfig(path string, content []byte, mode string) FileConfig {
+	return FileConfig{
+		Path:          path,
+		ContentBase64: base64.StdEncoding.EncodeToString(content),
+		Mode:          mode,
+	}
+}
+
+// Server listens on a Unix socket (Firecracker vsock proxy) and
+// sends the init config as JSON when the guest connects.
+type Server struct {
+	listener net.Listener
+	config   *InitConfig
+	once     sync.Once
+}
+
+// NewServer creates a vsock config server on the given socket path.
+func NewServer(socketPath string, config *InitConfig) (*Server, error) {
+	// Remove stale socket.
+	os.Remove(socketPath)
+
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
 
-	s := &Server{
-		listener:     ln,
-		initResponse: initResp,
-	}
+	return &Server{
+		listener: ln,
+		config:   config,
+	}, nil
+}
 
-	ttrpcServer, err := ttrpc.NewServer()
+// Serve accepts one connection, writes the config as JSON, and closes.
+// Blocks until the guest connects or the listener is closed.
+func (s *Server) Serve() {
+	slog.Info("vsock server waiting for guest", "addr", s.listener.Addr())
+
+	conn, err := s.listener.Accept()
 	if err != nil {
-		ln.Close()
-		return nil, fmt.Errorf("create ttrpc server: %w", err)
+		slog.Warn("vsock accept error", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	if err := json.NewEncoder(conn).Encode(s.config); err != nil {
+		slog.Warn("vsock write error", "error", err)
+		return
 	}
 
-	initpb.RegisterInitControlService(ttrpcServer, s)
-	s.ttrpc = ttrpcServer
-
-	return s, nil
+	slog.Info("vsock config sent to guest")
 }
 
-// Serve starts accepting connections. Blocks until the listener is closed.
-func (s *Server) Serve(ctx context.Context) error {
-	slog.Info("vsock server serving", "addr", s.listener.Addr())
-	return s.ttrpc.Serve(ctx, s.listener)
-}
-
-// Close shuts down the ttrpc server and listener.
+// Close shuts down the listener.
 func (s *Server) Close() error {
 	var err error
-	s.closeOnce.Do(func() {
-		s.ttrpc.Close()
+	s.once.Do(func() {
 		err = s.listener.Close()
 	})
 	return err
-}
-
-// Init implements the InitControl ttrpc service.
-// Called by the guest init at boot to fetch network config and files.
-func (s *Server) Init(ctx context.Context, req *initpb.InitRequest) (*initpb.InitResponse, error) {
-	slog.Info("guest called Init")
-	return s.initResponse, nil
 }

@@ -5,12 +5,8 @@ go 1.25.7
 require (
 	github.com/caarlos0/env/v11 v11.4.0
 	github.com/cilium/ebpf v0.21.0
-	github.com/containerd/ttrpc v1.2.8
 	github.com/containers/common v0.64.2
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
-	github.com/mdlayher/vsock v1.2.1
-	github.com/vishvananda/netlink v1.3.1
-	golang.org/x/sys v0.42.0
 	google.golang.org/grpc v1.79.2
 	google.golang.org/protobuf v1.36.11
 )
@@ -21,7 +17,6 @@ require (
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d // indirect
 	github.com/containerd/fifo v1.0.0 // indirect
-	github.com/containerd/log v0.1.0 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
 	github.com/containernetworking/plugins v1.7.1 // indirect
 	github.com/containers/storage v1.59.1 // indirect
@@ -44,7 +39,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/mitchellh/mapstructure v1.4.3 // indirect
 	github.com/moby/sys/capability v0.4.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
@@ -56,10 +50,11 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	go.mongodb.org/mongo-driver v1.8.3 // indirect
 	golang.org/x/net v0.48.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
