@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-const (
-	// Fixed container filesystem paths — set by the pod template, not configurable.
+var (
+	// Container filesystem paths — defaults set by pod template.
 	ImageDir    = "/opt/firecracker"
 	WorkloadDir = "/workload"
 	AgentPort   = 8080
