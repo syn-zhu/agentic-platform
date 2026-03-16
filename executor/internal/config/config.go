@@ -7,18 +7,14 @@ import (
 	"time"
 )
 
-var (
-	// Container filesystem paths — defaults set by pod template.
-	ImageDir    = "/opt/firecracker"
-	WorkloadDir = "/workload"
-	AgentPort   = 8080
-)
-
 // Config holds all executor configuration.
 type Config struct {
 	ListenAddr       string
 	PoolOperatorAddr string
 	LeaseTTL         time.Duration
+	ImageDir         string
+	WorkloadDir      string
+	AgentPort        int
 	VCPUs            int
 	Memory           string
 	BootTimeout      time.Duration
@@ -31,6 +27,9 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:       envOr("LISTEN_ADDR", ":9090"),
 		PoolOperatorAddr: os.Getenv("POOL_OPERATOR_ADDR"),
+		ImageDir:         envOr("IMAGE_DIR", "/opt/firecracker"),
+		WorkloadDir:      envOr("WORKLOAD_DIR", "/workload"),
+		AgentPort:        envIntOr("AGENT_PORT", 8080),
 		VCPUs:            envIntOr("VCPUS", 1),
 		Memory:           envOr("MEMORY", "256M"),
 	}

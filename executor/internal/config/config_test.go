@@ -24,15 +24,14 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.BootTimeout != 30*time.Second {
 		t.Errorf("BootTimeout = %v, want 30s", cfg.BootTimeout)
 	}
-	// Constants (not in Config struct)
-	if config.AgentPort != 8080 {
-		t.Errorf("AgentPort = %d, want 8080", config.AgentPort)
+	if cfg.AgentPort != 8080 {
+		t.Errorf("AgentPort = %d, want 8080", cfg.AgentPort)
 	}
-	if config.ImageDir != "/opt/firecracker" {
-		t.Errorf("ImageDir = %q, want %q", config.ImageDir, "/opt/firecracker")
+	if cfg.ImageDir != "/opt/firecracker" {
+		t.Errorf("ImageDir = %q, want %q", cfg.ImageDir, "/opt/firecracker")
 	}
-	if config.WorkloadDir != "/workload" {
-		t.Errorf("WorkloadDir = %q, want %q", config.WorkloadDir, "/workload")
+	if cfg.WorkloadDir != "/workload" {
+		t.Errorf("WorkloadDir = %q, want %q", cfg.WorkloadDir, "/workload")
 	}
 }
 

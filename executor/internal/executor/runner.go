@@ -73,7 +73,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	}
 
 	// Prepare vsock server with Init response.
-	workDir := filepath.Join(config.WorkloadDir, execID)
+	workDir := filepath.Join(r.cfg.WorkloadDir, execID)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
@@ -91,7 +91,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		PayloadHeaders: map[string]string{
 			"Content-Type": "application/json",
 		},
-		AgentPort: int32(config.AgentPort),
+		AgentPort: int32(r.cfg.AgentPort),
 	}
 
 	vsockPath := filepath.Join(workDir, "vsock")
@@ -109,8 +109,8 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	defer bootCancel()
 
 	vmCfg := vm.Config{
-		KernelPath: filepath.Join(config.ImageDir, "vmlinux"),
-		RootfsPath: filepath.Join(config.ImageDir, "rootfs.ext4"),
+		KernelPath: filepath.Join(r.cfg.ImageDir, "vmlinux"),
+		RootfsPath: filepath.Join(r.cfg.ImageDir, "rootfs.ext4"),
 		TAPName:    r.netCfg.TAPName,
 		VCPUs:      r.cfg.VCPUs,
 		MemoryMB:   parseMemoryMB(r.cfg.Memory),
@@ -191,7 +191,7 @@ func (r *Runner) teardown(ctx context.Context, log *slog.Logger, claimID, execID
 	}
 
 	// Clean work directory.
-	workDir := filepath.Join(config.WorkloadDir, execID)
+	workDir := filepath.Join(r.cfg.WorkloadDir, execID)
 	if err := os.RemoveAll(workDir); err != nil {
 		log.Warn("work dir cleanup error", "error", err)
 	}
