@@ -423,6 +423,10 @@ Not forking, but using as reference for implementation patterns:
 - **TAP creation** (`fctr/internal/net/tap.go`): IFF_VNET_HDR | IFF_NO_PI flags, owner/group setup, MTU matching
 - **Config patterns** (`fctr/internal/config/`): env var loading, validation
 
+## Open Questions
+
+- **DNS as information disclosure:** ztunnel's DNS proxy forwards all unknown queries to kube-dns, which means a tenant's agent can resolve internal service names and discover cluster topology without making a connection. This is a platform-wide multi-tenancy concern, not executor-specific. Options include a per-tenant DNS forwarder with an allowlist, per-tenant CoreDNS, or NetworkPolicy-based DNS restriction. See also [istio/istio#54020](https://github.com/istio/istio/issues/54020) for upstream work on UDP/DNS support for the reroute-virtual-interfaces annotation.
+
 ## What We Explicitly Do Not Include
 
 - **tc redirect networking** — replaced by routed TAP
