@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	GroupVersion  = schema.GroupVersion{Group: "agentic.example.com", Version: "v1alpha1"}
+	GroupVersion  = schema.GroupVersion{Group: "pool.agentic.dev", Version: "v1alpha1"}
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
 	AddToScheme   = SchemeBuilder.AddToScheme
 )

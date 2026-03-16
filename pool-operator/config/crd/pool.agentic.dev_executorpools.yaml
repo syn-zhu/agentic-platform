@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: executorpools.agentic.example.com
+  name: executorpools.pool.agentic.dev
 spec:
-  group: agentic.example.com
+  group: pool.agentic.dev
   names:
     kind: ExecutorPool
     listKind: ExecutorPoolList

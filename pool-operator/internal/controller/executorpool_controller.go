@@ -16,7 +16,7 @@ import (
 	"github.com/siyanzhu/agentic-platform/pool-operator/internal/pool"
 )
 
-const finalizerName = "agentic.example.com/pool-cleanup"
+const finalizerName = "pool.agentic.dev/pool-cleanup"
 
 type ExecutorPoolReconciler struct {
 	client.Client
