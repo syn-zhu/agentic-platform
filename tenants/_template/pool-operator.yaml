@@ -1,41 +1,46 @@
+# Per-tenant pool operator deployment.
+# Manages ExecutorPool CRs and warm executor pods within this namespace only.
+#
+# Substitution variables (replaced by onboarding script):
+#   ${NAMESPACE} — the tenant's namespace name
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: pool-operator
-  namespace: executor-system
+  namespace: ${NAMESPACE}
 ---
+# Per-namespace Role (not ClusterRole) — operator can only manage
+# pods and ExecutorPools within its own namespace.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: pool-operator
+  namespace: ${NAMESPACE}
 rules:
-  # Manage pods for the warm pool.
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list, watch, create, delete, patch, update]
-  # Watch and update ExecutorPool CRDs.
   - apiGroups: [pool.agentic.dev]
     resources: [executorpools, executorpools/status]
     verbs: [get, list, watch, update, patch]
-  # Leader election via Lease.
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
     verbs: [get, list, watch, create, update, patch, delete]
-  # Events for recording pool actions.
   - apiGroups: [""]
     resources: [events]
     verbs: [create, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: pool-operator
+  namespace: ${NAMESPACE}
 subjects:
   - kind: ServiceAccount
     name: pool-operator
-    namespace: executor-system
+    namespace: ${NAMESPACE}
 roleRef:
-  kind: ClusterRole
+  kind: Role
   name: pool-operator
   apiGroup: rbac.authorization.k8s.io
 ---
@@ -43,7 +48,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: pool-operator
-  namespace: executor-system
+  namespace: ${NAMESPACE}
 spec:
   replicas: 1
   selector:
@@ -70,25 +75,25 @@ spec:
               port: 8081
             periodSeconds: 5
           env:
+            - name: NAMESPACE
+              value: "${NAMESPACE}"
             - name: LISTEN_ADDR
               value: ":50051"
-            - name: NAMESPACE
-              value: executor-system
             - name: HEALTH_ADDR
               value: ":8081"
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 50m
+              memory: 64Mi
             limits:
-              cpu: 500m
-              memory: 256Mi
+              cpu: 200m
+              memory: 128Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: pool-operator
-  namespace: executor-system
+  namespace: ${NAMESPACE}
 spec:
   selector:
     app: pool-operator

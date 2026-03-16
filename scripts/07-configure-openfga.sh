@@ -12,7 +12,7 @@ echo "=== Phase 7: Configuring OpenFGA ==="
 # The OpenFGA server is deployed via Helm (helmfile sync in 03-deploy-platform.sh).
 # This script builds and pushes the openfga-envoy image, deploys the ext_authz
 # adapter, and verifies everything is healthy.
-# It does NOT create stores, models, or tuples -- those are tenant-scoped.
+# It does NOT create stores or models -- those are created per-tenant during onboarding.
 
 REGION="us-east-1"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
@@ -27,7 +27,7 @@ kubectl rollout status deployment/openfga -n openfga --timeout=120s
 # Build and push openfga-envoy image
 # ══════════════════════════════════════════════════════════════════
 # openfga-envoy is vendored at vendor/openfga-envoy/ with patches for
-# per-request store name resolution. No upstream image is published.
+# per-request store ID resolution via header. No upstream image is published.
 
 echo ""
 echo "Building openfga-envoy image..."
@@ -98,7 +98,5 @@ echo "openfga-envoy:     openfga-envoy.openfga.svc.cluster.local:9002 (ext_authz
 echo "Playground:        openfga.openfga.svc.cluster.local:3000"
 echo "Image:             $OPENFGA_ENVOY_IMAGE"
 echo ""
-echo "No stores or models have been created. Tenants create their own via:"
-echo "  curl -X POST http://openfga.openfga.svc.cluster.local:8080/stores \\"
-echo "    -H 'Content-Type: application/json' \\"
-echo "    -d '{\"name\": \"<tenant-name>\"}'"
+echo "No stores or models have been created."
+echo "Stores and models are created per-tenant during onboarding (05-onboard-tenant.sh)."

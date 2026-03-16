@@ -1,0 +1,155 @@
+{
+  "schema_version": "1.1",
+  "type_definitions": [
+    {
+      "type": "user"
+    },
+    {
+      "type": "organization",
+      "relations": {
+        "member": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "member": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "tool_server",
+      "relations": {
+        "org": {
+          "this": {}
+        },
+        "member_of_org": {
+          "tupleToUserset": {
+            "tupleset": { "relation": "org" },
+            "computedUserset": { "relation": "member" }
+          }
+        },
+        "analyst": {
+          "intersection": {
+            "child": [
+              { "this": {} },
+              { "computedUserset": { "relation": "member_of_org" } }
+            ]
+          }
+        },
+        "operator": {
+          "intersection": {
+            "child": [
+              { "this": {} },
+              { "computedUserset": { "relation": "member_of_org" } }
+            ]
+          }
+        },
+        "admin": {
+          "intersection": {
+            "child": [
+              { "this": {} },
+              { "computedUserset": { "relation": "member_of_org" } }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "org": {
+            "directly_related_user_types": [
+              { "type": "organization" }
+            ]
+          },
+          "member_of_org": {
+            "directly_related_user_types": []
+          },
+          "analyst": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          },
+          "operator": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          },
+          "admin": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "tool",
+      "relations": {
+        "parent": {
+          "this": {}
+        },
+        "direct_grant": {
+          "this": {}
+        },
+        "analyst_on_parent": {
+          "tupleToUserset": {
+            "tupleset": { "relation": "parent" },
+            "computedUserset": { "relation": "analyst" }
+          }
+        },
+        "operator_on_parent": {
+          "tupleToUserset": {
+            "tupleset": { "relation": "parent" },
+            "computedUserset": { "relation": "operator" }
+          }
+        },
+        "admin_on_parent": {
+          "tupleToUserset": {
+            "tupleset": { "relation": "parent" },
+            "computedUserset": { "relation": "admin" }
+          }
+        },
+        "can_call": {
+          "union": {
+            "child": [
+              { "computedUserset": { "relation": "direct_grant" } },
+              { "computedUserset": { "relation": "analyst_on_parent" } },
+              { "computedUserset": { "relation": "operator_on_parent" } },
+              { "computedUserset": { "relation": "admin_on_parent" } }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "parent": {
+            "directly_related_user_types": [
+              { "type": "tool_server" }
+            ]
+          },
+          "direct_grant": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          },
+          "analyst_on_parent": {
+            "directly_related_user_types": []
+          },
+          "operator_on_parent": {
+            "directly_related_user_types": []
+          },
+          "admin_on_parent": {
+            "directly_related_user_types": []
+          },
+          "can_call": {
+            "directly_related_user_types": []
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,8 +1,14 @@
+# Per-tenant ExecutorPool CR.
+# Creates and manages a warm pool of Firecracker executor pods.
+#
+# Substitution variables (replaced by onboarding script):
+#   ${NAMESPACE} — the tenant's namespace name
+#   ${ROOTFS_IMAGE} — ECR image for the agent rootfs
 apiVersion: pool.agentic.dev/v1alpha1
 kind: ExecutorPool
 metadata:
-  name: poc-agent
-  namespace: executor-system
+  name: default
+  namespace: ${NAMESPACE}
 spec:
   desired: 2
   leaseTTL: 30s
@@ -12,9 +18,7 @@ spec:
     metadata:
       labels:
         app: executor
-        pool.agentic.dev/pool: poc-agent
-      annotations:
-        istio.io/reroute-virtual-interfaces: "fctr-tap0"
+        pool.agentic.dev/pool: default
     spec:
       nodeSelector:
         node.kubernetes.io/instance-type: c5.metal
@@ -24,7 +28,7 @@ spec:
           effect: NoSchedule
       initContainers:
         - name: rootfs
-          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/poc-agent-rootfs:v3
+          image: ${ROOTFS_IMAGE}
           imagePullPolicy: Always
           command: ["sh", "-c", "cp /rootfs.ext4 /out/rootfs.ext4 && cp /image-config.json /out/image-config.json"]
           volumeMounts:
@@ -44,27 +48,16 @@ spec:
             initialDelaySeconds: 2
           env:
             - name: POOL_OPERATOR_ADDR
-              value: "pool-operator.executor-system.svc:50051"
+              value: "pool-operator.${NAMESPACE}.svc:50051"
             - name: LEASE_TTL
               value: "30s"
             - name: VCPUS
               value: "1"
             - name: MEMORY_MB
               value: "256"
-            - name: AGENT_COMMAND
-              value: "/entrypoint.sh"
-            - name: AGENT_PORT
-              value: "8080"
           securityContext:
             capabilities:
               add: [NET_ADMIN, NET_RAW, SYS_ADMIN, MKNOD]
-          resources:
-            requests:
-              cpu: 250m
-              memory: 512Mi
-            limits:
-              cpu: "1"
-              memory: 1Gi
           volumeMounts:
             - name: guest-rootfs
               mountPath: /opt/firecracker/rootfs.ext4

@@ -73,11 +73,92 @@ kubectl create secret generic langfuse-api-keys \
 echo "Applying ModelConfig..."
 kubectl apply -f "$TENANT_DIR/modelconfig.yaml"
 
+# ── Create OpenFGA store and write authorization model ──
+# Each tenant gets an isolated OpenFGA store. The authorization model is
+# platform-defined (same for all tenants) and written during onboarding.
+echo ""
+echo "Creating OpenFGA store..."
+
+OPENFGA_URL="http://openfga.openfga.svc.cluster.local:8080"
+OPENFGA_MODEL="$ROOT_DIR/platform/manifests/openfga-model.json"
+
+# Create store (or find existing)
+EXISTING_STORE_ID=$(kubectl run openfga-curl-$RANDOM --rm -i --restart=Never \
+  --image=curlimages/curl:latest -n openfga \
+  -- curl -sf "$OPENFGA_URL/stores" 2>/dev/null \
+  | python3 -c "
+import sys, json
+stores = json.load(sys.stdin).get('stores', [])
+matches = [s['id'] for s in stores if s.get('name') == '${TENANT_NAME}']
+print(matches[0] if matches else '')
+" 2>/dev/null || echo "")
+
+if [[ -n "$EXISTING_STORE_ID" ]]; then
+  echo "  Store '$TENANT_NAME' already exists: $EXISTING_STORE_ID"
+  OPENFGA_STORE_ID="$EXISTING_STORE_ID"
+else
+  STORE_RESPONSE=$(kubectl run openfga-curl-$RANDOM --rm -i --restart=Never \
+    --image=curlimages/curl:latest -n openfga \
+    -- curl -sf -X POST "$OPENFGA_URL/stores" \
+       -H "Content-Type: application/json" \
+       -d "{\"name\": \"${TENANT_NAME}\"}" 2>/dev/null)
+  OPENFGA_STORE_ID=$(echo "$STORE_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+
+  if [[ -z "$OPENFGA_STORE_ID" ]]; then
+    echo "  WARNING: Failed to create OpenFGA store. Tool-level access policies will not work."
+    echo "  Response: $STORE_RESPONSE"
+  else
+    echo "  Store created: $OPENFGA_STORE_ID"
+  fi
+fi
+
+if [[ -n "$OPENFGA_STORE_ID" ]]; then
+  echo "Writing authorization model..."
+  # Create a ConfigMap with the model JSON to mount into the curl pod
+  kubectl create configmap openfga-model-json \
+    --namespace openfga \
+    --from-file=model.json="$OPENFGA_MODEL" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  MODEL_RESPONSE=$(kubectl run openfga-model-$RANDOM --rm -i --restart=Never \
+    --image=curlimages/curl:latest -n openfga \
+    --overrides='{
+      "spec": {
+        "volumes": [{"name": "model", "configMap": {"name": "openfga-model-json"}}],
+        "containers": [{
+          "name": "curl",
+          "image": "curlimages/curl:latest",
+          "command": ["curl", "-sf", "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-d", "@/model/model.json",
+            "'"$OPENFGA_URL/stores/$OPENFGA_STORE_ID/authorization-models"'"],
+          "volumeMounts": [{"name": "model", "mountPath": "/model", "readOnly": true}]
+        }]
+      }
+    }' 2>/dev/null)
+
+  MODEL_ID=$(echo "$MODEL_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('authorization_model_id',''))" 2>/dev/null)
+  if [[ -n "$MODEL_ID" ]]; then
+    echo "  Authorization model written: $MODEL_ID"
+  else
+    echo "  WARNING: Failed to write authorization model."
+    echo "  Response: $MODEL_RESPONSE"
+  fi
+
+  # Store the store ID as a secret in the tenant namespace for use by policies
+  kubectl create secret generic openfga-store \
+    --namespace "$TENANT_NS" \
+    --from-literal=store-id="$OPENFGA_STORE_ID" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "  Store ID saved as Secret 'openfga-store' in $TENANT_NS."
+fi
+
 echo ""
 echo "=== Tenant '$TENANT_NAME' onboarded ==="
 echo ""
 echo "Namespace:  $TENANT_NS"
 echo "Langfuse public key:  $TENANT_PK"
+echo "OpenFGA store ID:  ${OPENFGA_STORE_ID:-not created}"
 echo ""
 echo "The tenant can now deploy:"
 echo "  - Agents (kagent.dev/v1alpha2 Agent)"

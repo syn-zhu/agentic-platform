@@ -1,8 +1,8 @@
 # Example 07: Multi-Layer Access Policy Enforcement
 #
 # Demonstrates three layers of authorization for an agentic platform:
-#   1. Ingress authentication -- valid JWT with tenant claim required
-#   2. Agent access control -- per-agent waypoint policy (tenant check)
+#   1. Ingress authentication -- valid JWT with organization claim required
+#   2. Agent access control -- per-agent waypoint policy (organization check)
 #   3. Tool access control -- per-tool waypoint policy (client role + agent SPIFFE)
 #
 # Prerequisites:
@@ -270,9 +270,17 @@ spec:
 # and list_tools request. Uses OR semantics -- any matching rule allows.
 #
 # CEL variables:
-#   mcp.tool.name                                    -- the tool being called/listed
-#   jwt.resource_access["policy-mcp-server"].roles   -- client roles from exchanged token
-#   source.identity.serviceAccount                   -- agent SPIFFE identity via mesh mTLS
+#   mcp.tool.name                       -- the tool being called/listed
+#   jwt.resource_access[<sa>].roles     -- client roles from exchanged token
+#   source.identity.serviceAccount      -- agent SPIFFE identity via mesh mTLS
+#
+# Audience convention: the K8s service account identity in
+# system:serviceaccount:<namespace>:<name> format. This is the workload's actual
+# identity -- the same string that appears in the SA token's `sub` claim and that
+# Keycloak sees during federated client authentication. Using the raw SA format
+# unifies the OAuth audience with the infrastructure identity: the Keycloak client_id
+# IS the service account, via federated auth. Every workload (agent or MCP server)
+# uses its SA as both its OAuth client identity (outbound) and its audience (inbound).
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
@@ -287,9 +295,9 @@ spec:
     mcp:
       authentication:
         provider: Keycloak
-        issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+        issuer: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/agents"
         audiences:
-          - "policy-mcp-server"
+          - "system:serviceaccount:example-tool-policy:policy-mcp-server"
         jwks:
           jwksPath: "/realms/agents/protocol/openid-connect/certs"
           backendRef:
@@ -302,11 +310,11 @@ spec:
         policy:
           matchExpressions:
             # Rule 1: Any tenant member (analyst/operator/admin) can list/read reports
-            - 'mcp.tool.name in ["list_reports", "read_report"] && ("analyst" in jwt.resource_access["policy-mcp-server"].roles || "operator" in jwt.resource_access["policy-mcp-server"].roles || "admin" in jwt.resource_access["policy-mcp-server"].roles)'
+            - 'mcp.tool.name in ["list_reports", "read_report"] && ("analyst" in jwt.resource_access["system:serviceaccount:example-tool-policy:policy-mcp-server"].roles || "operator" in jwt.resource_access["system:serviceaccount:example-tool-policy:policy-mcp-server"].roles || "admin" in jwt.resource_access["system:serviceaccount:example-tool-policy:policy-mcp-server"].roles)'
             # Rule 2: operator or admin can execute queries
-            - 'mcp.tool.name == "execute_query" && ("operator" in jwt.resource_access["policy-mcp-server"].roles || "admin" in jwt.resource_access["policy-mcp-server"].roles)'
+            - 'mcp.tool.name == "execute_query" && ("operator" in jwt.resource_access["system:serviceaccount:example-tool-policy:policy-mcp-server"].roles || "admin" in jwt.resource_access["system:serviceaccount:example-tool-policy:policy-mcp-server"].roles)'
             # Rule 3: Only admin + specific agent can modify config
-            - 'mcp.tool.name == "modify_config" && "admin" in jwt.resource_access["policy-mcp-server"].roles && source.identity.serviceAccount == "tool-policy-agent"'
+            - 'mcp.tool.name == "modify_config" && "admin" in jwt.resource_access["system:serviceaccount:example-tool-policy:policy-mcp-server"].roles && source.identity.serviceAccount == "tool-policy-agent"'
 ---
 # ── HTTPRoute: Agent access through waypoint ───────────────────────────────
 # Routes traffic to the agent's Service through the waypoint so that the
@@ -333,7 +341,7 @@ spec:
 # each agent can independently control who may invoke it.
 #
 # Audience validation happens here (not at ingress). The ingress gateway is
-# a transport layer and only checks issuer + tenant claim. Each agent is a
+# a transport layer and only checks issuer + organization claim. Each agent is a
 # resource server and requires its own audience in the token.
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
@@ -349,9 +357,9 @@ spec:
     jwtAuthentication:
       mode: Strict
       providers:
-        - issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+        - issuer: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/agents"
           audiences:
-            - "tool-policy-agent"
+            - "system:serviceaccount:example-tool-policy:tool-policy-agent"
           jwks:
             remote:
               jwksPath: "/realms/agents/protocol/openid-connect/certs"
@@ -364,5 +372,81 @@ spec:
     authorization:
       policy:
         matchExpressions:
-          # Only users in tenant "acme" can call this agent
-          - 'jwt.claims.tenant == "acme"'
+          # Only members of the "acme" organization can call this agent
+          - '"acme" in jwt.organization'
+---
+# ── Agent ─────────────────────────────────────────────────────────────────
+# Declarative agent with STS token exchange for MCP tool calls.
+#
+# Token exchange flow:
+#   1. User calls the agent with their JWT (audience: system:serviceaccount:example-tool-policy:tool-policy-agent)
+#   2. ADKTokenPropagationPlugin extracts the JWT from the request headers
+#   3. ADKSTSIntegration exchanges the user's JWT for an audience-scoped
+#      token targeting "system:serviceaccount:example-tool-policy:policy-mcp-server"
+#      (via Keycloak token exchange)
+#   4. The exchanged token is injected as Authorization header on outbound
+#      MCP tool calls
+#   5. The waypoint validates the exchanged token and evaluates CEL rules
+#
+# The agent authenticates to Keycloak's token endpoint using its K8s
+# service account token (projected volume) as a client_assertion. No
+# client_secret is stored -- the K8s SA token is cryptographically
+# verifiable by Keycloak via the EKS OIDC provider.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: tool-policy-agent
+  namespace: example-tool-policy
+  annotations:
+    platform.agentic.io/expose: "true"
+spec:
+  description: "Agent demonstrating multi-layer access policy enforcement with tool-level authorization"
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a data operations assistant with access to a secure reporting
+      system. You can list reports, read reports, execute queries, and modify
+      configuration -- but your access depends on the caller's permissions.
+
+      ## Available Tools
+
+      - list_reports -- List all available reports with their ID, title, and status
+      - read_report -- Read a specific report by ID
+      - execute_query -- Execute an arbitrary query string (requires operator or admin role)
+      - modify_config -- Modify a system configuration key (requires admin role)
+
+      ## Instructions
+
+      1. Use the appropriate tool based on the user's request
+      2. If a tool call is denied by the authorization system, explain that
+         the user lacks the required permissions for that operation
+      3. Do not attempt to bypass or work around authorization denials
+      4. When listing reports, present the results in a clear table format
+      5. For configuration changes, confirm the key and value before calling
+         modify_config
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: policy-mcp-server
+          kind: MCPServer
+          apiGroup: kagent.dev
+          allowedHeaders:
+            - Authorization
+    a2aConfig:
+      skills:
+        - id: secure-data-ops
+          name: Secure Data Operations
+          description: "Access reports, execute queries, and manage configuration with role-based access control"
+          tags:
+            - security
+            - rbac
+            - policy
+            - mcp
+    deployment:
+      env:
+        # STS_WELL_KNOWN_URI triggers the token exchange pipeline.
+        # The ADK runtime reads this env var and initializes
+        # ADKSTSIntegration + ADKTokenPropagationPlugin automatically.
+        - name: STS_WELL_KNOWN_URI
+          value: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/agents/.well-known/openid-configuration"
