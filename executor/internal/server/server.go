@@ -11,7 +11,7 @@ import (
 // Runner is called by the /run handler to execute a request.
 // It blocks until the execution completes, writing SSE chunks to w.
 type Runner interface {
-	Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error
+	Run(w http.ResponseWriter, claimID, execID, sessionID string, warm bool, payload io.Reader) error
 }
 
 // Server is the executor HTTP server.
@@ -39,7 +39,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if !s.sm.IsIdle() {
+	if !s.sm.IsAvailable() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
@@ -49,15 +49,18 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	claimID := r.Header.Get("X-Claim-Id")
 	execID := r.Header.Get("X-Execution-Id")
+	sessionID := r.Header.Get("X-Session-Id")
 
-	if claimID == "" || execID == "" {
+	if claimID == "" || execID == "" || sessionID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "X-Claim-Id and X-Execution-Id headers required",
+			"error": "X-Claim-Id, X-Execution-Id, and X-Session-Id headers required",
 		})
 		return
 	}
 
-	if !s.sm.IsIdle() {
+	warm := r.Header.Get("X-Warm") == "true"
+
+	if !s.sm.IsAvailable() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "executor busy",
 		})
@@ -71,7 +74,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.runner.Run(w, claimID, execID, r.Body); err != nil {
+	if err := s.runner.Run(w, claimID, execID, sessionID, warm, r.Body); err != nil {
 		// TODO: handle the case where SSE streaming has already started —
 		// once headers are flushed we can't change the status code.
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -81,9 +84,11 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"state": s.sm.State().String(),
-	})
+	state := s.sm.State()
+	resp := map[string]string{
+		"state": state.String(),
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/siyanzhu/agentic-platform/executor/internal/config"
@@ -22,18 +23,22 @@ import (
 	initpb "github.com/siyanzhu/agentic-platform/executor/internal/vsock/initpb"
 )
 
-// Runner orchestrates the full execution lifecycle:
-// state transitions → boot VM in pasta netns → HTTP to agent on localhost → teardown → release.
+// Runner orchestrates the full execution lifecycle including warm VM reuse.
 type Runner struct {
 	cfg    *config.Config
 	imgCfg *image.Config
 	sm     *StateMachine
 	lease  *lease.Client
-	pasta  *pasta.Instance // Started once at pod startup, reused across executions.
+	pasta  *pasta.Instance
+
+	// Warm VM state (protected by mu).
+	mu        sync.Mutex
+	machine   *vm.VM     // Current VM (nil when IDLE)
+	sessionID string     // Session cached in the warm VM
+	idleTimer *time.Timer // Fires when warm timeout expires
 }
 
-// NewRunner creates a runner with the given configuration.
-// Sets up pasta (once, for the lifetime of the pod).
+// NewRunner creates a runner. Starts pasta once for the pod's lifetime.
 func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, leaseClient *lease.Client) (*Runner, error) {
 	pastaInst, err := pasta.Setup(&pasta.Config{
 		AgentPort: imgCfg.Port,
@@ -52,74 +57,135 @@ func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, lease
 	}, nil
 }
 
-// Close tears down the pasta netns (pasta exits automatically).
+// Close tears down pasta and any running VM.
 func (r *Runner) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.idleTimer != nil {
+		r.idleTimer.Stop()
+	}
+	if r.machine != nil {
+		r.machine.Stop()
+		r.machine = nil
+	}
 	if r.pasta != nil {
 		r.pasta.Teardown()
 	}
 }
 
-// Run implements server.Runner. Blocks until execution completes,
-// streaming SSE from the agent to w.
-func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error {
+// Run handles a /run request. Behavior depends on current state:
+//   - IDLE: cold start (boot VM, then forward request)
+//   - WARM + matching session: warm resume (unpause VM, forward request)
+//   - WARM + different session: evict (teardown warm VM, then cold start)
+func (r *Runner) Run(w http.ResponseWriter, claimID, execID, sessionID string, warm bool, payload io.Reader) error {
 	ctx := context.Background()
-	log := slog.With("exec_id", execID, "claim_id", claimID)
+	log := slog.With("exec_id", execID, "claim_id", claimID, "session_id", sessionID)
 
-	// Read payload.
 	payloadBytes, err := io.ReadAll(payload)
 	if err != nil {
 		return fmt.Errorf("read payload: %w", err)
 	}
-
-	// IDLE → STARTING
-	if err := r.sm.Transition(Starting); err != nil {
-		return fmt.Errorf("transition to STARTING: %w", err)
-	}
-
-	// Ensure we always end up back at IDLE.
-	defer func() {
-		r.sm.Transition(Teardown)
-		r.teardown(ctx, log, claimID, execID)
-		r.sm.Transition(Idle)
-	}()
 
 	// Start lease renewal.
 	leaseCtx, leaseCancel := context.WithCancel(ctx)
 	defer leaseCancel()
 	r.lease.StartRenewal(leaseCtx, claimID)
 
-	// Prepare vsock server with Init response (config delivery to guest).
+	// Determine execution path based on state.
+	if warm && r.sm.IsWarm() && r.matchesSession(sessionID) {
+		// Warm resume — unpause the existing VM.
+		log.Info("warm resume")
+		r.stopIdleTimer()
+
+		if err := r.sm.Transition(Running); err != nil {
+			return fmt.Errorf("transition WARM→RUNNING: %w", err)
+		}
+
+		if err := r.machine.Unpause(ctx); err != nil {
+			r.teardownVM(log)
+			return fmt.Errorf("unpause: %w", err)
+		}
+	} else {
+		// Cold start — evict warm VM if present, then boot fresh.
+		if r.sm.IsWarm() {
+			log.Info("evicting warm session", "old_session", r.sessionID)
+			r.stopIdleTimer()
+			r.teardownVM(log)
+		}
+
+		if err := r.sm.Transition(Starting); err != nil {
+			return fmt.Errorf("transition to STARTING: %w", err)
+		}
+
+		if err := r.bootVM(ctx, log, execID); err != nil {
+			r.sm.Transition(Teardown)
+			r.sm.Transition(Idle)
+			return err
+		}
+
+		if err := r.sm.Transition(Running); err != nil {
+			r.teardownVM(log)
+			return fmt.Errorf("transition STARTING→RUNNING: %w", err)
+		}
+	}
+
+	// Forward payload to agent and stream response.
+	r.setSession(sessionID)
+	err = r.proxyRequest(ctx, log, w, execID, payloadBytes)
+
+	// Pause VM and transition to WARM (unless error requires teardown).
+	if err != nil {
+		log.Error("execution error, tearing down", "error", err)
+		r.teardownVM(log)
+		r.lease.Release(ctx, claimID)
+		return err
+	}
+
+	// Pause the VM — session stays cached in memory.
+	if pauseErr := r.machine.Pause(ctx); pauseErr != nil {
+		log.Error("pause failed, tearing down", "error", pauseErr)
+		r.teardownVM(log)
+		r.lease.Release(ctx, claimID)
+		return nil
+	}
+
+	r.sm.Transition(Warm)
+	r.startIdleTimer(log)
+	log.Info("VM paused, entering WARM state", "timeout", r.cfg.WarmTimeout)
+
+	// Release the claim — pod returns to pool as warm.
+	r.lease.Release(ctx, claimID)
+	return nil
+}
+
+// bootVM starts a new Firecracker VM in pasta's netns.
+func (r *Runner) bootVM(ctx context.Context, log *slog.Logger, execID string) error {
+	log.Info("booting VM (cold start)")
+
 	workDir := filepath.Join(r.cfg.WorkloadDir, execID)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
 
-	// pasta auto-configures the dedicated netns with the pod's network.
-	// The guest init still needs the config to set up eth0 inside the VM.
-	// Use the first IP from pasta's result.
+	// vsock for config delivery.
 	var guestIP string
 	if ips := r.pasta.IPAddresses(); len(ips) > 0 {
 		guestIP = ips[0].String()
 	}
-
 	initResp := &initpb.InitResponse{
-		Network: &initpb.NetworkConfig{
-			Ip: guestIP,
-		},
-		Files: r.guestFiles(),
+		Network: &initpb.NetworkConfig{Ip: guestIP},
+		Files:   r.guestFiles(),
 	}
-
 	vsockPath := filepath.Join(workDir, "vsock")
 	vsockSrv, err := vsock.NewServer(vsockPath, initResp)
 	if err != nil {
 		return fmt.Errorf("vsock server: %w", err)
 	}
 	defer vsockSrv.Close()
-
-	// Start vsock server in background (for guest Init RPC).
 	go vsockSrv.Serve(ctx)
 
-	// Boot VM in pasta's dedicated netns.
+	// Boot VM.
 	bootCtx, bootCancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
 	defer bootCancel()
 
@@ -127,12 +193,12 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		KernelPath: filepath.Join(r.cfg.ImageDir, "vmlinux"),
 		InitrdPath: filepath.Join(r.cfg.ImageDir, "initramfs.cpio.lz4"),
 		RootfsPath: filepath.Join(r.cfg.ImageDir, "rootfs.ext4"),
-		TAPName:    "eth0", // pasta names the TAP eth0 in the dedicated netns
+		TAPName:    "eth0",
 		VCPUs:      r.cfg.VCPUs,
 		MemoryMB:   r.cfg.MemoryMB,
 		WorkDir:    workDir,
 		VsockPath:  vsockPath,
-		NsPath:     r.pasta.NsPath(), // Boot in pasta's netns
+		NsPath:     r.pasta.NsPath(),
 	}
 
 	machine, err := vm.Boot(bootCtx, vmCfg)
@@ -140,28 +206,28 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		return fmt.Errorf("VM boot: %w", err)
 	}
 
-	// Wait for agent to be ready on localhost (via pasta port forwarding).
+	// Wait for agent.
 	agentAddr := fmt.Sprintf("localhost:%d", r.imgCfg.Port)
-	log.Info("waiting for agent", "addr", agentAddr)
-
 	if err := waitForAgent(bootCtx, agentAddr); err != nil {
 		machine.Stop()
 		return fmt.Errorf("agent not ready: %w", err)
 	}
 
-	// STARTING → RUNNING
-	if err := r.sm.Transition(Running); err != nil {
-		machine.Stop()
-		return fmt.Errorf("transition to RUNNING: %w", err)
-	}
+	r.mu.Lock()
+	r.machine = machine
+	r.mu.Unlock()
 
-	log.Info("agent ready, forwarding payload")
+	log.Info("VM booted, agent ready")
+	return nil
+}
 
-	// Send payload to agent via pasta port forwarding (localhost:8080).
+// proxyRequest forwards the payload to the agent and streams the SSE response.
+func (r *Runner) proxyRequest(ctx context.Context, log *slog.Logger, w http.ResponseWriter, execID string, payloadBytes []byte) error {
+	agentAddr := fmt.Sprintf("localhost:%d", r.imgCfg.Port)
 	agentURL := fmt.Sprintf("http://%s/run", agentAddr)
+
 	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, bytes.NewReader(payloadBytes))
 	if err != nil {
-		machine.Stop()
 		return fmt.Errorf("create agent request: %w", err)
 	}
 	agentReq.Header.Set("Content-Type", "application/json")
@@ -169,12 +235,10 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	agentResp, err := http.DefaultClient.Do(agentReq)
 	if err != nil {
-		machine.Stop()
 		return fmt.Errorf("agent request: %w", err)
 	}
 	defer agentResp.Body.Close()
 
-	// Set SSE headers and stream response from agent to waypoint.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -187,7 +251,6 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		if n > 0 {
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				log.Warn("client disconnected", "error", writeErr)
-				machine.Stop()
 				return nil
 			}
 			if flusher != nil {
@@ -196,7 +259,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
-				log.Warn("agent read error", "error", readErr)
+				return fmt.Errorf("agent read: %w", readErr)
 			}
 			break
 		}
@@ -206,44 +269,72 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	return nil
 }
 
-// teardown cleans up after an execution.
-func (r *Runner) teardown(ctx context.Context, log *slog.Logger, claimID, execID string) {
-	log.Info("tearing down execution")
+// teardownVM kills the current VM and transitions to IDLE.
+func (r *Runner) teardownVM(log *slog.Logger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	// Clean work directory.
-	workDir := filepath.Join(r.cfg.WorkloadDir, execID)
-	if err := os.RemoveAll(workDir); err != nil {
-		log.Warn("work dir cleanup error", "error", err)
+	if r.machine != nil {
+		r.machine.Stop()
+		r.machine = nil
 	}
+	r.sessionID = ""
+	r.sm.Transition(Teardown)
+	r.sm.Transition(Idle)
+	log.Info("VM torn down")
+}
 
-	// Release lease (best effort).
-	if err := r.lease.Release(ctx, claimID); err != nil {
-		log.Warn("lease release failed", "error", err)
+// setSession records the session ID for the current warm VM.
+func (r *Runner) setSession(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessionID = id
+}
+
+// matchesSession checks if the warm VM holds the given session.
+func (r *Runner) matchesSession(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sessionID == id
+}
+
+// startIdleTimer starts the warm timeout. When it fires, the VM is torn down.
+func (r *Runner) startIdleTimer(log *slog.Logger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.idleTimer = time.AfterFunc(r.cfg.WarmTimeout, func() {
+		log.Info("warm timeout expired, tearing down")
+		r.teardownVM(log)
+	})
+}
+
+// stopIdleTimer cancels the warm timeout.
+func (r *Runner) stopIdleTimer() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.idleTimer != nil {
+		r.idleTimer.Stop()
+		r.idleTimer = nil
 	}
 }
 
-// guestFiles returns the files to inject into the guest filesystem.
+// guestFiles returns files to inject into the guest filesystem.
 func (r *Runner) guestFiles() []*initpb.FileConfig {
 	var files []*initpb.FileConfig
-
 	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
 		files = append(files, &initpb.FileConfig{
-			Path:    "/etc/resolv.conf",
-			Content: data,
-			Mode:    0644,
+			Path: "/etc/resolv.conf", Content: data, Mode: 0644,
 		})
 	}
-
 	files = append(files, &initpb.FileConfig{
-		Path:    "/etc/hosts",
-		Content: []byte("127.0.0.1 localhost\n::1 localhost\n"),
-		Mode:    0644,
+		Path: "/etc/hosts", Content: []byte("127.0.0.1 localhost\n::1 localhost\n"), Mode: 0644,
 	})
-
 	return files
 }
 
-// waitForAgent polls the agent's health endpoint until it responds.
+// waitForAgent polls the agent's health endpoint.
 func waitForAgent(ctx context.Context, addr string) error {
 	client := &http.Client{Timeout: 1 * time.Second}
 	for {
@@ -252,7 +343,6 @@ func waitForAgent(ctx context.Context, addr string) error {
 			return fmt.Errorf("timeout waiting for agent at %s", addr)
 		default:
 		}
-
 		resp, err := client.Get(fmt.Sprintf("http://%s/healthz", addr))
 		if err == nil {
 			resp.Body.Close()
@@ -263,4 +353,3 @@ func waitForAgent(ctx context.Context, addr string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
-
