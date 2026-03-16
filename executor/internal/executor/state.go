@@ -40,7 +40,7 @@ var validTransitions = map[State][]State{
 
 // StateMachine enforces serial execution with valid state transitions.
 type StateMachine struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	state State
 }
 
@@ -51,8 +51,8 @@ func NewStateMachine() *StateMachine {
 
 // State returns the current state.
 func (sm *StateMachine) State() State {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
 	return sm.state
 }
 
