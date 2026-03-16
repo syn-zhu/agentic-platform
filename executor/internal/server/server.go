@@ -11,7 +11,7 @@ import (
 // Runner is called by the /run handler to execute a request.
 // It blocks until the execution completes, writing SSE chunks to w.
 type Runner interface {
-	Run(w http.ResponseWriter, claimID, execID, sessionID string, warm bool, payload io.Reader) error
+	Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error
 }
 
 // Server is the executor HTTP server.
@@ -39,7 +39,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if !s.sm.IsAvailable() {
+	if !s.sm.IsIdle() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
@@ -49,18 +49,15 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	claimID := r.Header.Get("X-Claim-Id")
 	execID := r.Header.Get("X-Execution-Id")
-	sessionID := r.Header.Get("X-Session-Id")
 
-	if claimID == "" || execID == "" || sessionID == "" {
+	if claimID == "" || execID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "X-Claim-Id, X-Execution-Id, and X-Session-Id headers required",
+			"error": "X-Claim-Id and X-Execution-Id headers required",
 		})
 		return
 	}
 
-	warm := r.Header.Get("X-Warm") == "true"
-
-	if !s.sm.IsAvailable() {
+	if !s.sm.IsIdle() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "executor busy",
 		})
@@ -74,9 +71,13 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.runner.Run(w, claimID, execID, sessionID, warm, r.Body); err != nil {
-		// TODO: handle the case where SSE streaming has already started —
-		// once headers are flushed we can't change the status code.
+	rw := &responseTracker{ResponseWriter: w}
+	if err := s.runner.Run(rw, claimID, execID, r.Body); err != nil {
+		if rw.written {
+			// SSE headers already sent — can't change status code.
+			// The client sees a truncated stream.
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),
 		})
@@ -84,11 +85,26 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	state := s.sm.State()
-	resp := map[string]string{
-		"state": state.String(),
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"state": s.sm.State().String(),
+	})
+}
+
+// responseTracker wraps http.ResponseWriter to track whether
+// any bytes have been written (and thus headers flushed).
+type responseTracker struct {
+	http.ResponseWriter
+	written bool
+}
+
+func (rt *responseTracker) Write(b []byte) (int, error) {
+	rt.written = true
+	return rt.ResponseWriter.Write(b)
+}
+
+func (rt *responseTracker) WriteHeader(code int) {
+	rt.written = true
+	rt.ResponseWriter.WriteHeader(code)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
