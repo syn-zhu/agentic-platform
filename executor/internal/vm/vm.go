@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
@@ -47,10 +46,6 @@ func Boot(ctx context.Context, cfg Config) (*VM, error) {
 		"tap", cfg.TAPName,
 		"netns", cfg.NsPath,
 	)
-
-	if err := os.MkdirAll(cfg.WorkDir, 0755); err != nil {
-		return nil, fmt.Errorf("create work dir: %w", err)
-	}
 
 	socketPath := filepath.Join(cfg.WorkDir, "firecracker.sock")
 
