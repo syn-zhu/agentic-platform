@@ -46,6 +46,6 @@ RUN truncate -s 64M /rootfs.ext4 && \
     tune2fs -O ^has_journal /rootfs.ext4 && \
     e2fsck -fy /rootfs.ext4 || true
 
-# The final image just carries the rootfs file.
-FROM scratch
+# The final image carries the rootfs file + cp for the init container.
+FROM busybox:musl
 COPY --from=rootfs /rootfs.ext4 /rootfs.ext4

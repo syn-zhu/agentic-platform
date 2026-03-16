@@ -1,0 +1,90 @@
+apiVersion: pool.agentic.dev/v1alpha1
+kind: ExecutorPool
+metadata:
+  name: poc-agent
+  namespace: executor-system
+spec:
+  desired: 2
+  leaseTTL: 30s
+  warmingTimeout: 5m
+  maxSurge: 5
+  podTemplate:
+    metadata:
+      labels:
+        app: executor
+        pool.agentic.dev/pool: poc-agent
+      annotations:
+        istio.io/reroute-virtual-interfaces: "fctr-tap0"
+    spec:
+      nodeSelector:
+        node.kubernetes.io/instance-type: c5.metal
+      tolerations:
+        - key: workload
+          value: agents
+          effect: NoSchedule
+      initContainers:
+        - name: rootfs
+          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/poc-agent-rootfs:v3
+          imagePullPolicy: Always
+          command: ["cp", "/rootfs.ext4", "/out/rootfs.ext4"]
+          volumeMounts:
+            - name: guest-rootfs
+              mountPath: /out
+      containers:
+        - name: executor
+          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/executor:v2
+          ports:
+            - containerPort: 9090
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            periodSeconds: 5
+            initialDelaySeconds: 2
+          env:
+            - name: POOL_OPERATOR_ADDR
+              value: "pool-operator.executor-system.svc:8080"
+            - name: LEASE_TTL
+              value: "30s"
+            - name: AGENT_COMMAND
+              value: "/entrypoint.sh"
+            - name: AGENT_PORT
+              value: "8080"
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN, NET_RAW, SYS_ADMIN, MKNOD]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: guest-rootfs
+              mountPath: /opt/firecracker/rootfs.ext4
+              subPath: rootfs.ext4
+              readOnly: true
+            - name: dev-kvm
+              mountPath: /dev/kvm
+            - name: dev-vsock
+              mountPath: /dev/vhost-vsock
+            - name: dev-tun
+              mountPath: /dev/net/tun
+            - name: workload
+              mountPath: /workload
+      volumes:
+        - name: guest-rootfs
+          emptyDir: {}
+        - name: dev-kvm
+          hostPath:
+            path: /dev/kvm
+        - name: dev-vsock
+          hostPath:
+            path: /dev/vhost-vsock
+        - name: dev-tun
+          hostPath:
+            path: /dev/net/tun
+        - name: workload
+          emptyDir: {}

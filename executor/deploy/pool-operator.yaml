@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pool-operator
+  namespace: executor-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pool-operator
+rules:
+  # Manage pods for the warm pool.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete, patch, update]
+  # Watch and update ExecutorPool CRDs.
+  - apiGroups: [pool.agentic.dev]
+    resources: [executorpools, executorpools/status]
+    verbs: [get, list, watch, update, patch]
+  # Leader election via Lease.
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Events for recording pool actions.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pool-operator
+subjects:
+  - kind: ServiceAccount
+    name: pool-operator
+    namespace: executor-system
+roleRef:
+  kind: ClusterRole
+  name: pool-operator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pool-operator
+  namespace: executor-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pool-operator
+  template:
+    metadata:
+      labels:
+        app: pool-operator
+    spec:
+      serviceAccountName: pool-operator
+      containers:
+        - name: pool-operator
+          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/pool-operator:v1
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: NAMESPACE
+              value: executor-system
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pool-operator
+  namespace: executor-system
+spec:
+  selector:
+    app: pool-operator
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
