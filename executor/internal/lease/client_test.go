@@ -2,47 +2,80 @@ package lease_test
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	poolpb "github.com/siyanzhu/agentic-platform/executor/pkg/poolpb"
 	"github.com/siyanzhu/agentic-platform/executor/internal/lease"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
+// mockPoolService implements poolpb.PoolServiceServer for testing.
+type mockPoolService struct {
+	poolpb.UnimplementedPoolServiceServer
+	renewCount atomic.Int32
+	renewErr   error
+	releaseErr error
+	releaseFn  func() error
+}
+
+func (m *mockPoolService) Renew(ctx context.Context, req *poolpb.RenewRequest) (*poolpb.RenewResponse, error) {
+	m.renewCount.Add(1)
+	if m.renewErr != nil {
+		return nil, m.renewErr
+	}
+	return &poolpb.RenewResponse{
+		ExpiresAt: time.Now().Add(30 * time.Second).Format(time.RFC3339),
+	}, nil
+}
+
+func (m *mockPoolService) Release(ctx context.Context, req *poolpb.ReleaseRequest) (*poolpb.ReleaseResponse, error) {
+	if m.releaseFn != nil {
+		if err := m.releaseFn(); err != nil {
+			return nil, err
+		}
+	}
+	if m.releaseErr != nil {
+		return nil, m.releaseErr
+	}
+	return &poolpb.ReleaseResponse{}, nil
+}
+
+// startTestServer starts a gRPC server on a random port and returns the address.
+func startTestServer(t *testing.T, svc poolpb.PoolServiceServer) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	poolpb.RegisterPoolServiceServer(srv, svc)
+	go srv.Serve(ln)
+	t.Cleanup(srv.GracefulStop)
+	return ln.Addr().String()
+}
+
 func TestRenewLoop(t *testing.T) {
-	var renewCount atomic.Int32
+	mock := &mockPoolService{}
+	addr := startTestServer(t, mock)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/renew" || r.Method != http.MethodPost {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		var body struct {
-			ClaimID string `json:"claim_id"`
-		}
-		json.NewDecoder(r.Body).Decode(&body)
-		if body.ClaimID != "test-claim" {
-			t.Errorf("claim_id = %q, want %q", body.ClaimID, "test-claim")
-		}
-		renewCount.Add(1)
-		json.NewEncoder(w).Encode(map[string]string{
-			"expires_at": time.Now().Add(30 * time.Second).Format(time.RFC3339),
-		})
-	}))
-	defer srv.Close()
+	client, err := lease.NewClient(addr, 300*time.Millisecond) // TTL/3 = 100ms
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
 
-	client := lease.NewClient(srv.URL, 300*time.Millisecond) // short TTL for test
 	ctx, cancel := context.WithCancel(context.Background())
-
 	client.StartRenewal(ctx, "test-claim")
-	time.Sleep(250 * time.Millisecond) // wait for at least 2 renewals (interval = TTL/3 = 100ms)
+	time.Sleep(250 * time.Millisecond)
 	cancel()
 
-	count := renewCount.Load()
+	count := mock.renewCount.Load()
 	if count < 2 {
 		t.Errorf("renewCount = %d, want >= 2", count)
 	}
@@ -50,57 +83,66 @@ func TestRenewLoop(t *testing.T) {
 
 func TestRelease(t *testing.T) {
 	var released atomic.Bool
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/release" && r.Method == http.MethodPost {
+	mock := &mockPoolService{
+		releaseFn: func() error {
 			released.Store(true)
-			json.NewEncoder(w).Encode(map[string]string{"status": "released"})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
+			return nil
+		},
+	}
+	addr := startTestServer(t, mock)
 
-	client := lease.NewClient(srv.URL, 30*time.Second)
-	err := client.Release(context.Background(), "test-claim")
+	client, err := lease.NewClient(addr, 30*time.Second)
 	if err != nil {
-		t.Fatalf("Release() error: %v", err)
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Release(context.Background(), "test-claim"); err != nil {
+		t.Fatalf("Release: %v", err)
 	}
 	if !released.Load() {
-		t.Fatal("release endpoint was not called")
+		t.Fatal("release was not called")
 	}
 }
 
-func TestRelease404IsSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
+func TestReleaseNotFoundIsSuccess(t *testing.T) {
+	mock := &mockPoolService{
+		releaseErr: status.Error(codes.NotFound, "claim not found"),
+	}
+	addr := startTestServer(t, mock)
 
-	client := lease.NewClient(srv.URL, 30*time.Second)
-	err := client.Release(context.Background(), "test-claim")
+	client, err := lease.NewClient(addr, 30*time.Second)
 	if err != nil {
-		t.Fatalf("Release() with 404 should succeed: %v", err)
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Release(context.Background(), "test-claim"); err != nil {
+		t.Fatalf("Release with NotFound should succeed: %v", err)
 	}
 }
 
 func TestReleaseRetry(t *testing.T) {
 	var attempts atomic.Int32
+	mock := &mockPoolService{
+		releaseFn: func() error {
+			n := attempts.Add(1)
+			if n < 3 {
+				return fmt.Errorf("transient error")
+			}
+			return nil
+		},
+	}
+	addr := startTestServer(t, mock)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := attempts.Add(1)
-		if n < 3 {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"status": "released"})
-	}))
-	defer srv.Close()
-
-	client := lease.NewClient(srv.URL, 30*time.Second)
-	err := client.Release(context.Background(), "test-claim")
+	client, err := lease.NewClient(addr, 30*time.Second)
 	if err != nil {
-		t.Fatalf("Release() should succeed after retries: %v", err)
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Release(context.Background(), "test-claim"); err != nil {
+		t.Fatalf("Release should succeed after retries: %v", err)
 	}
 	if attempts.Load() != 3 {
 		t.Errorf("attempts = %d, want 3", attempts.Load())

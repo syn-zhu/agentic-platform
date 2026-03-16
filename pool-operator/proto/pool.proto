@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package pool.operator.v1;
+
+option go_package = "github.com/siyanzhu/agentic-platform/pool-operator/pkg/poolpb";
+
+/*
+ * PoolService manages executor warm pools. Called by:
+ *   - Waypoint ExtProc → Claim (get an available executor pod)
+ *   - Executor → Renew (extend lease during execution)
+ *   - Executor → Release (return pod to pool after execution)
+ */
+service PoolService {
+  /*
+   * Claim reserves an available executor pod from the named pool.
+   * Called by the waypoint's ExtProc before routing a request to
+   * an executor. Returns the pod's address and a claim ID that
+   * the executor uses for Renew and Release.
+   */
+  rpc Claim(ClaimRequest) returns (ClaimResponse);
+
+  /*
+   * Renew extends the lease on a claimed pod. Called by the
+   * executor every leaseTTL/3 during execution. If the executor
+   * stops renewing, the lease expires and the pool operator
+   * deletes the pod.
+   */
+  rpc Renew(RenewRequest) returns (RenewResponse);
+
+  /*
+   * Release returns a claimed pod to the available pool. Called
+   * by the executor after teardown completes. The pod becomes
+   * immediately available for the next claim.
+   */
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+
+  /*
+   * Status returns pool metrics. Used for observability and
+   * debugging, not required for normal operation.
+   */
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message ClaimRequest {
+  /* Pool name (e.g., "poc-agent"). */
+  string pool = 1;
+}
+
+message ClaimResponse {
+  /* Name of the claimed pod. */
+  string pod_name = 1;
+
+  /* Pod IP address. */
+  string pod_ip = 2;
+
+  /* Port the executor listens on. */
+  int32 pod_port = 3;
+
+  /* Claim ID — passed to the executor via X-Claim-Id header,
+   * used by the executor for Renew and Release. */
+  string claim_id = 4;
+}
+
+message RenewRequest {
+  string claim_id = 1;
+}
+
+message RenewResponse {
+  /* When the lease expires if not renewed again. */
+  string expires_at = 1;
+}
+
+message ReleaseRequest {
+  string claim_id = 1;
+}
+
+message ReleaseResponse {}
+
+message StatusRequest {}
+
+message StatusResponse {
+  map<string, PoolStatus> pools = 1;
+}
+
+message PoolStatus {
+  int32 desired = 1;
+  int32 available = 2;
+  int32 claimed = 3;
+  int32 warming = 4;
+}

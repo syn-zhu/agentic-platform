@@ -27,7 +27,12 @@ func main() {
 	}
 
 	sm := executor.NewStateMachine()
-	leaseClient := lease.NewClient("http://"+cfg.PoolOperatorAddr, cfg.LeaseTTL)
+	leaseClient, err := lease.NewClient(cfg.PoolOperatorAddr, cfg.LeaseTTL)
+	if err != nil {
+		slog.Error("failed to create lease client", "error", err)
+		os.Exit(1)
+	}
+	defer leaseClient.Close()
 	runner := executor.NewRunner(cfg, sm, leaseClient)
 
 	srv := server.New(sm, runner)

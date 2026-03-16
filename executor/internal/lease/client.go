@@ -1,32 +1,47 @@
 package lease
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
+
+	poolpb "github.com/siyanzhu/agentic-platform/executor/pkg/poolpb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
-// Client manages lease renewal and release with the pool operator.
+// Client manages lease renewal and release with the pool operator via gRPC.
 type Client struct {
-	baseURL    string
-	leaseTTL   time.Duration
-	httpClient *http.Client
+	conn     *grpc.ClientConn
+	pool     poolpb.PoolServiceClient
+	leaseTTL time.Duration
 }
 
-// NewClient creates a lease client for the given pool operator address.
-func NewClient(baseURL string, leaseTTL time.Duration) *Client {
-	return &Client{
-		baseURL:    baseURL,
-		leaseTTL:   leaseTTL,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+// NewClient creates a gRPC lease client for the given pool operator address.
+func NewClient(addr string, leaseTTL time.Duration) (*Client, error) {
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dial pool operator at %s: %w", addr, err)
 	}
+
+	return &Client{
+		conn:     conn,
+		pool:     poolpb.NewPoolServiceClient(conn),
+		leaseTTL: leaseTTL,
+	}, nil
 }
 
-// StartRenewal begins a background goroutine that renews the lease
+// Close shuts down the gRPC connection.
+func (c *Client) Close() error {
+	return c.conn.Close()
+}
+
+// StartRenewal begins a background goroutine that calls Renew
 // every leaseTTL/3. Stops when ctx is cancelled.
 func (c *Client) StartRenewal(ctx context.Context, claimID string) {
 	interval := c.leaseTTL / 3
@@ -38,7 +53,8 @@ func (c *Client) StartRenewal(ctx context.Context, claimID string) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := c.renew(ctx, claimID); err != nil {
+				_, err := c.pool.Renew(ctx, &poolpb.RenewRequest{ClaimId: claimID})
+				if err != nil {
 					slog.Warn("lease renewal failed", "claim_id", claimID, "error", err)
 				}
 			}
@@ -46,28 +62,9 @@ func (c *Client) StartRenewal(ctx context.Context, claimID string) {
 	}()
 }
 
-func (c *Client) renew(ctx context.Context, claimID string) error {
-	body, _ := json.Marshal(map[string]string{"claim_id": claimID})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/renew", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("renew returned %d", resp.StatusCode)
-	}
-	return nil
-}
-
 // Release notifies the pool operator that the claim is done.
 // Retries up to 3 times with exponential backoff (1s, 2s, 4s).
+// Treats NotFound as success (already released or expired).
 func (c *Client) Release(ctx context.Context, claimID string) error {
 	backoff := []time.Duration{0, 1 * time.Second, 2 * time.Second, 4 * time.Second}
 
@@ -80,32 +77,18 @@ func (c *Client) Release(ctx context.Context, claimID string) error {
 			}
 		}
 
-		err := c.doRelease(ctx, claimID)
+		_, err := c.pool.Release(ctx, &poolpb.ReleaseRequest{ClaimId: claimID})
 		if err == nil {
 			return nil
 		}
+
+		// NotFound = already released, treat as success.
+		if status.Code(err) == codes.NotFound {
+			return nil
+		}
+
 		slog.Warn("release attempt failed", "attempt", attempt+1, "claim_id", claimID, "error", err)
 	}
 
 	return fmt.Errorf("release failed after %d attempts", len(backoff))
-}
-
-func (c *Client) doRelease(ctx context.Context, claimID string) error {
-	body, _ := json.Marshal(map[string]string{"claim_id": claimID})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/release", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
-		return nil // 404 = already released, treat as success
-	}
-	return fmt.Errorf("release returned %d", resp.StatusCode)
 }
