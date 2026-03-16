@@ -1,78 +1,30 @@
 package config
 
 import (
-	"fmt"
-	"os"
-	"strconv"
 	"time"
+
+	"github.com/caarlos0/env/v11"
 )
 
-// Config holds all executor configuration.
+// Config holds all executor configuration, loaded from environment variables.
 type Config struct {
-	ListenAddr       string
-	PoolOperatorAddr string
-	LeaseTTL         time.Duration
-	ImageDir         string
-	WorkloadDir      string
-	VCPUs            int
-	MemoryMB         int
-	BootTimeout      time.Duration
-	ReadyTimeout     time.Duration
-	ExecTimeout      time.Duration
+	ListenAddr       string        `env:"LISTEN_ADDR" envDefault:":9090"`
+	PoolOperatorAddr string        `env:"POOL_OPERATOR_ADDR"`
+	LeaseTTL         time.Duration `env:"LEASE_TTL" envDefault:"30s"`
+	ImageDir         string        `env:"IMAGE_DIR" envDefault:"/opt/firecracker"`
+	WorkloadDir      string        `env:"WORKLOAD_DIR" envDefault:"/workload"`
+	VCPUs            int           `env:"VCPUS" envDefault:"1"`
+	MemoryMB         int           `env:"MEMORY_MB" envDefault:"256"`
+	BootTimeout      time.Duration `env:"BOOT_TIMEOUT" envDefault:"30s"`
+	ReadyTimeout     time.Duration `env:"READY_TIMEOUT" envDefault:"10s"`
+	ExecTimeout      time.Duration `env:"EXEC_TIMEOUT" envDefault:"5m"`
 }
 
-// Load reads configuration from environment variables with defaults.
+// Load reads configuration from environment variables.
 func Load() (*Config, error) {
-	cfg := &Config{
-		ListenAddr:       envOr("LISTEN_ADDR", ":9090"),
-		PoolOperatorAddr: os.Getenv("POOL_OPERATOR_ADDR"),
-		ImageDir:         envOr("IMAGE_DIR", "/opt/firecracker"),
-		WorkloadDir:      envOr("WORKLOAD_DIR", "/workload"),
-		VCPUs:            envIntOr("VCPUS", 1),
-		MemoryMB:         envIntOr("MEMORY_MB", 256),
+	cfg := &Config{}
+	if err := env.Parse(cfg); err != nil {
+		return nil, err
 	}
-
-	var err error
-	cfg.LeaseTTL, err = envDurationOr("LEASE_TTL", 30*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("LEASE_TTL: %w", err)
-	}
-	cfg.BootTimeout, err = envDurationOr("BOOT_TIMEOUT", 30*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("BOOT_TIMEOUT: %w", err)
-	}
-	cfg.ReadyTimeout, err = envDurationOr("READY_TIMEOUT", 10*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("READY_TIMEOUT: %w", err)
-	}
-	cfg.ExecTimeout, err = envDurationOr("EXEC_TIMEOUT", 5*time.Minute)
-	if err != nil {
-		return nil, fmt.Errorf("EXEC_TIMEOUT: %w", err)
-	}
-
 	return cfg, nil
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envIntOr(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return fallback
-}
-
-func envDurationOr(key string, fallback time.Duration) (time.Duration, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback, nil
-	}
-	return time.ParseDuration(v)
 }

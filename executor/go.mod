@@ -3,6 +3,7 @@ module github.com/siyanzhu/agentic-platform/executor
 go 1.25.7
 
 require (
+	github.com/caarlos0/env/v11 v11.4.0
 	github.com/containerd/ttrpc v1.2.8
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 	github.com/mdlayher/vsock v1.2.1
