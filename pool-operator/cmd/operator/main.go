@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,6 +34,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	listenAddr := envOrDefault("LISTEN_ADDR", ":8080")
+	healthAddr := envOrDefault("HEALTH_ADDR", ":8081")
 	metricsAddr := envOrDefault("METRICS_ADDR", ":9090")
 	namespace := envOrDefault("NAMESPACE", "agentic-platform")
 
@@ -109,14 +112,27 @@ func main() {
 
 	go runPoolManagers(ctx, registry, k8sClient, namespace, srv.Metrics(), logger)
 
-	mux := http.NewServeMux()
-	mux.Handle("/", srv.Handler())
-
-	httpServer := &http.Server{Addr: listenAddr, Handler: mux}
+	// Start gRPC server for pool operations (Claim/Renew/Release/Status).
+	grpcLn, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		logger.Error("failed to listen for gRPC", "addr", listenAddr, "err", err)
+		os.Exit(1)
+	}
+	grpcSrv := grpc.NewServer()
+	srv.RegisterGRPC(grpcSrv)
 	go func() {
-		logger.Info("starting HTTP server", "addr", listenAddr)
+		logger.Info("starting gRPC server", "addr", listenAddr)
+		if err := grpcSrv.Serve(grpcLn); err != nil {
+			logger.Error("gRPC server error", "err", err)
+		}
+	}()
+
+	// Health check HTTP server (for Kubernetes readiness probe).
+	httpServer := &http.Server{Addr: healthAddr, Handler: srv.HealthHandler()}
+	go func() {
+		logger.Info("starting health server", "addr", healthAddr)
 		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-			logger.Error("HTTP server error", "err", err)
+			logger.Error("health server error", "err", err)
 		}
 	}()
 
@@ -132,6 +148,8 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("shutting down")
+
+	grpcSrv.GracefulStop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

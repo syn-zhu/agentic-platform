@@ -1,65 +1,18 @@
-// pool-operator/internal/server/server.go
 package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/siyanzhu/agentic-platform/pool-operator/internal/pool"
+	poolpb "github.com/siyanzhu/agentic-platform/pool-operator/pkg/poolpb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
-
-// ClaimRequest is the JSON body for POST /claim.
-type ClaimRequest struct {
-	Pool string `json:"pool"`
-}
-
-// ClaimResponse is returned on a successful claim.
-type ClaimResponse struct {
-	PodName string `json:"pod_name"`
-	PodIP   string `json:"pod_ip"`
-	PodPort int32  `json:"pod_port"`
-	ClaimID string `json:"claim_id"`
-}
-
-// ExhaustedResponse is returned when no pods are available.
-type ExhaustedResponse struct {
-	Error     string `json:"error"`
-	Available int    `json:"available"`
-	Warming   int    `json:"warming"`
-}
-
-// RenewRequest is the JSON body for POST /renew.
-type RenewRequest struct {
-	ClaimID string `json:"claim_id"`
-}
-
-// RenewResponse is returned on a successful renew.
-type RenewResponse struct {
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
-// ReleaseRequest is the JSON body for POST /release.
-type ReleaseRequest struct {
-	ClaimID string `json:"claim_id"`
-}
-
-// ReleaseResponse is returned on a successful release.
-type ReleaseResponse struct {
-	Status string `json:"status"`
-}
-
-// StatusResponse is returned by GET /status.
-type StatusResponse struct {
-	Pools map[string]pool.PoolStatus `json:"pools"`
-}
-
-// ErrorResponse is a generic error response.
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
 
 // LabelPersister handles async label updates after claim/release operations.
 type LabelPersister interface {
@@ -67,8 +20,9 @@ type LabelPersister interface {
 	PersistReleaseLabels(ctx context.Context, poolName, podName string)
 }
 
-// Server is the HTTP server that exposes pool operations.
+// Server implements the gRPC PoolService and exposes a health HTTP endpoint.
 type Server struct {
+	poolpb.UnimplementedPoolServiceServer
 	registry  *pool.Registry
 	metrics   *Metrics
 	persister LabelPersister
@@ -89,28 +43,31 @@ func (s *Server) Metrics() *Metrics {
 	return s.metrics
 }
 
-// Handler returns an http.Handler with all routes registered.
-func (s *Server) Handler() http.Handler {
+// RegisterGRPC registers the PoolService on the given gRPC server.
+func (s *Server) RegisterGRPC(srv *grpc.Server) {
+	poolpb.RegisterPoolServiceServer(srv, s)
+}
+
+// HealthHandler returns an HTTP handler for /healthz (Kubernetes readiness probe).
+func (s *Server) HealthHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /claim", s.handleClaim)
-	mux.HandleFunc("POST /renew", s.handleRenew)
-	mux.HandleFunc("POST /release", s.handleRelease)
-	mux.HandleFunc("GET /status", s.handleStatus)
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
 	return mux
 }
 
-func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
-	var req ClaimRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
-		return
-	}
+// ServeGRPC starts the gRPC server on the given listener.
+func ServeGRPC(ln net.Listener, srv *grpc.Server) error {
+	return srv.Serve(ln)
+}
 
+// Claim reserves an available executor pod from the named pool.
+func (s *Server) Claim(ctx context.Context, req *poolpb.ClaimRequest) (*poolpb.ClaimResponse, error) {
 	p := s.registry.Get(req.Pool)
 	if p == nil {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "pool not found"})
-		return
+		return nil, status.Errorf(codes.NotFound, "pool %q not found", req.Pool)
 	}
 
 	start := time.Now()
@@ -122,106 +79,66 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, pool.ErrPoolExhausted) {
 			s.metrics.ExhaustedTotal.WithLabelValues(req.Pool).Inc()
-			status := p.Status()
-			writeJSON(w, http.StatusServiceUnavailable, ExhaustedResponse{
-				Error:     "no available pods",
-				Available: status.Available,
-				Warming:   status.Warming,
-			})
-			return
+			return nil, status.Errorf(codes.ResourceExhausted, "no available pods (warming: %d)", p.Status().Warming)
 		}
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-		return
+		return nil, status.Errorf(codes.Internal, "claim failed: %v", err)
 	}
 
 	s.metrics.ClaimTotal.WithLabelValues(req.Pool).Inc()
 
 	if s.persister != nil {
-		go s.persister.PersistClaimLabels(r.Context(), req.Pool, claim.PodInfo.Name, claim.ClaimID, claim.ExpiresAt)
+		go s.persister.PersistClaimLabels(ctx, req.Pool, claim.PodInfo.Name, claim.ClaimID, claim.ExpiresAt)
 	}
 
-	writeJSON(w, http.StatusOK, ClaimResponse{
+	return &poolpb.ClaimResponse{
 		PodName: claim.PodInfo.Name,
-		PodIP:   claim.PodInfo.IP,
+		PodIp:   claim.PodInfo.IP,
 		PodPort: claim.PodInfo.Port,
-		ClaimID: claim.ClaimID,
-	})
+		ClaimId: claim.ClaimID,
+	}, nil
 }
 
-func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
-	var req RenewRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
-		return
-	}
-
-	var expiresAt time.Time
-	var found bool
+// Renew extends the lease on a claimed pod.
+func (s *Server) Renew(ctx context.Context, req *poolpb.RenewRequest) (*poolpb.RenewResponse, error) {
 	for _, p := range s.registry.List() {
-		t, err := p.Renew(req.ClaimID)
+		expiresAt, err := p.Renew(req.ClaimId)
 		if err == nil {
-			expiresAt = t
-			found = true
-			break
+			return &poolpb.RenewResponse{
+				ExpiresAt: expiresAt.Format(time.RFC3339),
+			}, nil
 		}
 	}
-
-	if !found {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "claim not found"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, RenewResponse{ExpiresAt: expiresAt})
+	return nil, status.Errorf(codes.NotFound, "claim %q not found", req.ClaimId)
 }
 
-func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
-	var req ReleaseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
-		return
-	}
-
-	var found bool
-	var releasedPoolName string
-	var releasedPodName string
+// Release returns a claimed pod to the available pool.
+func (s *Server) Release(ctx context.Context, req *poolpb.ReleaseRequest) (*poolpb.ReleaseResponse, error) {
 	for _, p := range s.registry.List() {
-		podInfo, err := p.Release(req.ClaimID)
+		podInfo, err := p.Release(req.ClaimId)
 		if err == nil {
-			found = true
-			releasedPoolName = p.Name()
-			releasedPodName = podInfo.Name
-			break
+			if s.persister != nil {
+				go s.persister.PersistReleaseLabels(ctx, p.Name(), podInfo.Name)
+			}
+			return &poolpb.ReleaseResponse{}, nil
 		}
 	}
-
-	if !found {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "claim not found"})
-		return
-	}
-
-	if s.persister != nil {
-		go s.persister.PersistReleaseLabels(r.Context(), releasedPoolName, releasedPodName)
-	}
-
-	writeJSON(w, http.StatusOK, ReleaseResponse{Status: "released"})
+	return nil, status.Errorf(codes.NotFound, "claim %q not found", req.ClaimId)
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+// Status returns pool metrics for all pools.
+func (s *Server) Status(ctx context.Context, req *poolpb.StatusRequest) (*poolpb.StatusResponse, error) {
 	pools := s.registry.List()
-	resp := StatusResponse{Pools: make(map[string]pool.PoolStatus, len(pools))}
-	for _, p := range pools {
-		resp.Pools[p.Name()] = p.Status()
+	resp := &poolpb.StatusResponse{
+		Pools: make(map[string]*poolpb.PoolStatus, len(pools)),
 	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	for _, p := range pools {
+		st := p.Status()
+		resp.Pools[p.Name()] = &poolpb.PoolStatus{
+			Desired:   int32(st.Desired),
+			Available: int32(st.Available),
+			Claimed:   int32(st.Claimed),
+			Warming:   int32(st.Warming),
+		}
+	}
+	return resp, nil
 }
