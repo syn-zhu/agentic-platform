@@ -306,7 +306,11 @@ The `warm` field tells the waypoint whether the pod has the session loaded. The 
  7. Executor (STARTING → RUNNING):
     a. POST http://localhost:8080/run with payload + X-Session-Id
     b. Streams SSE response back to waypoint
- 8. Agent outbound calls go through pasta → ztunnel → waypoint → external
+ 8. Agent outbound calls (LLM, tools, A2A):
+    Agent → TAP → pasta connect() → eBPF rewrites to proxy
+    → proxy logs request to MongoDB → forwards to real dest
+    → ztunnel → waypoint (credential injection) → external API
+    → response → proxy logs to MongoDB → back to agent
  9. SSE stream ends
 10. Executor (RUNNING → WARM):
     a. Pauses VM (Firecracker pause — CPU usage drops to zero)
@@ -368,11 +372,14 @@ executor/
 │   ├── server/                   # HTTP handlers (/healthz, /run, /status)
 │   ├── executor/                 # State machine, VM lifecycle, run orchestration
 │   ├── lease/                    # Pool operator gRPC client (renew/release)
-│   ├── pasta/                   # pasta process lifecycle, port forwarding config
-│   ├── vm/                       # Firecracker SDK wrapper (boot in pasta netns, stop)
+│   ├── pasta/                   # pasta process lifecycle, port forwarding, cgroup setup
+│   ├── proxy/                   # HTTP forward proxy + eBPF connect4 interception
+│   ├── vm/                       # Firecracker SDK wrapper (boot in pasta netns, stop, pause/resume)
 │   ├── vsock/                    # Host-side ttrpc server (Init RPC only, for config delivery)
 │   ├── image/                    # Image config loading (entrypoint, port, env)
 │   └── config/                   # Executor configuration (env vars)
+├── bpf/
+│   └── connect4.c                # eBPF cgroup/connect4 program (compiled to .o)
 ├── proto/
 │   └── init.proto                # vsock Init RPC definition (config delivery only)
 ├── pkg/
@@ -386,6 +393,88 @@ executor/
 
 - **Srinidhi's Network Isolation proposal**: pasta integration patterns, Firecracker in dedicated netns via jailer `setns`, port forwarding configuration
 - **fctr** (`~/10gen/agentic-platform/fctr/`): Guest init patterns (overlayfs, network config with RTNH_F_ONLINK), Firecracker SDK usage, jailer setup
+
+## Event Logging & Replay Cache (eBPF Proxy)
+
+The executor transparently intercepts all outbound HTTP/HTTPS traffic from the agent using a **cgroup/connect4 eBPF program** attached to pasta's cgroup. This captures every LLM call, tool call, A2A call, and MCP call — without the agent knowing or needing to support `HTTP_PROXY`.
+
+### Architecture
+
+```
+Agent → TAP → pasta calls connect(api.anthropic.com:443)
+  → cgroup/connect4 eBPF fires:
+    1. Saves original dest to BPF map (keyed by socket cookie)
+    2. Rewrites dest to 127.0.0.1:3128
+  → pasta connects to 127.0.0.1:3128 (proxy in executor process)
+  → proxy:
+    a. Looks up original dest from BPF map
+    b. Assigns step number (sequential per session)
+    c. Logs {session_id, step, request} to tenant MongoDB
+    d. Opens new connection to real dest (goes through ztunnel → waypoint)
+    e. Receives response
+    f. Logs {session_id, step, response} to tenant MongoDB
+    g. Returns response to pasta → agent
+```
+
+### Why cgroup/connect4
+
+The eBPF program attaches to pasta's cgroup and intercepts at the `connect()` syscall — before the packet enters iptables. This means:
+- **No conflict with ztunnel**: ztunnel's iptables REDIRECT rules are unaffected. The proxy's own outbound connections (from the executor's cgroup, not pasta's) go through ztunnel normally.
+- **Fully transparent**: No HTTP_PROXY env var, no iptables insertion ordering. Works with any HTTP client in any language.
+- **Scoped**: Only affects pasta's sockets (cgroup-scoped). The executor's own HTTP server, lease client, and health checks are unaffected.
+- **127.0.0.1 exemption**: The rewritten destination (127.0.0.1:3128) is exempted from ztunnel's REDIRECT rule, so the connection goes directly to the proxy.
+
+### Setup
+
+1. **Executor creates a cgroup** for pasta (e.g., `/sys/fs/cgroup/pasta-proxy/`).
+2. **Executor starts pasta** inside this cgroup.
+3. **Executor loads the eBPF program** using `cilium/ebpf` Go library:
+   - `BPF_PROG_TYPE_CGROUP_SOCK_ADDR` program, attach type `BPF_CGROUP_INET4_CONNECT`
+   - Attached to the pasta cgroup
+   - Intercepts TCP connect() to ports 80 and 443
+   - Saves original destination to a `BPF_MAP_TYPE_HASH` keyed by `bpf_get_socket_cookie()`
+   - Rewrites destination to 127.0.0.1:3128
+4. **Executor runs the HTTP proxy** on 127.0.0.1:3128 (part of the executor process, not a separate binary).
+
+### Proxy behavior
+
+For each intercepted connection:
+1. Accept connection on :3128
+2. Read socket cookie → look up original destination from BPF map
+3. Handle HTTPS CONNECT tunneling (for TLS traffic)
+4. Log `{session_id, step, request_url, request_headers, request_body}` to tenant MongoDB
+5. Open connection to original destination (this outbound goes through ztunnel → waypoint → credential injection)
+6. Forward request, receive response
+7. Log `{session_id, step, response_status, response_body}` to tenant MongoDB
+8. Return response to agent
+
+### Replay cache (on resume after warm miss)
+
+When an agent resumes from a checkpoint (cold start, loading state from MongoDB), it re-executes from the last checkpoint. The proxy provides idempotent replay:
+
+1. Agent re-executes step 3 (e.g., call LLM with the same prompt)
+2. Proxy checks: session_id + step 3 already in MongoDB?
+3. Yes → return cached response without making the actual call
+4. No → forward normally, log result
+
+Step numbers are assigned sequentially per session. The proxy increments a counter for each outbound call. On resume, the counter starts from the checkpoint's last step.
+
+### What this captures
+
+| Traffic | Captured? | Notes |
+|---------|-----------|-------|
+| LLM API calls (Anthropic, OpenAI) | Yes | HTTPS, ports 443 |
+| A2A calls | Yes | HTTP/HTTPS |
+| MCP calls | Yes | HTTP/HTTPS |
+| REST tool calls | Yes | HTTP/HTTPS |
+| MongoDB Atlas | No | TCP wire protocol, port 27017. Not HTTP — eBPF could capture the connect() but the proxy can't parse the wire protocol. Atlas connections are logged at the waypoint level via OTel. |
+
+### Requirements
+
+- **Kernel**: 5.7+ for `BPF_CGROUP_INET4_CONNECT` (EKS Amazon Linux 2023 has kernel 6.1)
+- **Capabilities**: `CAP_BPF` + `CAP_NET_ADMIN` (already have `NET_ADMIN`)
+- **Go library**: `cilium/ebpf` for loading and managing eBPF programs and maps
+- **Pod security**: The executor container needs to mount the BPF filesystem (`/sys/fs/bpf`)
 
 ## Pre-execution Snapshots (Future)
 
