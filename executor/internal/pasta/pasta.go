@@ -63,7 +63,6 @@ func Setup(cfg *Config) (*Instance, error) {
 
 	slog.Info("pasta setup complete",
 		"ns", nsPath,
-		"ips", formatIPs(result.IPAddresses),
 		"ipv6", result.IPv6,
 	)
 
@@ -87,15 +86,4 @@ func (i *Instance) IPAddresses() []net.IP {
 func (i *Instance) Teardown() {
 	slog.Info("tearing down pasta", "ns", i.nsPath)
 	os.Remove(i.nsPath)
-}
-
-func formatIPs(ips []net.IP) string {
-	s := ""
-	for i, ip := range ips {
-		if i > 0 {
-			s += ","
-		}
-		s += ip.String()
-	}
-	return s
 }
