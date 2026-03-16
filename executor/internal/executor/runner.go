@@ -160,6 +160,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		return fmt.Errorf("create agent request: %w", err)
 	}
 	agentReq.Header.Set("Content-Type", "application/json")
+	agentReq.Header.Set("X-Execution-Id", execID)
 
 	agentResp, err := http.DefaultClient.Do(agentReq)
 	if err != nil {
