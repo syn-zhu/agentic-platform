@@ -239,20 +239,26 @@ The executor does NOT register, heartbeat outside claims, deregister, or manage 
 
 ### Configuration
 
+**Environment variables:**
+
 | Env Var | Default | Purpose |
 |---------|---------|---------|
 | `LISTEN_ADDR` | `:9090` | HTTP server listen address |
 | `POOL_OPERATOR_ADDR` | — | Pool operator service address |
 | `LEASE_TTL` | `30s` | Lease duration (renewal interval = TTL/3) |
-| `AGENT_COMMAND` | — | Command to run inside VM (e.g., `python /agent/serve.py`) |
-| `AGENT_PORT` | `8080` | Port the agent listens on inside the VM |
-| `IMAGE_DIR` | `/opt/firecracker` | Directory containing kernel, initramfs, rootfs |
-| `WORKLOAD_DIR` | `/workload` | Working directory for chroot, logs |
 | `VCPUS` | `1` | Number of vCPUs per VM |
 | `MEMORY` | `256M` | Memory per VM |
 | `BOOT_TIMEOUT` | `30s` | Max time for VM boot |
 | `READY_TIMEOUT` | `10s` | Max time for agent to start after VM boots |
 | `EXEC_TIMEOUT` | `5m` | Max execution time per request |
+
+**Constants** (fixed by pod template, not configurable):
+
+| Name | Value | Purpose |
+|------|-------|---------|
+| `ImageDir` | `/opt/firecracker` | Kernel, initramfs, rootfs location |
+| `WorkloadDir` | `/workload` | Chroot and logs directory |
+| `AgentPort` | `8080` | Port the agent listens on inside the VM |
 
 ## End-to-End Request Flow
 
