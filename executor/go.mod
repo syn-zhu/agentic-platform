@@ -4,6 +4,7 @@ go 1.25.7
 
 require (
 	github.com/caarlos0/env/v11 v11.4.0
+	github.com/cilium/ebpf v0.21.0
 	github.com/containerd/ttrpc v1.2.8
 	github.com/containers/common v0.64.2
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
