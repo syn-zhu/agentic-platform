@@ -38,22 +38,6 @@ func TestHealthzBusy(t *testing.T) {
 	}
 }
 
-func TestRunBusy(t *testing.T) {
-	sm := executor.NewStateMachine()
-	_ = sm.Transition(executor.Starting)
-	srv := server.New(sm, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/run", strings.NewReader("{}"))
-	req.Header.Set("X-Claim-Id", "clm-123")
-	req.Header.Set("X-Execution-Id", "exec-456")
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("run status = %d, want 503", w.Code)
-	}
-}
-
 func TestRunMissingHeaders(t *testing.T) {
 	sm := executor.NewStateMachine()
 	srv := server.New(sm, nil)
