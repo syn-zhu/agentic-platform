@@ -72,8 +72,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.runner.Run(w, claimID, execID, r.Body); err != nil {
-		// If SSE streaming hasn't started, we can still write an error response.
-		// If it has, the client sees a broken stream.
+		// TODO: handle the case where SSE streaming has already started —
+		// once headers are flushed we can't change the status code.
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),
 		})
