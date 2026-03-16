@@ -13,6 +13,7 @@ import (
 
 	"github.com/siyanzhu/agentic-platform/executor/internal/config"
 	"github.com/siyanzhu/agentic-platform/executor/internal/executor"
+	"github.com/siyanzhu/agentic-platform/executor/internal/image"
 	"github.com/siyanzhu/agentic-platform/executor/internal/lease"
 	"github.com/siyanzhu/agentic-platform/executor/internal/server"
 )
@@ -26,6 +27,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	imgCfg, err := image.LoadConfig(cfg.ImageDir)
+	if err != nil {
+		slog.Error("failed to load image config", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("loaded image config",
+		"entrypoint", imgCfg.Entrypoint, "port", imgCfg.Port,
+		"vcpus", imgCfg.VCPUs, "memory_mb", imgCfg.MemoryMB)
+
 	sm := executor.NewStateMachine()
 	leaseClient, err := lease.NewClient(cfg.PoolOperatorAddr, cfg.LeaseTTL)
 	if err != nil {
@@ -33,7 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer leaseClient.Close()
-	runner := executor.NewRunner(cfg, sm, leaseClient)
+	runner := executor.NewRunner(cfg, imgCfg, sm, leaseClient)
 
 	srv := server.New(sm, runner)
 

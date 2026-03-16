@@ -73,7 +73,7 @@ func main() {
 		"lowerdir=/mnt/lower,upperdir=/mnt/upper/upper,workdir=/mnt/upper/work")
 	log.Println("init: overlayfs mounted")
 
-	// 6. Configure network using netlink (no shell-out to ip command).
+	// 6. Configure network using netlink.
 	if resp.Network != nil {
 		if err := configureNetwork(resp.Network); err != nil {
 			fatal("configure network: %v", err)

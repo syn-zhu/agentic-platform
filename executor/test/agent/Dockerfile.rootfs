@@ -40,8 +40,8 @@ RUN cp /bin/busybox /rootfs/bin/busybox && \
 COPY --from=builder /out/agent /rootfs/usr/bin/agent
 RUN chmod 755 /rootfs/usr/bin/agent
 
-# Write image config — the guest init reads this to know what to run.
-RUN echo '{"entrypoint":["/usr/bin/agent"],"port":8080}' > /rootfs/etc/image-config.json
+# Write image config — read by both guest init (from rootfs) and executor (from host).
+RUN echo '{"entrypoint":["/usr/bin/agent"],"port":8080,"vcpus":1,"memory_mb":256}' > /rootfs/etc/image-config.json
 
 # Build ext4 image.
 RUN truncate -s 64M /rootfs.ext4 && \
@@ -49,6 +49,7 @@ RUN truncate -s 64M /rootfs.ext4 && \
     tune2fs -O ^has_journal /rootfs.ext4 && \
     e2fsck -fy /rootfs.ext4 || true
 
-# The final image carries the rootfs file + cp for the init container.
+# The final image carries the rootfs file, image config, and cp for the init container.
 FROM busybox:musl
 COPY --from=rootfs /rootfs.ext4 /rootfs.ext4
+COPY --from=rootfs /rootfs/etc/image-config.json /image-config.json

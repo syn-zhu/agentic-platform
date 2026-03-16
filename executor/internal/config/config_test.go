@@ -15,12 +15,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ListenAddr != ":9090" {
 		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, ":9090")
 	}
-	if cfg.VCPUs != 1 {
-		t.Errorf("VCPUs = %d, want 1", cfg.VCPUs)
-	}
-	if cfg.Memory != "256M" {
-		t.Errorf("Memory = %q, want %q", cfg.Memory, "256M")
-	}
 	if cfg.BootTimeout != 30*time.Second {
 		t.Errorf("BootTimeout = %v, want 30s", cfg.BootTimeout)
 	}
@@ -36,8 +30,6 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", ":8080")
 	t.Setenv("POOL_OPERATOR_ADDR", "pool-op:8080")
 	t.Setenv("LEASE_TTL", "60s")
-	t.Setenv("VCPUS", "2")
-	t.Setenv("MEMORY", "512M")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -51,9 +43,6 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.LeaseTTL != 60*time.Second {
 		t.Errorf("LeaseTTL = %v, want 60s", cfg.LeaseTTL)
-	}
-	if cfg.VCPUs != 2 {
-		t.Errorf("VCPUs = %d, want 2", cfg.VCPUs)
 	}
 }
 

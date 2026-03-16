@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/siyanzhu/agentic-platform/executor/internal/config"
+	"github.com/siyanzhu/agentic-platform/executor/internal/image"
 	"github.com/siyanzhu/agentic-platform/executor/internal/lease"
 	execnet "github.com/siyanzhu/agentic-platform/executor/internal/net"
 	"github.com/siyanzhu/agentic-platform/executor/internal/vm"
@@ -20,18 +21,20 @@ import (
 )
 
 // Runner orchestrates the full execution lifecycle:
-// state transitions → TAP setup → VM boot → vsock Init/Stream → teardown → release.
+// state transitions → TAP setup → VM boot → vsock Init/EmitEvent → teardown → release.
 type Runner struct {
 	cfg    *config.Config
+	imgCfg *image.Config
 	sm     *StateMachine
 	lease  *lease.Client
 	netCfg *execnet.Config
 }
 
 // NewRunner creates a runner with the given configuration.
-func NewRunner(cfg *config.Config, sm *StateMachine, leaseClient *lease.Client) *Runner {
+func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, leaseClient *lease.Client) *Runner {
 	return &Runner{
 		cfg:    cfg,
+		imgCfg: imgCfg,
 		sm:     sm,
 		lease:  leaseClient,
 		netCfg: execnet.DefaultConfig(),
@@ -112,8 +115,8 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		InitrdPath: filepath.Join(r.cfg.ImageDir, "initramfs.cpio.lz4"),
 		RootfsPath: filepath.Join(r.cfg.ImageDir, "rootfs.ext4"),
 		TAPName:    r.netCfg.TAPName,
-		VCPUs:      r.cfg.VCPUs,
-		MemoryMB:   parseMemoryMB(r.cfg.Memory),
+		VCPUs:      r.imgCfg.VCPUs,
+		MemoryMB:   r.imgCfg.MemoryMB,
 		WorkDir:    workDir,
 		VsockPath:  vsockPath,
 	}
@@ -225,18 +228,3 @@ func (r *Runner) guestFiles() []*initpb.FileConfig {
 	return files
 }
 
-// parseMemoryMB parses a memory string like "256M" or "1G" into megabytes.
-func parseMemoryMB(s string) int {
-	if len(s) == 0 {
-		return 256
-	}
-	var n int
-	unit := s[len(s)-1]
-	fmt.Sscanf(s[:len(s)-1], "%d", &n)
-	switch unit {
-	case 'G', 'g':
-		return n * 1024
-	default:
-		return n
-	}
-}
