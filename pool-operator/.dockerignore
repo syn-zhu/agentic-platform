@@ -1,0 +1,4 @@
+# pool-operator/.dockerignore
+.git
+bin/
+*.md
