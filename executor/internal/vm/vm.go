@@ -104,21 +104,6 @@ func (v *VM) Wait(ctx context.Context) error {
 	return v.machine.Wait(ctx)
 }
 
-// Pause freezes the VM's vCPUs. Memory is retained. The VM can be
-// resumed with Unpause. While paused, the VM uses zero CPU but its
-// memory footprint remains allocated.
-func (v *VM) Pause(ctx context.Context) error {
-	slog.Info("pausing VM")
-	return v.machine.PauseVM(ctx)
-}
-
-// Unpause resumes a paused VM. The agent process continues from
-// where it was paused — in-memory state is intact.
-func (v *VM) Unpause(ctx context.Context) error {
-	slog.Info("unpausing VM")
-	return v.machine.ResumeVM(ctx)
-}
-
 // Stop kills the Firecracker VMM process.
 func (v *VM) Stop() {
 	slog.Info("stopping VM")

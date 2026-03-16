@@ -9,9 +9,11 @@ import (
 )
 
 // Runner is called by the /run handler to execute a request.
-// It blocks until the execution completes, writing SSE chunks to w.
+// It writes SSE events to w (including error events) and returns
+// when the stream is complete. It never returns an error — all
+// errors are dispatched as SSE error events on the stream.
 type Runner interface {
-	Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error
+	Run(w http.ResponseWriter, claimID, execID string, payload io.Reader)
 }
 
 // Server is the executor HTTP server.
@@ -71,40 +73,13 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rw := &responseTracker{ResponseWriter: w}
-	if err := s.runner.Run(rw, claimID, execID, r.Body); err != nil {
-		if rw.written {
-			// SSE headers already sent — can't change status code.
-			// The client sees a truncated stream.
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
-		})
-	}
+	s.runner.Run(w, claimID, execID, r.Body)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"state": s.sm.State().String(),
 	})
-}
-
-// responseTracker wraps http.ResponseWriter to track whether
-// any bytes have been written (and thus headers flushed).
-type responseTracker struct {
-	http.ResponseWriter
-	written bool
-}
-
-func (rt *responseTracker) Write(b []byte) (int, error) {
-	rt.written = true
-	return rt.ResponseWriter.Write(b)
-}
-
-func (rt *responseTracker) WriteHeader(code int) {
-	rt.written = true
-	rt.ResponseWriter.WriteHeader(code)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -13,15 +13,24 @@ func TestStateTransitions(t *testing.T) {
 		t.Fatalf("initial state = %v, want Idle", sm.State())
 	}
 
-	// IDLE → STARTING → RUNNING → WARM → RUNNING (resume) → WARM → TEARDOWN → IDLE
-	for _, target := range []executor.State{
-		executor.Starting, executor.Running, executor.Warm,
-		executor.Running, executor.Warm,
-		executor.Teardown, executor.Idle,
-	} {
-		if err := sm.Transition(target); err != nil {
-			t.Fatalf("%v → %v: %v", sm.State(), target, err)
-		}
+	// IDLE → STARTING
+	if err := sm.Transition(executor.Starting); err != nil {
+		t.Fatalf("IDLE→STARTING: %v", err)
+	}
+
+	// STARTING → RUNNING
+	if err := sm.Transition(executor.Running); err != nil {
+		t.Fatalf("STARTING→RUNNING: %v", err)
+	}
+
+	// RUNNING → TEARDOWN
+	if err := sm.Transition(executor.Teardown); err != nil {
+		t.Fatalf("RUNNING→TEARDOWN: %v", err)
+	}
+
+	// TEARDOWN → IDLE
+	if err := sm.Transition(executor.Idle); err != nil {
+		t.Fatalf("TEARDOWN→IDLE: %v", err)
 	}
 }
 
@@ -29,94 +38,43 @@ func TestStartingToTeardown(t *testing.T) {
 	sm := executor.NewStateMachine()
 	_ = sm.Transition(executor.Starting)
 
+	// STARTING → TEARDOWN (boot failure path)
 	if err := sm.Transition(executor.Teardown); err != nil {
 		t.Fatalf("STARTING→TEARDOWN: %v", err)
-	}
-}
-
-func TestRunningToWarm(t *testing.T) {
-	sm := executor.NewStateMachine()
-	_ = sm.Transition(executor.Starting)
-	_ = sm.Transition(executor.Running)
-
-	if err := sm.Transition(executor.Warm); err != nil {
-		t.Fatalf("RUNNING→WARM: %v", err)
-	}
-}
-
-func TestWarmToRunning(t *testing.T) {
-	sm := executor.NewStateMachine()
-	_ = sm.Transition(executor.Starting)
-	_ = sm.Transition(executor.Running)
-	_ = sm.Transition(executor.Warm)
-
-	if err := sm.Transition(executor.Running); err != nil {
-		t.Fatalf("WARM→RUNNING: %v", err)
-	}
-}
-
-func TestWarmToTeardown(t *testing.T) {
-	sm := executor.NewStateMachine()
-	_ = sm.Transition(executor.Starting)
-	_ = sm.Transition(executor.Running)
-	_ = sm.Transition(executor.Warm)
-
-	if err := sm.Transition(executor.Teardown); err != nil {
-		t.Fatalf("WARM→TEARDOWN: %v", err)
 	}
 }
 
 func TestInvalidTransition(t *testing.T) {
 	sm := executor.NewStateMachine()
 
+	// IDLE → RUNNING (skip STARTING)
 	if err := sm.Transition(executor.Running); err == nil {
 		t.Fatal("IDLE→RUNNING should fail")
 	}
-	if err := sm.Transition(executor.Warm); err == nil {
-		t.Fatal("IDLE→WARM should fail")
-	}
+
+	// IDLE → TEARDOWN
 	if err := sm.Transition(executor.Teardown); err == nil {
 		t.Fatal("IDLE→TEARDOWN should fail")
 	}
 }
 
-func TestIsAvailable(t *testing.T) {
+func TestConcurrentTransitionRejection(t *testing.T) {
 	sm := executor.NewStateMachine()
-
-	// IDLE is available.
-	if !sm.IsAvailable() {
-		t.Fatal("IDLE should be available")
-	}
-
-	// STARTING is not available.
 	_ = sm.Transition(executor.Starting)
-	if sm.IsAvailable() {
-		t.Fatal("STARTING should not be available")
-	}
 
-	// RUNNING is not available.
-	_ = sm.Transition(executor.Running)
-	if sm.IsAvailable() {
-		t.Fatal("RUNNING should not be available")
-	}
-
-	// WARM is available.
-	_ = sm.Transition(executor.Warm)
-	if !sm.IsAvailable() {
-		t.Fatal("WARM should be available")
+	if err := sm.Transition(executor.Starting); err == nil {
+		t.Fatal("STARTING→STARTING should fail")
 	}
 }
 
-func TestIsWarm(t *testing.T) {
+func TestIsIdle(t *testing.T) {
 	sm := executor.NewStateMachine()
-	if sm.IsWarm() {
-		t.Fatal("new state machine should not be warm")
+	if !sm.IsIdle() {
+		t.Fatal("new state machine should be idle")
 	}
 	_ = sm.Transition(executor.Starting)
-	_ = sm.Transition(executor.Running)
-	_ = sm.Transition(executor.Warm)
-	if !sm.IsWarm() {
-		t.Fatal("should be warm after RUNNING→WARM")
+	if sm.IsIdle() {
+		t.Fatal("should not be idle after transitioning to STARTING")
 	}
 }
 
@@ -128,7 +86,6 @@ func TestStateString(t *testing.T) {
 		{executor.Idle, "IDLE"},
 		{executor.Starting, "STARTING"},
 		{executor.Running, "RUNNING"},
-		{executor.Warm, "WARM"},
 		{executor.Teardown, "TEARDOWN"},
 	}
 	for _, tt := range tests {

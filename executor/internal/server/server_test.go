@@ -24,22 +24,6 @@ func TestHealthzIdle(t *testing.T) {
 	}
 }
 
-func TestHealthzWarm(t *testing.T) {
-	sm := executor.NewStateMachine()
-	_ = sm.Transition(executor.Starting)
-	_ = sm.Transition(executor.Running)
-	_ = sm.Transition(executor.Warm)
-	srv := server.New(sm, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("healthz status = %d, want 200 (warm is available)", w.Code)
-	}
-}
-
 func TestHealthzBusy(t *testing.T) {
 	sm := executor.NewStateMachine()
 	_ = sm.Transition(executor.Starting)
@@ -62,7 +46,6 @@ func TestRunBusy(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/run", strings.NewReader("{}"))
 	req.Header.Set("X-Claim-Id", "clm-123")
 	req.Header.Set("X-Execution-Id", "exec-456")
-	req.Header.Set("X-Session-Id", "sess-789")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
@@ -84,14 +67,13 @@ func TestRunMissingHeaders(t *testing.T) {
 	}
 }
 
-func TestRunMissingSessionId(t *testing.T) {
+func TestRunMissingExecutionId(t *testing.T) {
 	sm := executor.NewStateMachine()
 	srv := server.New(sm, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/run", strings.NewReader("{}"))
 	req.Header.Set("X-Claim-Id", "clm-123")
-	req.Header.Set("X-Execution-Id", "exec-456")
-	// No X-Session-Id
+	// No X-Execution-Id
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
@@ -107,7 +89,6 @@ func TestRunNoRunner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/run", strings.NewReader("{}"))
 	req.Header.Set("X-Claim-Id", "clm-123")
 	req.Header.Set("X-Execution-Id", "exec-456")
-	req.Header.Set("X-Session-Id", "sess-789")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
@@ -135,11 +116,10 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-func TestStatusWhileWarm(t *testing.T) {
+func TestStatusWhileRunning(t *testing.T) {
 	sm := executor.NewStateMachine()
 	_ = sm.Transition(executor.Starting)
 	_ = sm.Transition(executor.Running)
-	_ = sm.Transition(executor.Warm)
 	srv := server.New(sm, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
@@ -148,7 +128,7 @@ func TestStatusWhileWarm(t *testing.T) {
 
 	var body map[string]string
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["state"] != "WARM" {
-		t.Errorf("state = %q, want %q", body["state"], "WARM")
+	if body["state"] != "RUNNING" {
+		t.Errorf("state = %q, want %q", body["state"], "RUNNING")
 	}
 }
