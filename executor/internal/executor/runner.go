@@ -171,26 +171,10 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	defer agentResp.Body.Close()
 
 	// Stream SSE response from agent to waypoint.
-	flusher, _ := w.(http.Flusher)
-	buf := make([]byte, 4096)
-	for {
-		n, readErr := agentResp.Body.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				log.Warn("client disconnected", "error", writeErr)
-				machine.Stop()
-				return nil // Client gone, not an error to report.
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		if readErr != nil {
-			if readErr != io.EOF {
-				log.Warn("agent read error", "error", readErr)
-			}
-			break
-		}
+	// flushWriter flushes after every Write so SSE events are delivered immediately.
+	fw := &flushWriter{w: w, flusher: w.(http.Flusher)}
+	if _, err := io.Copy(fw, agentResp.Body); err != nil {
+		log.Warn("stream copy error", "error", err)
 	}
 
 	log.Info("execution complete")
@@ -230,6 +214,20 @@ func (r *Runner) guestFiles() []*initpb.FileConfig {
 	})
 
 	return files
+}
+
+// flushWriter wraps an http.ResponseWriter and flushes after every Write.
+type flushWriter struct {
+	w       io.Writer
+	flusher http.Flusher
+}
+
+func (fw *flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	if fw.flusher != nil {
+		fw.flusher.Flush()
+	}
+	return n, err
 }
 
 // waitForAgent polls the agent's health endpoint until it responds.
