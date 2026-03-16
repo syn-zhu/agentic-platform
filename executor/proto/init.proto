@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package executor.init.v1;
+
+option go_package = "github.com/siyanzhu/agentic-platform/executor/internal/vsock/initpb";
+
+/*
+ * InitControl is the ttrpc service for executor-to-guest-init
+ * communication over virtio-vsock. The executor (host) runs
+ * the server; the guest init process is the client.
+ *
+ * Two RPCs:
+ *   Init   — guest fetches config + client payload at boot
+ *   Stream — guest pushes SSE chunks from the agent back to host
+ */
+service InitControl {
+  /*
+   * Init is called by the guest init at boot. The executor
+   * responds with the full guest configuration (network, files,
+   * process) and the client request payload. The guest uses this
+   * to configure the VM, start the agent, and forward the payload.
+   */
+  rpc Init(InitRequest) returns (InitResponse);
+
+  /*
+   * Stream is called by the guest init after it has configured
+   * the network, started the agent, forwarded the payload, and
+   * begun receiving the agent's SSE response. Each call sends
+   * one chunk of SSE data. The executor proxies these chunks
+   * to the waypoint's HTTP response.
+   *
+   * When the agent's response completes, the guest sends a
+   * final StreamRequest with done=true.
+   */
+  rpc Stream(StreamRequest) returns (StreamResponse);
+}
+
+/* InitRequest is empty; the guest needs no parameters. */
+message InitRequest {}
+
+/*
+ * InitResponse carries everything the guest needs to boot,
+ * configure, and handle the client request.
+ */
+message InitResponse {
+  /* Network configuration for the guest's eth0 interface. */
+  NetworkConfig network = 1;
+
+  /* Files to inject into the guest filesystem. */
+  repeated FileConfig files = 2;
+
+  /* Hostname (set to the execution ID). */
+  string hostname = 3;
+
+  /*
+   * Payload is the client's request body, forwarded from
+   * the waypoint's POST /run request.
+   */
+  bytes payload = 4;
+
+  /*
+   * Payload headers from the client request that should
+   * be forwarded to the agent (e.g., Content-Type).
+   */
+  map<string, string> payload_headers = 5;
+
+  /*
+   * Agent port — the port the agent listens on inside
+   * the VM (e.g., 8080).
+   */
+  int32 agent_port = 6;
+}
+
+/* NetworkConfig for the guest's eth0 interface. */
+message NetworkConfig {
+  /* IP address (e.g., "169.254.1.2"). */
+  string ip = 1;
+
+  /* Default gateway (e.g., "169.254.1.1"). */
+  string gateway = 2;
+
+  /* Prefix length (e.g., 32). */
+  int32 prefix_len = 3;
+
+  /* MTU matching the host TAP device. */
+  int32 mtu = 4;
+}
+
+/* FileConfig defines a file to inject into the guest. */
+message FileConfig {
+  /* Absolute path in the guest filesystem. */
+  string path = 1;
+
+  /* Raw file content. */
+  bytes content = 2;
+
+  /* Unix permission bits (e.g., 0644). */
+  uint32 mode = 3;
+}
+
+/*
+ * StreamRequest carries one chunk of SSE data from the
+ * agent's response, or signals completion.
+ */
+message StreamRequest {
+  /* SSE data chunk. Empty when done=true. */
+  bytes data = 1;
+
+  /* True when the agent's response is complete. */
+  bool done = 2;
+
+  /*
+   * Error message if the agent request failed.
+   * Non-empty only when done=true and the request errored.
+   */
+  string error = 3;
+}
+
+/* StreamResponse is an acknowledgment. */
+message StreamResponse {}

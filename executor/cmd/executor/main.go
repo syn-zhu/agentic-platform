@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -11,6 +13,7 @@ import (
 
 	"github.com/siyanzhu/agentic-platform/executor/internal/config"
 	"github.com/siyanzhu/agentic-platform/executor/internal/executor"
+	"github.com/siyanzhu/agentic-platform/executor/internal/lease"
 	"github.com/siyanzhu/agentic-platform/executor/internal/server"
 )
 
@@ -24,10 +27,10 @@ func main() {
 	}
 
 	sm := executor.NewStateMachine()
+	leaseClient := lease.NewClient("http://"+cfg.PoolOperatorAddr, cfg.LeaseTTL)
+	runner := executor.NewRunner(cfg, sm, leaseClient)
 
-	// Runner will be wired in Phase 4 (VM lifecycle).
-	// For now, /run returns 500 "no runner configured".
-	srv := server.New(sm, nil)
+	srv := server.New(sm, runner)
 
 	httpSrv := &http.Server{
 		Addr:    cfg.ListenAddr,
