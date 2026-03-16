@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: executor-net-test
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tap-test
+  namespace: executor-net-test
+  annotations:
+    istio.io/reroute-virtual-interfaces: "test-tap0"
+spec:
+  # No nodeSelector for c5.metal — we don't need /dev/kvm for this test,
+  # just NET_ADMIN to create TAP/veth devices.
+  containers:
+    - name: test
+      image: ubuntu:22.04
+      command: ["sleep", "infinity"]
+      securityContext:
+        capabilities:
+          add: [NET_ADMIN, NET_RAW, SYS_ADMIN]

@@ -74,7 +74,9 @@ fctr's `tc redirect` installs TC-layer filters that shuttle packets directly bet
 1. Create TAP device `fctr-tap0` (IFF_VNET_HDR | IFF_NO_PI, owner=JailerUID, MTU matching host)
 2. Assign link-local IP to TAP host side: `169.254.1.1/32`
 3. Add route to guest via TAP: `ip route add 169.254.1.2/32 dev fctr-tap0`
-4. Enable IP forwarding: `sysctl net.ipv4.conf.fctr-tap0.forwarding=1`
+4. Add DNS interception rule: `iptables -t nat -A ISTIO_PRERT -i fctr-tap0 -p udp --dport 53 -j DNAT --to-destination 127.0.0.1:15053`
+
+Note: Step 4 is needed because the `istio.io/reroute-virtual-interfaces` annotation only adds a TCP REDIRECT rule. DNS (UDP port 53) requires explicit DNAT to ztunnel's DNS proxy, which listens on `127.0.0.1:15053` (localhost-bound). REDIRECT would rewrite the destination to the TAP interface IP, which ztunnel's DNS socket doesn't accept. DNAT to `127.0.0.1:15053` sends it to the right address.
 
 No tc redirect filters. No address/route release from eth0.
 
@@ -88,8 +90,9 @@ No tc redirect filters. No address/route release from eth0.
 
 **Teardown (per-execution):**
 
-1. Delete route: `ip route del 169.254.1.2/32 dev fctr-tap0`
-2. Delete TAP device
+1. Remove DNS interception rule: `iptables -t nat -D ISTIO_PRERT -i fctr-tap0 -p udp --dport 53 -j DNAT --to-destination 127.0.0.1:15053`
+2. Delete route: `ip route del 169.254.1.2/32 dev fctr-tap0`
+3. Delete TAP device
 
 **Pod annotation:**
 
