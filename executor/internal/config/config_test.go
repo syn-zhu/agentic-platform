@@ -24,9 +24,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.BootTimeout != 30*time.Second {
 		t.Errorf("BootTimeout = %v, want 30s", cfg.BootTimeout)
 	}
-	if cfg.AgentPort != 8080 {
-		t.Errorf("AgentPort = %d, want 8080", cfg.AgentPort)
-	}
 	if cfg.ImageDir != "/opt/firecracker" {
 		t.Errorf("ImageDir = %q, want %q", cfg.ImageDir, "/opt/firecracker")
 	}

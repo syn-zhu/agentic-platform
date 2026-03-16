@@ -36,9 +36,12 @@ RUN cp /bin/busybox /rootfs/bin/busybox && \
         ln -sf busybox $cmd; \
     done
 
-# Copy the test agent binary as the entrypoint.
-COPY --from=builder /out/agent /rootfs/entrypoint.sh
-RUN chmod 755 /rootfs/entrypoint.sh
+# Copy the test agent binary.
+COPY --from=builder /out/agent /rootfs/usr/bin/agent
+RUN chmod 755 /rootfs/usr/bin/agent
+
+# Write image config — the guest init reads this to know what to run.
+RUN echo '{"entrypoint":["/usr/bin/agent"],"port":8080}' > /rootfs/etc/image-config.json
 
 # Build ext4 image.
 RUN truncate -s 64M /rootfs.ext4 && \

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -55,7 +56,7 @@ func main() {
 	if err != nil {
 		fatal("Init RPC: %v", err)
 	}
-	log.Printf("init: got config (agent_port=%d, payload=%d bytes)", resp.AgentPort, len(resp.Payload))
+	log.Printf("init: got config (payload=%d bytes)", len(resp.Payload))
 
 	// 4. Wait for rootfs block device.
 	waitForDevice("/dev/vda", 5*time.Second)
@@ -103,26 +104,34 @@ func main() {
 	}
 	log.Println("init: switched root")
 
-	// 9. Start the agent process.
-	agentCmd := resp.AgentCommand
-	if len(agentCmd) == 0 {
-		agentCmd = []string{"/entrypoint.sh"}
+	// 9. Read image config from rootfs.
+	imgCfg, err := loadImageConfig("/etc/image-config.json")
+	if err != nil {
+		fatal("load image config: %v", err)
 	}
-	log.Printf("init: starting agent: %v", agentCmd)
+	log.Printf("init: image config: entrypoint=%v port=%d", imgCfg.Entrypoint, imgCfg.Port)
+
+	// 10. Start the agent process.
+	log.Printf("init: starting agent: %v", imgCfg.Entrypoint)
+
+	agentEnv := append(os.Environ(), fmt.Sprintf("PORT=%d", imgCfg.Port))
+	for k, v := range imgCfg.Env {
+		agentEnv = append(agentEnv, fmt.Sprintf("%s=%s", k, v))
+	}
 
 	agent := &syscall.ProcAttr{
-		Env:   append(os.Environ(), fmt.Sprintf("PORT=%d", resp.AgentPort)),
+		Env:   agentEnv,
 		Files: []uintptr{os.Stdin.Fd(), os.Stdout.Fd(), os.Stderr.Fd()},
 		Sys:   &syscall.SysProcAttr{Setpgid: true},
 	}
-	agentPid, err := syscall.ForkExec(agentCmd[0], agentCmd, agent)
+	agentPid, err := syscall.ForkExec(imgCfg.Entrypoint[0], imgCfg.Entrypoint, agent)
 	if err != nil {
 		fatal("start agent: %v", err)
 	}
 	log.Printf("init: agent started (pid=%d)", agentPid)
 
 	// 10. Wait for agent to be ready (poll the health endpoint).
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", resp.AgentPort)
+	agentAddr := fmt.Sprintf("127.0.0.1:%d", imgCfg.Port)
 	if err := waitForAgent(ctx, agentAddr, 30*time.Second); err != nil {
 		fatal("agent not ready: %v", err)
 	}
@@ -314,6 +323,33 @@ func switchRoot(newRoot string) error {
 	}
 	os.RemoveAll("/old_root")
 	return nil
+}
+
+// imageConfig is read from /etc/image-config.json in the rootfs.
+// It defines the agent entrypoint, port, and environment — the
+// equivalent of OCI image config (ENTRYPOINT, EXPOSE, ENV).
+type imageConfig struct {
+	Entrypoint []string          `json:"entrypoint"`
+	Port       int               `json:"port"`
+	Env        map[string]string `json:"env"`
+}
+
+func loadImageConfig(path string) (*imageConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var cfg imageConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if len(cfg.Entrypoint) == 0 {
+		return nil, fmt.Errorf("entrypoint is required in %s", path)
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 8080
+	}
+	return &cfg, nil
 }
 
 func mustMount(source, target, fstype string, flags uintptr, data string) {

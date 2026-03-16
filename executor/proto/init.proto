@@ -60,19 +60,6 @@ message InitResponse {
    * be forwarded to the agent (e.g., Content-Type).
    */
   map<string, string> payload_headers = 4;
-
-  /*
-   * Agent port — the port the agent listens on inside
-   * the VM (e.g., 8080).
-   */
-  int32 agent_port = 5;
-
-  /*
-   * Agent command — the entrypoint to exec inside the VM.
-   * Set by the operator from the agent registration.
-   * E.g., ["python", "/agent/serve.py"] or ["/entrypoint.sh"].
-   */
-  repeated string agent_command = 6;
 }
 
 /* NetworkConfig for the guest's eth0 interface. */
