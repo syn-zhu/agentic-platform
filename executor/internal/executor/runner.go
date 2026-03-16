@@ -147,7 +147,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	for {
 		select {
-		case chunk, ok := <-vsockSrv.StreamCh():
+		case chunk, ok := <-vsockSrv.EventCh():
 			if !ok {
 				// Channel closed.
 				log.Info("stream channel closed")

@@ -9,7 +9,7 @@ import (
 
 type InitControlService interface {
 	Init(context.Context, *InitRequest) (*InitResponse, error)
-	Stream(context.Context, *StreamRequest) (*StreamResponse, error)
+	EmitEvent(context.Context, *EmitEventRequest) (*EmitEventResponse, error)
 }
 
 func RegisterInitControlService(srv *ttrpc.Server, svc InitControlService) {
@@ -22,12 +22,12 @@ func RegisterInitControlService(srv *ttrpc.Server, svc InitControlService) {
 				}
 				return svc.Init(ctx, &req)
 			},
-			"Stream": func(ctx context.Context, unmarshal func(interface{}) error) (interface{}, error) {
-				var req StreamRequest
+			"EmitEvent": func(ctx context.Context, unmarshal func(interface{}) error) (interface{}, error) {
+				var req EmitEventRequest
 				if err := unmarshal(&req); err != nil {
 					return nil, err
 				}
-				return svc.Stream(ctx, &req)
+				return svc.EmitEvent(ctx, &req)
 			},
 		},
 	})
@@ -51,9 +51,9 @@ func (c *initcontrolClient) Init(ctx context.Context, req *InitRequest) (*InitRe
 	return &resp, nil
 }
 
-func (c *initcontrolClient) Stream(ctx context.Context, req *StreamRequest) (*StreamResponse, error) {
-	var resp StreamResponse
-	if err := c.client.Call(ctx, "executor.init.v1.InitControl", "Stream", req, &resp); err != nil {
+func (c *initcontrolClient) EmitEvent(ctx context.Context, req *EmitEventRequest) (*EmitEventResponse, error) {
+	var resp EmitEventResponse
+	if err := c.client.Call(ctx, "executor.init.v1.InitControl", "EmitEvent", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

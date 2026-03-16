@@ -13,6 +13,11 @@ import (
 	status "google.golang.org/grpc/status"
 )
 
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the grpc package it is being compiled against.
+// Requires gRPC-Go v1.64.0 or later.
+const _ = grpc.SupportPackageIsVersion9
+
 const (
 	PoolService_Claim_FullMethodName   = "/pool.operator.v1.PoolService/Claim"
 	PoolService_Renew_FullMethodName   = "/pool.operator.v1.PoolService/Renew"

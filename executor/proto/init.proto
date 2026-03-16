@@ -10,8 +10,8 @@ option go_package = "github.com/siyanzhu/agentic-platform/executor/internal/vsoc
  * the server; the guest init process is the client.
  *
  * Two RPCs:
- *   Init   — guest fetches config + client payload at boot
- *   Stream — guest pushes SSE chunks from the agent back to host
+ *   Init      — guest fetches config + client payload at boot
+ *   EmitEvent — guest pushes SSE events from the agent back to host
  */
 service InitControl {
   /*
@@ -23,16 +23,14 @@ service InitControl {
   rpc Init(InitRequest) returns (InitResponse);
 
   /*
-   * Stream is called by the guest init after it has configured
-   * the network, started the agent, forwarded the payload, and
-   * begun receiving the agent's SSE response. Each call sends
-   * one chunk of SSE data. The executor proxies these chunks
+   * EmitEvent is called by the guest init for each SSE event
+   * received from the agent. The executor proxies these events
    * to the waypoint's HTTP response.
    *
    * When the agent's response completes, the guest sends a
-   * final StreamRequest with done=true.
+   * final event with done=true.
    */
-  rpc Stream(StreamRequest) returns (StreamResponse);
+  rpc EmitEvent(EmitEventRequest) returns (EmitEventResponse);
 }
 
 /* InitRequest is empty; the guest needs no parameters. */
@@ -89,12 +87,9 @@ message FileConfig {
   uint32 mode = 3;
 }
 
-/*
- * StreamRequest carries one chunk of SSE data from the
- * agent's response, or signals completion.
- */
-message StreamRequest {
-  /* SSE data chunk. Empty when done=true. */
+/* EmitEventRequest carries one SSE event or signals completion. */
+message EmitEventRequest {
+  /* SSE event data. Empty when done=true. */
   bytes data = 1;
 
   /* True when the agent's response is complete. */
@@ -107,5 +102,5 @@ message StreamRequest {
   string error = 3;
 }
 
-/* StreamResponse is an acknowledgment. */
-message StreamResponse {}
+/* EmitEventResponse is an acknowledgment. */
+message EmitEventResponse {}

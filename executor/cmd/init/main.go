@@ -149,7 +149,7 @@ func main() {
 
 	agentResp, err := http.DefaultClient.Do(agentReq)
 	if err != nil {
-		initClient.Stream(ctx, &initpb.StreamRequest{
+		initClient.EmitEvent(ctx, &initpb.EmitEventRequest{
 			Done:  true,
 			Error: fmt.Sprintf("agent request failed: %v", err),
 		})
@@ -167,7 +167,7 @@ func main() {
 			if n > 0 {
 				chunk := make([]byte, n)
 				copy(chunk, buf[:n])
-				if _, err := initClient.Stream(ctx, &initpb.StreamRequest{Data: chunk}); err != nil {
+				if _, err := initClient.EmitEvent(ctx, &initpb.EmitEventRequest{Data: chunk}); err != nil {
 					log.Printf("init: Stream RPC error: %v", err)
 					break
 				}
@@ -175,12 +175,12 @@ func main() {
 			if readErr != nil {
 				if readErr != io.EOF {
 					log.Printf("init: agent read error: %v", readErr)
-					initClient.Stream(ctx, &initpb.StreamRequest{
+					initClient.EmitEvent(ctx, &initpb.EmitEventRequest{
 						Done:  true,
 						Error: readErr.Error(),
 					})
 				} else {
-					initClient.Stream(ctx, &initpb.StreamRequest{Done: true})
+					initClient.EmitEvent(ctx, &initpb.EmitEventRequest{Done: true})
 				}
 				break
 			}

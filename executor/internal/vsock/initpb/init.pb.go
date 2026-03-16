@@ -271,11 +271,10 @@ func (x *FileConfig) GetMode() uint32 {
 	return 0
 }
 
-// StreamRequest carries one chunk of SSE data from the
-// agent's response, or signals completion.
-type StreamRequest struct {
+// EmitEventRequest carries one SSE event or signals completion.
+type EmitEventRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// SSE data chunk. Empty when done=true.
+	// SSE event data. Empty when done=true.
 	Data []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
 	// True when the agent's response is complete.
 	Done bool `protobuf:"varint,2,opt,name=done,proto3" json:"done,omitempty"`
@@ -286,20 +285,20 @@ type StreamRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *StreamRequest) Reset() {
-	*x = StreamRequest{}
+func (x *EmitEventRequest) Reset() {
+	*x = EmitEventRequest{}
 	mi := &file_init_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *StreamRequest) String() string {
+func (x *EmitEventRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*StreamRequest) ProtoMessage() {}
+func (*EmitEventRequest) ProtoMessage() {}
 
-func (x *StreamRequest) ProtoReflect() protoreflect.Message {
+func (x *EmitEventRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_init_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -311,53 +310,53 @@ func (x *StreamRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use StreamRequest.ProtoReflect.Descriptor instead.
-func (*StreamRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EmitEventRequest.ProtoReflect.Descriptor instead.
+func (*EmitEventRequest) Descriptor() ([]byte, []int) {
 	return file_init_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *StreamRequest) GetData() []byte {
+func (x *EmitEventRequest) GetData() []byte {
 	if x != nil {
 		return x.Data
 	}
 	return nil
 }
 
-func (x *StreamRequest) GetDone() bool {
+func (x *EmitEventRequest) GetDone() bool {
 	if x != nil {
 		return x.Done
 	}
 	return false
 }
 
-func (x *StreamRequest) GetError() string {
+func (x *EmitEventRequest) GetError() string {
 	if x != nil {
 		return x.Error
 	}
 	return ""
 }
 
-// StreamResponse is an acknowledgment.
-type StreamResponse struct {
+// EmitEventResponse is an acknowledgment.
+type EmitEventResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *StreamResponse) Reset() {
-	*x = StreamResponse{}
+func (x *EmitEventResponse) Reset() {
+	*x = EmitEventResponse{}
 	mi := &file_init_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *StreamResponse) String() string {
+func (x *EmitEventResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*StreamResponse) ProtoMessage() {}
+func (*EmitEventResponse) ProtoMessage() {}
 
-func (x *StreamResponse) ProtoReflect() protoreflect.Message {
+func (x *EmitEventResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_init_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -369,8 +368,8 @@ func (x *StreamResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use StreamResponse.ProtoReflect.Descriptor instead.
-func (*StreamResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EmitEventResponse.ProtoReflect.Descriptor instead.
+func (*EmitEventResponse) Descriptor() ([]byte, []int) {
 	return file_init_proto_rawDescGZIP(), []int{5}
 }
 
@@ -399,15 +398,15 @@ const file_init_proto_rawDesc = "" +
 	"FileConfig\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\fR\acontent\x12\x12\n" +
-	"\x04mode\x18\x03 \x01(\rR\x04mode\"M\n" +
-	"\rStreamRequest\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\rR\x04mode\"P\n" +
+	"\x10EmitEventRequest\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x12\n" +
 	"\x04done\x18\x02 \x01(\bR\x04done\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x10\n" +
-	"\x0eStreamResponse2\xa1\x01\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\x13\n" +
+	"\x11EmitEventResponse2\xaa\x01\n" +
 	"\vInitControl\x12E\n" +
-	"\x04Init\x12\x1d.executor.init.v1.InitRequest\x1a\x1e.executor.init.v1.InitResponse\x12K\n" +
-	"\x06Stream\x12\x1f.executor.init.v1.StreamRequest\x1a .executor.init.v1.StreamResponseBEZCgithub.com/siyanzhu/agentic-platform/executor/internal/vsock/initpbb\x06proto3"
+	"\x04Init\x12\x1d.executor.init.v1.InitRequest\x1a\x1e.executor.init.v1.InitResponse\x12T\n" +
+	"\tEmitEvent\x12\".executor.init.v1.EmitEventRequest\x1a#.executor.init.v1.EmitEventResponseBEZCgithub.com/siyanzhu/agentic-platform/executor/internal/vsock/initpbb\x06proto3"
 
 var (
 	file_init_proto_rawDescOnce sync.Once
@@ -423,22 +422,22 @@ func file_init_proto_rawDescGZIP() []byte {
 
 var file_init_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_init_proto_goTypes = []any{
-	(*InitRequest)(nil),    // 0: executor.init.v1.InitRequest
-	(*InitResponse)(nil),   // 1: executor.init.v1.InitResponse
-	(*NetworkConfig)(nil),  // 2: executor.init.v1.NetworkConfig
-	(*FileConfig)(nil),     // 3: executor.init.v1.FileConfig
-	(*StreamRequest)(nil),  // 4: executor.init.v1.StreamRequest
-	(*StreamResponse)(nil), // 5: executor.init.v1.StreamResponse
-	nil,                    // 6: executor.init.v1.InitResponse.PayloadHeadersEntry
+	(*InitRequest)(nil),       // 0: executor.init.v1.InitRequest
+	(*InitResponse)(nil),      // 1: executor.init.v1.InitResponse
+	(*NetworkConfig)(nil),     // 2: executor.init.v1.NetworkConfig
+	(*FileConfig)(nil),        // 3: executor.init.v1.FileConfig
+	(*EmitEventRequest)(nil),  // 4: executor.init.v1.EmitEventRequest
+	(*EmitEventResponse)(nil), // 5: executor.init.v1.EmitEventResponse
+	nil,                       // 6: executor.init.v1.InitResponse.PayloadHeadersEntry
 }
 var file_init_proto_depIdxs = []int32{
 	2, // 0: executor.init.v1.InitResponse.network:type_name -> executor.init.v1.NetworkConfig
 	3, // 1: executor.init.v1.InitResponse.files:type_name -> executor.init.v1.FileConfig
 	6, // 2: executor.init.v1.InitResponse.payload_headers:type_name -> executor.init.v1.InitResponse.PayloadHeadersEntry
 	0, // 3: executor.init.v1.InitControl.Init:input_type -> executor.init.v1.InitRequest
-	4, // 4: executor.init.v1.InitControl.Stream:input_type -> executor.init.v1.StreamRequest
+	4, // 4: executor.init.v1.InitControl.EmitEvent:input_type -> executor.init.v1.EmitEventRequest
 	1, // 5: executor.init.v1.InitControl.Init:output_type -> executor.init.v1.InitResponse
-	5, // 6: executor.init.v1.InitControl.Stream:output_type -> executor.init.v1.StreamResponse
+	5, // 6: executor.init.v1.InitControl.EmitEvent:output_type -> executor.init.v1.EmitEventResponse
 	5, // [5:7] is the sub-list for method output_type
 	3, // [3:5] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name

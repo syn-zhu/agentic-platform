@@ -21,18 +21,18 @@ type Server struct {
 	// the guest calls Init.
 	initResponse *initpb.InitResponse
 
-	// streamCh receives SSE chunks from the guest's Stream calls.
+	// eventCh receives SSE events from the guest's EmitEvent calls.
 	// The executor reads from this channel to proxy to the HTTP response.
-	streamCh chan StreamChunk
+	eventCh chan Event
 
-	// done is closed when the guest sends done=true on Stream.
+	// done is closed when the guest sends done=true on EmitEvent.
 	done chan struct{}
 
 	closeOnce sync.Once
 }
 
-// StreamChunk is an SSE chunk received from the guest.
-type StreamChunk struct {
+// Event is an SSE event received from the guest.
+type Event struct {
 	Data  []byte
 	Done  bool
 	Error string
@@ -49,7 +49,7 @@ func NewServer(socketPath string, initResp *initpb.InitResponse) (*Server, error
 	s := &Server{
 		listener:     ln,
 		initResponse: initResp,
-		streamCh:     make(chan StreamChunk, 64),
+		eventCh:      make(chan Event, 64),
 		done:         make(chan struct{}),
 	}
 
@@ -71,9 +71,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	return s.ttrpc.Serve(ctx, s.listener)
 }
 
-// StreamCh returns the channel that receives SSE chunks from the guest.
-func (s *Server) StreamCh() <-chan StreamChunk {
-	return s.streamCh
+// EventCh returns the channel that receives SSE events from the guest.
+func (s *Server) EventCh() <-chan Event {
+	return s.eventCh
 }
 
 // Done returns a channel that is closed when the guest signals completion.
@@ -87,7 +87,7 @@ func (s *Server) Close() error {
 	s.closeOnce.Do(func() {
 		s.ttrpc.Close()
 		err = s.listener.Close()
-		close(s.streamCh)
+		close(s.eventCh)
 	})
 	return err
 }
@@ -99,17 +99,17 @@ func (s *Server) Init(ctx context.Context, req *initpb.InitRequest) (*initpb.Ini
 	return s.initResponse, nil
 }
 
-// Stream implements the InitControl ttrpc service.
-// Called by the guest to push SSE chunks from the agent's response.
-func (s *Server) Stream(ctx context.Context, req *initpb.StreamRequest) (*initpb.StreamResponse, error) {
-	chunk := StreamChunk{
+// EmitEvent implements the InitControl ttrpc service.
+// Called by the guest to push SSE events from the agent's response.
+func (s *Server) EmitEvent(ctx context.Context, req *initpb.EmitEventRequest) (*initpb.EmitEventResponse, error) {
+	ev := Event{
 		Data:  req.Data,
 		Done:  req.Done,
 		Error: req.Error,
 	}
 
 	select {
-	case s.streamCh <- chunk:
+	case s.eventCh <- ev:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -120,5 +120,5 @@ func (s *Server) Stream(ctx context.Context, req *initpb.StreamRequest) (*initpb
 		})
 	}
 
-	return &initpb.StreamResponse{}, nil
+	return &initpb.EmitEventResponse{}, nil
 }
