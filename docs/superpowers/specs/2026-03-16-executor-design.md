@@ -1,21 +1,29 @@
 # Executor Design Spec
 
 **Date:** 2026-03-16
-**Status:** Draft (v3 — warm VM + session affinity)
+**Status:** Draft (v3 — session affinity + warm VMs)
 **Author:** Siyanzhu + Claude
 
 ## Problem
 
-The current Magenta executor (`fctr`) uses `tc redirect` for VM networking (incompatible with Istio ambient mesh), a ttrpc Unix socket API (incompatible with the pool operator), and a one-shot execution model (no warm reuse). We need an executor that integrates with the ambient mesh, the pool operator, and supports session affinity with warm VM reuse.
+The current Magenta executor (`fctr`) uses `tc redirect` for VM networking, which bypasses L3/iptables entirely and is incompatible with both Istio ambient mesh (ztunnel) and the Tenant Egress Gateway. Its external API is ttrpc over a Unix socket, designed for one-shot execution, with no concept of warm pools, claim leases, or request proxying. It cannot integrate with the pool operator or the ambient mesh architecture.
+
+We need an executor that:
+
+1. Uses networking compatible with Istio ambient mesh (ztunnel captures agent outbound traffic)
+2. Integrates with the pool operator (claim/renew/release lifecycle via gRPC)
+3. Accepts HTTP requests from the waypoint and forwards them to the agent inside the VM
+4. Runs as a long-lived process handling sequential requests (pool model, not one-shot)
+5. Streams SSE responses from the agent back through the waypoint to the client
 
 ## Solution
 
-An executor binary that uses [pasta](https://passt.top/) for VM networking and keeps VMs warm between requests using Firecracker's pause/unpause. The executor proxies requests to the agent inside the VM and manages the VM lifecycle (boot, pause, unpause, teardown).
+A new executor binary that uses [pasta](https://passt.top/) for VM networking. pasta creates a dedicated network namespace with a TAP device and translates between L2 Ethernet frames (from the VM) and L4 socket operations (in the pod's root netns). This gives us two key properties:
 
-Key properties:
-1. **pasta** translates L2↔L4 between the VM's dedicated netns and the pod's root netns. Agent outbound traffic becomes normal sockets captured by ztunnel. The executor talks to the agent on `localhost:8080` via pasta port forwarding.
-2. **Warm VMs** — after a request completes, the VM is paused (not killed). If the same session resumes, the VM is unpaused instantly (~ms). After an idle timeout, the VM is torn down and the pod returns to the available pool.
-3. **Session-aware routing** — the pool operator tracks which pod has a warm session. On Claim, it prefers returning a warm pod matching the session ID.
+1. **Agent outbound traffic appears as normal socket operations** in the pod's root netns — ztunnel captures them via the OUTPUT chain automatically, no annotations or iptables workarounds needed.
+2. **The executor can talk to the agent directly via localhost** — pasta forwards a port range from the pod's root netns into the VM. The executor sends HTTP requests to `localhost:8080`, pasta bridges them to the agent inside the VM.
+
+This eliminates the need for vsock-based payload relay — the executor talks HTTP to the agent directly, and the guest init simplifies to just system setup (mount rootfs, configure network, exec into agent).
 
 ## Architecture
 
@@ -28,307 +36,388 @@ Key properties:
 │  │  Executor Process                                         │ │
 │  │    HTTP Server (:9090) — /healthz, /run, /status          │ │
 │  │    Lease Client — gRPC Renew/Release to pool operator     │ │
-│  │    State Machine:                                         │ │
-│  │      IDLE → STARTING → RUNNING → WARM → RUNNING (resume) │ │
-│  │                                    ↓ (idle timeout)       │ │
-│  │                                 TEARDOWN → IDLE           │ │
+│  │    State Machine — IDLE → STARTING → RUNNING → TEARDOWN   │ │
 │  │                                                           │ │
-│  │  On /run (cold start — IDLE):                             │ │
-│  │    Boot VM → wait for agent → forward payload → stream    │ │
-│  │  On /run (warm resume — WARM):                            │ │
-│  │    Unpause VM → forward payload → stream                  │ │
-│  │  On stream end:                                           │ │
-│  │    Pause VM → transition to WARM → start idle timer       │ │
-│  │                                                           │ │
-│  │  pasta process (L2 ↔ L4 translation)                      │ │
-│  │    localhost:8080 → agent inside VM                        │ │
-│  │                                                           │ │
-│  │  eth0 (pod IP)                                            │ │
-│  │    outbound from pasta → ztunnel OUTPUT chain capture     │ │
-│  └───────────────────────────────────────────────────────────┘ │
-│                                                               │
+│  │  On /run:                                                 │ │
+│  │    POST http://localhost:8080/run  ──┐                     │ │
+│  │    (reads SSE stream back)          │                     │ │
+│  │                                     │                     │ │
+│  │  pasta process                      │ port forwarding     │ │
+│  │    (L2 ↔ L4 translation)           │ localhost:8080       │ │
+│  │                                     │                     │ │
+│  │  eth0 (pod IP)                      │                     │ │
+│  │    outbound from pasta  ───→ ztunnel OUTPUT chain capture │ │
+│  └─────────────────────────────┼────────────────────────────┘ │
+│                                │                              │
 │  ─────────────────── netns boundary ─────────────────────     │
-│                                                               │
+│                                │                              │
 │  Dedicated netns (created by pasta)                           │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │  TAP device ← pasta                                       │ │
+│  ┌─────────────────────────────┼────────────────────────────┐ │
+│  │  TAP device ←───── pasta ───┘                             │ │
+│  │                                                           │ │
 │  │  Firecracker VM                                           │ │
+│  │    Guest Init (PID 1)                                     │ │
+│  │      Mounts rootfs, configures network, execs agent       │ │
 │  │    Agent Process (:8080)                                  │ │
-│  │      Running (RUNNING) or Paused (WARM)                   │ │
-│  │      Outbound → TAP → pasta → root netns → ztunnel       │ │
+│  │      Handles requests, returns SSE streams                │ │
+│  │      Outbound → TAP → pasta → root netns socket → ztunnel│ │
 │  └───────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## State Machine
+## Networking: pasta
 
-```
-IDLE → STARTING → RUNNING → WARM → RUNNING (resume, same session)
-          ↓           ↓        ↓ (idle timeout)
-       TEARDOWN ← TEARDOWN ← TEARDOWN → IDLE
-```
+### Why pasta (not routed TAP or tc redirect)
 
-- **IDLE**: No VM running. Ready for any session. `/healthz` returns 200.
-- **STARTING**: VM booting (cold start). `/run` returns 503.
-- **RUNNING**: Agent handling request, SSE streaming. `/run` returns 503.
-- **WARM**: VM paused, session cached. `/healthz` returns 200. Accepts `/run` for the same session (transitions to RUNNING via unpause). Returns 503 for a different session unless the executor evicts the warm session first.
-- **TEARDOWN**: VM shutting down. `/run` returns 503.
+| Approach | Problem |
+|----------|---------|
+| **tc redirect** (fctr today) | L2 passthrough bypasses iptables entirely. ztunnel can't see traffic. |
+| **Routed TAP + `istio.io/reroute-virtual-interfaces`** | Works for outbound, but the annotation's PREROUTING REDIRECT rule captures ALL traffic on the TAP — including return traffic from the executor to the agent. Executor can't talk to the agent via HTTP over the TAP. Requires vsock relay as workaround. Also requires DNS DNAT workaround. |
+| **pasta** | L2→L4 translation in a dedicated netns. Outbound traffic becomes normal sockets in the pod's root netns — ztunnel captures via OUTPUT chain. Port forwarding lets the executor talk to the agent on localhost. No annotations, no iptables workarounds, no vsock relay. |
 
-### Healthz behavior
+### How pasta works
 
-`/healthz` returns 200 in two states:
-- **IDLE** — available for any session
-- **WARM** — available for the cached session (or for a new session after eviction)
+pasta sits between two network namespaces:
 
-This lets the pool operator see both idle and warm pods as "available" in different ways.
+- **Outbound (agent → external):** Agent sends L2 Ethernet frame on TAP → pasta reads it → pasta opens a TCP/UDP socket in the pod's root netns → payload exits through eth0 as normal socket I/O → ztunnel captures via OUTPUT chain → HBONE → waypoint → destination.
+- **Inbound (executor → agent via port forwarding):** pasta binds `localhost:8080` in the pod's root netns → executor connects → pasta wraps data into L2 frames → injects into TAP → agent receives on its eth0.
 
-## Session-Aware Claim
+The pod's addresses, routes, and sysctls are never modified. The executor remains fully functional while the VM runs.
 
-The pool operator's `Claim` RPC gains a `session_id` parameter:
+### pasta setup (once at pod startup)
 
-```protobuf
-message ClaimRequest {
-  string pool = 1;
-  string session_id = 2;  // empty for new sessions
-}
+1. Executor starts the pasta process, which creates a dedicated netns with a TAP device.
+2. pasta discovers the pod's network interfaces and configures outbound translation (`--outbound-if4`, `--outbound-if6`).
+3. pasta forwards the configured port range (e.g., 8080) from the root netns into the dedicated netns.
+4. The Firecracker jailer runs inside the dedicated netns (via `setns`).
+5. Per-execution cost is zero — the netns and TAP are reused across VM lifecycles.
 
-message ClaimResponse {
-  string pod_name = 1;
-  string pod_ip = 2;
-  int32 pod_port = 3;
-  string claim_id = 4;
-  bool warm = 5;  // true if pod has the session cached
-}
-```
+### DNS
 
-Pool operator selection logic:
-1. **Warm match**: Pod in WARM state with matching session → best case (unpause, ~ms)
-2. **Fresh idle**: Pod in IDLE state (no VM) → cold start (boot VM)
-3. **Warm evict**: Pod in WARM state with different session → evict (teardown + cold start)
+Agent DNS queries go through pasta → UDP socket in root netns → ztunnel captures via OUTPUT chain. Uses the pod's `/etc/resolv.conf` (cluster DNS). No DNAT workaround needed.
 
-The `warm` field tells the waypoint whether the pod already has the session loaded. The waypoint passes this to the executor as `X-Warm: true` so the executor knows to unpause instead of boot.
+For DNS isolation (preventing agents from discovering internal services), a per-tenant CoreDNS deployment can be used alongside CiliumNetworkPolicy L7 DNS filtering — see the Network Isolation proposal for details.
 
-## Session ID
+### Comparison with previous design
 
-- **New session**: The ingress gateway generates a random session ID and injects `X-Session-Id` header.
-- **Resume**: The client provides `X-Session-Id` from a previous interaction.
-- The session ID flows through the entire chain: client → ingress → waypoint → pool operator (Claim) → executor → agent.
+| | **Previous (routed TAP)** | **Current (pasta)** |
+|---|---|---|
+| VM netns | Pod's root netns | Dedicated netns (pasta-created) |
+| Executor → agent | vsock relay (couldn't use TAP) | `localhost:8080` via pasta port forwarding |
+| Agent → external | TAP + reroute annotation | pasta socket in root netns → ztunnel OUTPUT |
+| Pod annotation | `istio.io/reroute-virtual-interfaces` | None |
+| DNS workaround | DNAT to `127.0.0.1:15053` | None |
+| Init complexity | vsock protocol, HTTP proxy, EmitEvent relay | Mount rootfs, configure network, exec agent |
+
+## Guest Init
+
+The guest init is PID 1 inside the Firecracker VM. With pasta, it simplifies to pure system setup:
+
+1. Mount pseudo-filesystems (`/proc`, `/sys`, `/dev`)
+2. Wait for rootfs block device (`/dev/vda`)
+3. Mount rootfs as overlayfs (read-only lower + tmpfs upper)
+4. Read image config from `/etc/image-config.json` (entrypoint, port, env)
+5. Configure network (IP, gateway, MTU — received via vsock Init RPC)
+6. Write injected files (`/etc/resolv.conf`, `/etc/hosts`)
+7. Exec into the agent binary (replaces init as PID 1)
+
+The agent process takes over as PID 1 and listens on its configured port. The executor talks to it directly via pasta's port forwarding on `localhost:8080`.
+
+### vsock (retained for config delivery only)
+
+vsock is still used for one purpose: delivering guest configuration at boot. The guest init dials the executor over vsock and calls `Init` to receive network config and injected files. This is necessary because the guest has no other way to learn its network configuration before it can set up the network.
+
+The `EmitEvent` / SSE relay RPC is removed — the executor reads the SSE stream directly from the agent via HTTP.
 
 ## HTTP Server
 
+Three endpoints on port 9090:
+
 ### GET /healthz
 
-Returns 200 when IDLE or WARM. Pool operator uses this for readiness.
+Readiness probe. Returns 200 when the executor is initialized and in IDLE state. The pool operator's informer watches pod readiness to promote warming → available.
 
 ### POST /run
+
+Accepts work from the waypoint. Headers carry claim and execution IDs; body carries the client payload.
 
 ```
 Request:
   X-Claim-Id: clm-a1b2c3
   X-Execution-Id: exec-456
-  X-Session-Id: sess-789
-  X-Warm: true/false
   Body: <client payload>
 
 Response:
-  200 OK (Content-Type: text/event-stream, SSE stream)
-  503 Service Unavailable (executor busy)
+  200 OK
+  Content-Type: text/event-stream
+  Body: SSE stream (proxied from agent on localhost:8080)
+
+  503 Service Unavailable (executor busy, state != IDLE)
 ```
 
-Behavior depends on current state:
+`/run` boots a VM, waits for the agent to become ready, forwards the payload as `POST http://localhost:8080/run`, and streams the SSE response back to the waypoint. When the stream ends, the executor tears down the VM and releases the claim.
 
-**IDLE (cold start):**
-1. Transition IDLE → STARTING
-2. Boot VM in pasta's netns
-3. Wait for agent ready
-4. Transition STARTING → RUNNING
-5. Forward payload to agent, stream SSE back
-6. On stream end: pause VM → transition RUNNING → WARM
+### GET /status
 
-**WARM with matching session (resume):**
-1. Transition WARM → RUNNING
-2. Unpause VM
-3. Forward payload to agent, stream SSE back
-4. On stream end: pause VM → transition RUNNING → WARM
-
-**WARM with different session (evict + cold start):**
-1. Transition WARM → TEARDOWN → IDLE → STARTING
-2. Kill old VM, boot new VM
-3. Same as cold start from step 3
-
-## Warm VM Lifecycle
-
-### Pause on completion
-
-When the SSE stream ends:
-1. Executor **pauses** the Firecracker VM (CPU frozen, memory retained)
-2. Records the session ID
-3. Transitions RUNNING → WARM
-4. Starts the idle timer
-5. Stops lease renewal, calls gRPC `Release`
-6. Pod returns to the pool as "warm with session X"
-
-### Unpause on resume
-
-When a `/run` arrives with a matching session:
-1. Starts lease renewal
-2. **Unpauses** the VM (~milliseconds)
-3. Transitions WARM → RUNNING
-4. Forwards payload to agent (agent still running, still has in-memory state)
-
-### Idle timeout
-
-If no resume arrives within `WARM_TIMEOUT` (default 5 minutes):
-1. Kill Firecracker process
-2. Clean working directory
-3. Transition WARM → TEARDOWN → IDLE
-4. Pod returns to pool as fully available
-
-### Eviction
-
-If a `/run` arrives for a different session while WARM:
-1. Kill the warm VM
-2. Transition WARM → TEARDOWN → IDLE → STARTING
-3. Boot a fresh VM for the new session
-
-## Networking: pasta
-
-*(Unchanged from v2 — see previous spec for full details)*
-
-pasta creates a dedicated netns with L2↔L4 translation. Agent outbound becomes normal sockets in the pod's root netns. The executor talks to the agent on `localhost:8080`. No annotations or iptables workarounds needed.
-
-pasta is started once at pod startup and reused across VM lifecycles.
-
-## Guest Init
-
-*(Unchanged from v2)*
-
-Mount pseudo-fs → wait for rootfs → mount overlayfs → vsock Init for config → configure network → write files → exec into agent.
+Returns executor state and current execution ID. For debugging.
 
 ## Graceful Shutdown & Error Handling
 
 ### Shutdown triggers
 
-- **Normal completion**: SSE stream ends → pause VM → WARM
-- **Client disconnect**: Waypoint closes HTTP connection → kill VM → TEARDOWN → IDLE
-- **Boot failure**: VM fails to start → TEARDOWN → IDLE
-- **Idle timeout**: WARM for too long → kill VM → TEARDOWN → IDLE
-- **Pod deletion**: SIGTERM from kubelet → kill VM → exit
+- **Normal completion**: SSE stream ends. Agent exits, VM shuts down, executor tears down.
+- **Client disconnect**: Waypoint closes the HTTP connection. Executor kills the Firecracker process.
+- **Timeout**: Configurable per-execution timeout (`EXEC_TIMEOUT`). Executor kills the Firecracker process.
+- **Lease expiry**: Pool operator deletes the pod. Kubelet sends SIGTERM, executor kills any running VM.
+
+### Timeouts
+
+| Phase | Timeout | On timeout |
+|-------|---------|------------|
+| VM boot (STARTING) | `BOOT_TIMEOUT` (default 30s) | Kill Firecracker process, return 500 |
+| Agent startup | `READY_TIMEOUT` (default 10s) | Kill Firecracker process, return 500 |
+| Execution (RUNNING) | `EXEC_TIMEOUT` (default 5m) | Kill Firecracker process, return 504 |
 
 ### Error responses from /run
 
 | Scenario | HTTP status | Body |
 |----------|-------------|------|
-| Executor busy (RUNNING or STARTING) | 503 | `{"error": "executor busy"}` |
+| Executor busy (state != IDLE) | 503 | `{"error": "executor busy"}` |
 | VM boot failure | 500 | `{"error": "vm boot failed: <detail>"}` |
+| Agent startup timeout | 500 | `{"error": "agent not ready within timeout"}` |
+| Execution timeout | 504 | `{"error": "execution timeout"}` |
 | VM crash mid-execution | 502 | `{"error": "vm exited unexpectedly"}` |
-| Unpause failed | 500 | `{"error": "unpause failed: <detail>"}` |
+
+In all error cases, the executor transitions through TEARDOWN → IDLE and releases the lease.
+
+## State Machine
+
+Enforces serial execution with session affinity. One VM at a time per pod, but the VM can persist between requests (paused) if the same session resumes:
+
+```
+IDLE → STARTING → RUNNING → WARM (paused, has session) → RUNNING (unpaused)
+                      ↓                   ↓ (idle timeout)
+                   TEARDOWN ← ← ← ← ← TEARDOWN
+                      ↓
+                    IDLE
+```
+
+- **IDLE**: No VM running. Ready to accept `/run`. `/healthz` returns 200.
+- **STARTING**: VM booting (cold start) or unpausing (warm resume). `/run` returns 503.
+- **RUNNING**: Agent handling request, SSE streaming. `/run` returns 503.
+- **WARM**: VM paused (Firecracker pause), session state in memory. Accepts `/run` for the same session (unpause) or a different session (teardown + cold start). `/healthz` returns 200.
+- **TEARDOWN**: VM shutting down. `/run` returns 503.
+
+Transitions:
+- `IDLE → STARTING`: New request arrives, boot a fresh VM.
+- `STARTING → RUNNING`: Agent is ready, forwarding payload.
+- `RUNNING → WARM`: Request complete, pause the VM. Keep it warm for potential resume.
+- `RUNNING → TEARDOWN`: Error or client disconnect, kill the VM.
+- `WARM → STARTING`: Same session resumes (unpause) or different session (teardown + reboot).
+- `WARM → TEARDOWN`: Idle timeout exceeded, tear down the warm VM.
+- `TEARDOWN → IDLE`: VM killed, resources cleaned up.
+
+### Session matching on WARM
+
+When `/run` arrives while the executor is in WARM state:
+- **Same session ID**: Unpause the VM, forward the new request. Fast resume (~ms).
+- **Different session ID**: Tear down the warm VM, boot a fresh one. The pool operator should prefer a fresh IDLE pod over evicting a warm session, but if no IDLE pods are available, eviction is acceptable.
 
 ## Pool Operator Integration
+
+### Session-aware claiming
+
+The pool operator's `Claim` RPC accepts an optional `session_id`:
+
+```
+ClaimRequest {
+  pool: "poc-agent"
+  session_id: "sess-abc123"   // empty for new sessions
+}
+
+ClaimResponse {
+  pod_ip: "10.244.1.15"
+  pod_port: 9090
+  claim_id: "clm-xyz"
+  warm: true                  // pod already has this session loaded
+}
+```
+
+Selection priority:
+1. **Warm pod with matching session** → best case (unpause, no boot)
+2. **IDLE pod (no VM running)** → cold start (boot VM)
+3. **Warm pod with different session** → evict (tear down old VM, boot new)
+
+The `warm` field tells the waypoint whether the pod has the session loaded. The waypoint forwards this as `X-Warm: true` to the executor so it knows to unpause rather than boot.
+
+### Session ID flow
+
+- **New session**: Client sends request without `X-Session-Id`. The ingress generates a random session ID, injects it as `X-Session-Id` header. The response includes `X-Session-Id` so the client can use it for resume.
+- **Resume**: Client sends request with `X-Session-Id: sess-abc123`. The ingress passes it through. The waypoint includes it in the Claim request for session-aware routing.
 
 ### Executor contract
 
 1. **Readiness probe**: `/healthz` returns 200 when IDLE or WARM.
-2. **Lease renewal**: On `/run`, renew lease every `leaseTTL/3`.
-3. **Release on completion**: When stream ends and VM is paused, call `Release`. Pod returns to pool as warm.
-4. **Session tracking**: Executor reports its session ID to the pool operator (via pod labels or Release response) so the operator knows which sessions are warm where.
+2. **Lease renewal**: On `/run`, start a goroutine calling gRPC `Renew` every `leaseTTL/3`.
+3. **Release on completion**: After the request completes and the VM is paused (WARM), call gRPC `Release`. The pool operator marks the pod as warm-available, not idle-available.
+4. **Report session**: On Release, include the session ID so the pool operator can track which pod has which session warm.
+5. **Idle timeout**: After configurable idle time in WARM state (e.g., 5 minutes), tear down the VM and transition to IDLE. Call Release again with no session (pod is now fully idle).
 
 ### Configuration
+
+**Environment variables** (set in ExecutorPool pod template):
 
 | Env Var | Default | Purpose |
 |---------|---------|---------|
 | `LISTEN_ADDR` | `:9090` | HTTP server listen address |
 | `POOL_OPERATOR_ADDR` | — | Pool operator gRPC address |
-| `LEASE_TTL` | `30s` | Lease duration |
+| `LEASE_TTL` | `30s` | Lease duration (renewal interval = TTL/3) |
 | `IMAGE_DIR` | `/opt/firecracker` | Kernel, initramfs, rootfs, image-config.json |
 | `WORKLOAD_DIR` | `/workload` | Per-execution working directory |
 | `VCPUS` | `1` | Number of vCPUs per VM |
 | `MEMORY_MB` | `256` | Memory per VM in megabytes |
 | `BOOT_TIMEOUT` | `30s` | Max time for VM boot |
-| `WARM_TIMEOUT` | `5m` | How long to keep a paused VM before teardown |
+| `WARM_IDLE_TIMEOUT` | `5m` | How long to keep a paused VM before teardown |
+
+**Image config** (`image-config.json` in rootfs, read by both executor and guest init):
+
+```json
+{"entrypoint": ["/usr/bin/agent"], "port": 8080, "env": {"PYTHONUNBUFFERED": "1"}}
+```
 
 ## End-to-End Request Flow
 
 ### New session (cold start)
 
 ```
- 1. Client sends POST /a2a/tenant-a/my-agent (no session ID)
- 2. Ingress generates X-Session-Id: sess-789
- 3. Waypoint calls Claim(pool="default", session_id="sess-789")
-    → pool operator returns fresh pod (warm=false)
- 4. Waypoint forwards to executor:
+ 1. Client sends POST /a2a/tenant-a/my-agent to NLB (no X-Session-Id)
+ 2. AgentGateway ingress validates JWT, generates X-Session-Id: sess-abc123
+ 3. ztunnel → HBONE → waypoint
+ 4. Waypoint calls gRPC Claim(pool, session_id="sess-abc123")
+    Pool operator: no warm pod for this session → returns fresh IDLE pod
+ 5. Waypoint forwards to executor:
       POST http://{pod_ip}:9090/run
-      X-Claim-Id: clm-a1b2c3, X-Session-Id: sess-789, X-Warm: false
-      Body: <payload>
- 5. Executor: IDLE → STARTING
-    Boots VM, waits for agent, STARTING → RUNNING
-    Forwards payload to agent on localhost:8080
-    Streams SSE response back to waypoint
- 6. Stream ends → executor pauses VM → RUNNING → WARM
-    Releases claim. Pod returns to pool as warm (session=sess-789)
- 7. Response includes X-Session-Id: sess-789 (client stores it)
+      X-Claim-Id: clm-xyz, X-Session-Id: sess-abc123
+      Body: <client payload>
+ 6. Executor (IDLE → STARTING):
+    a. Boots Firecracker VM in pasta's dedicated netns
+    b. Guest init configures network, execs into agent
+    c. Polls localhost:8080/healthz until agent ready
+ 7. Executor (STARTING → RUNNING):
+    a. POST http://localhost:8080/run with payload + X-Session-Id
+    b. Streams SSE response back to waypoint
+ 8. Agent outbound calls go through pasta → ztunnel → waypoint → external
+ 9. SSE stream ends
+10. Executor (RUNNING → WARM):
+    a. Pauses VM (Firecracker pause — CPU usage drops to zero)
+    b. Stores session_id = "sess-abc123"
+    c. Stops lease renewal, calls gRPC Release(claim_id, session_id)
+    d. Pool operator marks pod as warm with session sess-abc123
+11. Response includes X-Session-Id: sess-abc123 (client stores it)
 ```
 
 ### Resume session (warm hit)
 
 ```
- 1. Client sends POST /a2a/tenant-a/my-agent
-      X-Session-Id: sess-789
- 2. Waypoint calls Claim(pool="default", session_id="sess-789")
-    → pool operator returns warm pod (warm=true)
- 3. Waypoint forwards to executor:
+ 1. Client sends POST /a2a/tenant-a/my-agent with X-Session-Id: sess-abc123
+ 2. Ingress passes X-Session-Id through
+ 3. Waypoint calls gRPC Claim(pool, session_id="sess-abc123")
+    Pool operator: pod-xyz is warm with this session → returns it (warm: true)
+ 4. Waypoint forwards to executor:
       POST http://{pod_ip}:9090/run
-      X-Claim-Id: clm-b2c3d4, X-Session-Id: sess-789, X-Warm: true
-      Body: <payload>
- 4. Executor: WARM → RUNNING
-    Unpauses VM (~ms), forwards payload to agent
-    Agent has in-memory state from previous request
-    Streams SSE response back
- 5. Stream ends → executor pauses VM → RUNNING → WARM
-    Releases claim. Pod stays warm.
+      X-Claim-Id: clm-new, X-Session-Id: sess-abc123, X-Warm: true
+      Body: <resume payload>
+ 5. Executor (WARM → STARTING):
+    a. Unpauses VM (near-instant, ~ms)
+ 6. Executor (STARTING → RUNNING):
+    a. POST http://localhost:8080/run with payload
+    b. Agent resumes with in-memory state from previous request
+    c. Streams SSE response
+ 7. SSE stream ends → RUNNING → WARM (pause again)
 ```
 
-### Resume session (warm miss — pod was reclaimed)
+### Resume session (warm miss — session was evicted)
 
 ```
- 1. Client sends X-Session-Id: sess-789
- 2. Claim(session_id="sess-789") → no warm pod found
-    → pool operator returns fresh pod (warm=false)
- 3. Executor: IDLE → STARTING → boots VM
-    Agent cold starts, loads state from tenant MongoDB using session ID
- 4. Same flow as new session from step 5
+ 1. Same as warm hit, but pool operator has no warm pod for this session
+ 2. Pool operator returns a fresh IDLE pod (warm: false)
+ 3. Executor boots a fresh VM (cold start)
+ 4. Agent loads session state from tenant MongoDB using the session ID
+ 5. Execution proceeds normally
 ```
 
-## Future: Pre-Execution Snapshots
-
-A Firecracker snapshot taken after the agent starts but before any session-specific work. Keyed by agent image hash — reusable across all sessions of the same agent.
+### Idle timeout
 
 ```
-First cold boot of an agent image:
-  Boot VM → init → agent starts → agent ready
-  → Pause VM → take snapshot (memory + disk)
-  → Unpause → continue with request
+Pod in WARM state for > idle timeout (e.g., 5 minutes):
+  Executor (WARM → TEARDOWN):
+    a. Kills Firecracker process
+    b. Cleans up
+    c. Calls gRPC Release(claim_id, session_id="") — no session
+    d. TEARDOWN → IDLE (fully available again)
+```
+
+## Package Layout
+
+```
+executor/
+├── cmd/
+│   ├── executor/main.go          # Entry point: load config, start HTTP server
+│   └── init/main.go              # Guest PID 1: mount rootfs, configure net, exec agent
+├── internal/
+│   ├── server/                   # HTTP handlers (/healthz, /run, /status)
+│   ├── executor/                 # State machine, VM lifecycle, run orchestration
+│   ├── lease/                    # Pool operator gRPC client (renew/release)
+│   ├── pasta/                   # pasta process lifecycle, port forwarding config
+│   ├── vm/                       # Firecracker SDK wrapper (boot in pasta netns, stop)
+│   ├── vsock/                    # Host-side ttrpc server (Init RPC only, for config delivery)
+│   ├── image/                    # Image config loading (entrypoint, port, env)
+│   └── config/                   # Executor configuration (env vars)
+├── proto/
+│   └── init.proto                # vsock Init RPC definition (config delivery only)
+├── pkg/
+│   └── poolpb/                   # Generated gRPC stubs for pool operator
+├── Dockerfile
+├── go.mod
+└── Makefile
+```
+
+## What We Reference
+
+- **Srinidhi's Network Isolation proposal**: pasta integration patterns, Firecracker in dedicated netns via jailer `setns`, port forwarding configuration
+- **fctr** (`~/10gen/agentic-platform/fctr/`): Guest init patterns (overlayfs, network config with RTNH_F_ONLINK), Firecracker SDK usage, jailer setup
+
+## Pre-execution Snapshots (Future)
+
+Take a Firecracker snapshot after the agent starts but before any session-specific work. The snapshot captures the "agent is initialized and listening" state, which is common across all sessions of the same agent image:
+
+```
+First cold boot of agent image:
+  Boot VM → init → agent starts → agent ready → PAUSE → snapshot → RESUME → handle request
 
 Subsequent cold boots (any session):
-  Restore from snapshot → agent immediately ready (~150ms)
-  → Continue with request
+  Restore from snapshot → agent immediately ready → handle request
 ```
 
-This is an optimization on top of the warm VM design. It reduces cold start time from seconds to ~150ms. The warm VM (unpause) is still faster (~ms) but the snapshot helps when no warm pod is available.
+The snapshot is keyed by agent image hash (content-addressed, like fctr's snapshot cache). Boot time drops from seconds to ~150ms. This is the same pattern as Lambda SnapStart.
 
-Implementation deferred to a follow-up.
+Not implemented in the initial version — requires the fctr snapshot system (snapshot capture, content-addressed cache, GC). Can be added later as an optimization without changing the executor's external interface.
 
 ## Open Questions
 
-- **DNS isolation:** See Network Isolation proposal for per-tenant CoreDNS + CiliumNetworkPolicy approach.
-- **pasta process failure:** Executor monitors pasta, rejects `/run` if pasta is dead. Pod replaced.
-- **Warm pod selection fairness:** When multiple warm pods exist for different sessions, how does the pool operator decide which to evict? LRU? Session priority?
-- **Agent contract for resume:** The agent needs to handle receiving a new request while it has in-memory state from a previous one. Is this "just works" (the agent is a stateful HTTP server) or does it need explicit session management?
+- **DNS isolation:** pasta routes DNS through the pod's normal DNS path (ztunnel or cluster DNS). For tenant isolation, a per-tenant CoreDNS deployment with CiliumNetworkPolicy L7 DNS filtering is the recommended approach (see Network Isolation proposal). This is a platform-wide concern, not executor-specific.
+- **pasta process failure:** If pasta dies, the VM loses network connectivity. The executor should monitor the pasta process and reject new `/run` calls if pasta is not running. The pod should be replaced (fail-closed).
+- **Firecracker in pasta netns:** The Firecracker jailer needs to `setns` into pasta's dedicated netns. Srinidhi's proposal has this working — we reference their implementation.
+- **Warm VM memory accounting:** A paused VM still holds its memory allocation. With many warm VMs across pods on the same node, memory pressure could become an issue. Need to size node resources accordingly and potentially set a max-warm-per-node limit.
+- **Session state on warm miss:** When a warm pod isn't available for a session resume, the agent needs to load state from tenant MongoDB. The agent must handle both cases (warm: in-memory state available, cold: load from DB). This is the agent's responsibility, not the executor's.
 
 ## What We Explicitly Do Not Include
 
 - **tc redirect networking** — replaced by pasta
-- **Direct-to-agent routing** (executor out of path) — executor must stay in path for pause/unpause
-- **Per-request VM teardown** — VMs are paused, not killed, to enable warm reuse
-- **Cluster-wide pool operator** — one operator per tenant namespace
+- **`istio.io/reroute-virtual-interfaces` annotation** — not needed with pasta
+- **DNS DNAT workaround** — not needed with pasta
+- **vsock EmitEvent / SSE relay** — executor talks to agent directly via localhost
+- **Per-request VM boot/teardown** — VMs persist across requests (paused when idle)
+- **ttrpc external API** — replaced by HTTP
+- **One-shot mode** — executor is always long-lived
 - **SecureToolWrapper** — agent makes plain HTTP calls; mesh handles policy transparently
