@@ -3,6 +3,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -152,9 +153,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	// Send payload to agent via pasta port forwarding (localhost:8080).
 	agentURL := fmt.Sprintf("http://%s/run", agentAddr)
-	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, io.NopCloser(
-		io.NewSectionReader(readerAtFromBytes(payloadBytes), 0, int64(len(payloadBytes))),
-	))
+	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		machine.Stop()
 		return fmt.Errorf("create agent request: %w", err)
@@ -259,20 +258,3 @@ func waitForAgent(ctx context.Context, addr string) error {
 	}
 }
 
-// readerAtFromBytes wraps a byte slice as an io.ReaderAt.
-type bytesReaderAt []byte
-
-func (b bytesReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(b)) {
-		return 0, io.EOF
-	}
-	n := copy(p, b[off:])
-	if n < len(p) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func readerAtFromBytes(b []byte) io.ReaderAt {
-	return bytesReaderAt(b)
-}
