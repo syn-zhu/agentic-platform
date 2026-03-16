@@ -13,8 +13,6 @@ type Config struct {
 	Entrypoint []string          `json:"entrypoint"`
 	Port       int               `json:"port"`
 	Env        map[string]string `json:"env"`
-	VCPUs      int               `json:"vcpus"`
-	MemoryMB   int               `json:"memory_mb"`
 }
 
 // LoadConfig reads image-config.json from the rootfs ext4 image.
@@ -38,12 +36,6 @@ func LoadConfig(imageDir string) (*Config, error) {
 	// Apply defaults.
 	if cfg.Port == 0 {
 		cfg.Port = 8080
-	}
-	if cfg.VCPUs == 0 {
-		cfg.VCPUs = 1
-	}
-	if cfg.MemoryMB == 0 {
-		cfg.MemoryMB = 256
 	}
 
 	if len(cfg.Entrypoint) == 0 {

@@ -32,9 +32,7 @@ func main() {
 		slog.Error("failed to load image config", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("loaded image config",
-		"entrypoint", imgCfg.Entrypoint, "port", imgCfg.Port,
-		"vcpus", imgCfg.VCPUs, "memory_mb", imgCfg.MemoryMB)
+	slog.Info("loaded image config", "entrypoint", imgCfg.Entrypoint, "port", imgCfg.Port)
 
 	sm := executor.NewStateMachine()
 	leaseClient, err := lease.NewClient(cfg.PoolOperatorAddr, cfg.LeaseTTL)

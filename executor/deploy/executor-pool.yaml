@@ -47,6 +47,10 @@ spec:
               value: "pool-operator.executor-system.svc:50051"
             - name: LEASE_TTL
               value: "30s"
+            - name: VCPUS
+              value: "1"
+            - name: MEMORY_MB
+              value: "256"
             - name: AGENT_COMMAND
               value: "/entrypoint.sh"
             - name: AGENT_PORT

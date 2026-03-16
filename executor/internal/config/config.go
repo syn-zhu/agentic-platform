@@ -14,6 +14,8 @@ type Config struct {
 	LeaseTTL         time.Duration
 	ImageDir         string
 	WorkloadDir      string
+	VCPUs            int
+	MemoryMB         int
 	BootTimeout      time.Duration
 	ReadyTimeout     time.Duration
 	ExecTimeout      time.Duration
@@ -26,6 +28,8 @@ func Load() (*Config, error) {
 		PoolOperatorAddr: os.Getenv("POOL_OPERATOR_ADDR"),
 		ImageDir:         envOr("IMAGE_DIR", "/opt/firecracker"),
 		WorkloadDir:      envOr("WORKLOAD_DIR", "/workload"),
+		VCPUs:            envIntOr("VCPUS", 1),
+		MemoryMB:         envIntOr("MEMORY_MB", 256),
 	}
 
 	var err error

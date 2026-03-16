@@ -115,8 +115,8 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		InitrdPath: filepath.Join(r.cfg.ImageDir, "initramfs.cpio.lz4"),
 		RootfsPath: filepath.Join(r.cfg.ImageDir, "rootfs.ext4"),
 		TAPName:    r.netCfg.TAPName,
-		VCPUs:      r.imgCfg.VCPUs,
-		MemoryMB:   r.imgCfg.MemoryMB,
+		VCPUs:      r.cfg.VCPUs,
+		MemoryMB:   r.cfg.MemoryMB,
 		WorkDir:    workDir,
 		VsockPath:  vsockPath,
 	}
