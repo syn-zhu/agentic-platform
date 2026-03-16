@@ -50,9 +50,9 @@ func main() {
 		LeaderElection:          true,
 		LeaderElectionID:        "pool-operator-leader",
 		LeaderElectionNamespace: namespace,
-		LeaseDuration:           ptr(5 * time.Second),
-		RenewDeadline:           ptr(3 * time.Second),
-		RetryPeriod:             ptr(1 * time.Second),
+		LeaseDuration:           ptr(15 * time.Second),
+		RenewDeadline:           ptr(10 * time.Second),
+		RetryPeriod:             ptr(2 * time.Second),
 		Cache: cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
 				namespace: {},
@@ -97,9 +97,16 @@ func main() {
 	}
 	podInformer.AddEventHandler(podWatcher.EventHandler())
 
-	srv := server.New(registry)
-
 	k8sClient := &k8sPodClient{client: mgr.GetClient()}
+	persister := &labelPersister{
+		managers:  make(map[string]*pool.PoolManager),
+		registry:  registry,
+		podClient: k8sClient,
+		namespace: namespace,
+		logger:    logger,
+	}
+	srv := server.New(registry, persister)
+
 	go runPoolManagers(ctx, registry, k8sClient, namespace, srv.Metrics(), logger)
 
 	mux := http.NewServeMux()
@@ -173,7 +180,7 @@ func rebuildState(ctx context.Context, c client.Client, registry *pool.Registry,
 		}
 
 		status := pod.Labels[labels.LabelStatus]
-		podInfo := podInfoFromPod(pod)
+		podInfo := pool.PodInfoFromPod(pod)
 
 		switch status {
 		case labels.StatusAvailable:
@@ -195,24 +202,6 @@ func rebuildState(ctx context.Context, c client.Client, registry *pool.Registry,
 	}
 }
 
-func podInfoFromPod(pod *corev1.Pod) pool.PodInfo {
-	var port int32 = 9090
-	if len(pod.Spec.Containers) > 0 {
-		for _, p := range pod.Spec.Containers[0].Ports {
-			if p.Name == "http" {
-				port = p.ContainerPort
-				break
-			}
-		}
-	}
-	return pool.PodInfo{
-		Name:      pod.Name,
-		IP:        pod.Status.PodIP,
-		Port:      port,
-		CreatedAt: pod.CreationTimestamp.Time,
-	}
-}
-
 func runPoolManagers(ctx context.Context, registry *pool.Registry, podClient pool.PodClient, namespace string, metrics *server.Metrics, logger *slog.Logger) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -224,7 +213,9 @@ func runPoolManagers(ctx context.Context, registry *pool.Registry, podClient poo
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			currentPools := make(map[string]bool)
 			for _, p := range registry.List() {
+				currentPools[p.Name()] = true
 				mgr, ok := managers[p.Name()]
 				if !ok {
 					mgr = pool.NewPoolManager(p, podClient, namespace, logger)
@@ -234,6 +225,12 @@ func runPoolManagers(ctx context.Context, registry *pool.Registry, podClient poo
 
 				status := p.Status()
 				metrics.UpdateGauges(p.Name(), status.Available, status.Claimed, status.Warming)
+			}
+			// Clean up stale managers for deleted pools
+			for name := range managers {
+				if !currentPools[name] {
+					delete(managers, name)
+				}
 			}
 		}
 	}
@@ -278,6 +275,46 @@ func (c *k8sPodClient) PatchPodLabelsAndAnnotations(ctx context.Context, namespa
 		pod.Annotations[k] = v
 	}
 	return c.client.Patch(ctx, pod, patch)
+}
+
+// labelPersister implements server.LabelPersister by delegating to PoolManager methods.
+type labelPersister struct {
+	managers  map[string]*pool.PoolManager
+	registry  *pool.Registry
+	podClient pool.PodClient
+	namespace string
+	logger    *slog.Logger
+}
+
+func (lp *labelPersister) getOrCreateManager(poolName string) *pool.PoolManager {
+	if mgr, ok := lp.managers[poolName]; ok {
+		return mgr
+	}
+	p := lp.registry.Get(poolName)
+	if p == nil {
+		return nil
+	}
+	mgr := pool.NewPoolManager(p, lp.podClient, lp.namespace, lp.logger)
+	lp.managers[poolName] = mgr
+	return mgr
+}
+
+func (lp *labelPersister) PersistClaimLabels(ctx context.Context, poolName, podName, claimID string, expiresAt time.Time) {
+	mgr := lp.getOrCreateManager(poolName)
+	if mgr == nil {
+		lp.logger.Error("cannot persist claim labels: pool not found", "pool", poolName)
+		return
+	}
+	mgr.PersistClaimLabels(ctx, podName, claimID, expiresAt)
+}
+
+func (lp *labelPersister) PersistReleaseLabels(ctx context.Context, poolName, podName string) {
+	mgr := lp.getOrCreateManager(poolName)
+	if mgr == nil {
+		lp.logger.Error("cannot persist release labels: pool not found", "pool", poolName)
+		return
+	}
+	mgr.PersistReleaseLabels(ctx, podName)
 }
 
 func envOrDefault(key, def string) string {

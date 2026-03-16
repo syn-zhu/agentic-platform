@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -60,17 +61,26 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// LabelPersister handles async label updates after claim/release operations.
+type LabelPersister interface {
+	PersistClaimLabels(ctx context.Context, poolName, podName, claimID string, expiresAt time.Time)
+	PersistReleaseLabels(ctx context.Context, poolName, podName string)
+}
+
 // Server is the HTTP server that exposes pool operations.
 type Server struct {
-	registry *pool.Registry
-	metrics  *Metrics
+	registry  *pool.Registry
+	metrics   *Metrics
+	persister LabelPersister
 }
 
 // New creates a new Server backed by the given registry.
-func New(registry *pool.Registry) *Server {
+// persister may be nil (e.g., in tests); label updates will be skipped.
+func New(registry *pool.Registry, persister LabelPersister) *Server {
 	return &Server{
-		registry: registry,
-		metrics:  NewMetrics(),
+		registry:  registry,
+		metrics:   NewMetrics(),
+		persister: persister,
 	}
 }
 
@@ -125,6 +135,11 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.metrics.ClaimTotal.WithLabelValues(req.Pool).Inc()
+
+	if s.persister != nil {
+		go s.persister.PersistClaimLabels(r.Context(), req.Pool, claim.PodInfo.Name, claim.ClaimID, claim.ExpiresAt)
+	}
+
 	writeJSON(w, http.StatusOK, ClaimResponse{
 		PodName: claim.PodInfo.Name,
 		PodIP:   claim.PodInfo.IP,
@@ -167,10 +182,14 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var found bool
+	var releasedPoolName string
+	var releasedPodName string
 	for _, p := range s.registry.List() {
-		_, err := p.Release(req.ClaimID)
+		podInfo, err := p.Release(req.ClaimID)
 		if err == nil {
 			found = true
+			releasedPoolName = p.Name()
+			releasedPodName = podInfo.Name
 			break
 		}
 	}
@@ -178,6 +197,10 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "claim not found"})
 		return
+	}
+
+	if s.persister != nil {
+		go s.persister.PersistReleaseLabels(r.Context(), releasedPoolName, releasedPodName)
 	}
 
 	writeJSON(w, http.StatusOK, ReleaseResponse{Status: "released"})

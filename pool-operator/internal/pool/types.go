@@ -48,6 +48,26 @@ type PoolStatus struct {
 	Warming   int `json:"warming"`
 }
 
+// PodInfoFromPod extracts PodInfo from a Kubernetes Pod object.
+// This is the single source of truth for pod-to-PodInfo conversion.
+func PodInfoFromPod(pod *corev1.Pod) PodInfo {
+	var port int32 = 9090 // default
+	if len(pod.Spec.Containers) > 0 {
+		for _, p := range pod.Spec.Containers[0].Ports {
+			if p.Name == "http" {
+				port = p.ContainerPort
+				break
+			}
+		}
+	}
+	return PodInfo{
+		Name:      pod.Name,
+		IP:        pod.Status.PodIP,
+		Port:      port,
+		CreatedAt: pod.CreationTimestamp.Time,
+	}
+}
+
 // NewPool creates a new Pool with the given configuration.
 func NewPool(name string, desired int, leaseTTL, warmingTimeout time.Duration, maxSurge int, podTemplate corev1.PodTemplateSpec) *Pool {
 	return &Pool{

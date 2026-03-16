@@ -8,6 +8,9 @@ import (
 )
 
 // Registry manages multiple named pools.
+//
+// Lock ordering: Registry.mu is always acquired before Pool.mu.
+// Never acquire a Pool lock then call a Registry method.
 type Registry struct {
 	mu    sync.RWMutex
 	pools map[string]*Pool

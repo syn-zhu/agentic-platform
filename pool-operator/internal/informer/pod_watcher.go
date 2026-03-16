@@ -49,7 +49,7 @@ func (w *PodWatcher) onUpdate(oldObj, newObj interface{}) {
 
 	// If pod is warming and now Ready, promote to available
 	if status == labels.StatusWarming && isPodReady(pod) {
-		podInfo := podToPodInfo(pod)
+		podInfo := pool.PodInfoFromPod(pod)
 		if p.PromoteWarming(pod.Name, podInfo) {
 			w.logger.Info("promoted warming pod to available",
 				"pool", poolName, "pod", pod.Name)
@@ -94,20 +94,3 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-func podToPodInfo(pod *corev1.Pod) pool.PodInfo {
-	var port int32 = 9090 // default
-	if len(pod.Spec.Containers) > 0 {
-		for _, p := range pod.Spec.Containers[0].Ports {
-			if p.Name == "http" {
-				port = p.ContainerPort
-				break
-			}
-		}
-	}
-	return pool.PodInfo{
-		Name:      pod.Name,
-		IP:        pod.Status.PodIP,
-		Port:      port,
-		CreatedAt: pod.CreationTimestamp.Time,
-	}
-}

@@ -38,7 +38,8 @@ func (p *Pool) Claim() (*Claim, error) {
 	}
 	p.claimed[claimID] = claim
 
-	return claim, nil
+	copy := *claim
+	return &copy, nil
 }
 
 // Renew extends the lease on an existing claim.
@@ -167,7 +168,9 @@ func (p *Pool) SweepStaleWarming() []string {
 }
 
 // ScaleDecision returns how many pods to create (positive) or which to delete (names).
-func (p *Pool) ScaleDecision() (toCreate int, toDelete []string) {
+// It does NOT modify the available list; callers must call RemoveAvailable after
+// successfully deleting each pod.
+func (p *Pool) ScaleDecision() (scaleUp int, scaleDown []string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -175,33 +178,47 @@ func (p *Pool) ScaleDecision() (toCreate int, toDelete []string) {
 	deficit := p.desired - supply
 
 	if deficit > 0 {
-		toCreate = deficit
-		if toCreate > p.maxSurge {
-			toCreate = p.maxSurge
+		if deficit > p.maxSurge {
+			deficit = p.maxSurge
 		}
-		return toCreate, nil
+		return deficit, nil
 	}
 
-	excess := supply - p.desired
-	if excess > 0 && len(p.available) > 0 {
-		sort.Slice(p.available, func(i, j int) bool {
-			return p.available[i].CreatedAt.Before(p.available[j].CreatedAt)
-		})
-
-		removeCount := excess
+	if deficit < 0 {
+		removeCount := -deficit
 		if removeCount > len(p.available) {
 			removeCount = len(p.available)
 		}
 
-		toDelete = make([]string, removeCount)
-		for i := 0; i < removeCount; i++ {
-			toDelete[i] = p.available[i].Name
+		if removeCount == 0 {
+			return 0, nil
 		}
-		p.available = p.available[removeCount:]
-		return 0, toDelete
+
+		sort.Slice(p.available, func(i, j int) bool {
+			return p.available[i].CreatedAt.Before(p.available[j].CreatedAt)
+		})
+
+		// Return names to remove but do NOT modify p.available here
+		toRemove := make([]string, removeCount)
+		for i := 0; i < removeCount; i++ {
+			toRemove[i] = p.available[i].Name
+		}
+		return 0, toRemove
 	}
 
 	return 0, nil
+}
+
+// RemoveAvailable removes a pod from the available list. Called after successful deletion.
+func (p *Pool) RemoveAvailable(podName string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, pod := range p.available {
+		if pod.Name == podName {
+			p.available = append(p.available[:i], p.available[i+1:]...)
+			return
+		}
+	}
 }
 
 // UpdateConfig updates the pool's configuration.
@@ -215,7 +232,7 @@ func (p *Pool) UpdateConfig(desired int, leaseTTL, warmingTimeout time.Duration,
 	p.podTemplate = podTemplate
 }
 
-// Name returns the pool name.
+// Name returns the pool name. Safe to call without lock since name is immutable after construction.
 func (p *Pool) Name() string {
 	return p.name
 }

@@ -201,8 +201,16 @@ func TestScaleDecision_ScaleDown(t *testing.T) {
 	if toDelete[0] != "pod-old" || toDelete[1] != "pod-mid" {
 		t.Errorf("expected oldest pods deleted, got %v", toDelete)
 	}
+	// ScaleDecision no longer modifies available in-place; available should still be 3
+	if p.Status().Available != 3 {
+		t.Errorf("expected 3 available (not yet removed), got %d", p.Status().Available)
+	}
+	// Simulate successful deletion: call RemoveAvailable for each
+	for _, name := range toDelete {
+		p.RemoveAvailable(name)
+	}
 	if p.Status().Available != 1 {
-		t.Errorf("expected 1 available after scale down, got %d", p.Status().Available)
+		t.Errorf("expected 1 available after RemoveAvailable, got %d", p.Status().Available)
 	}
 }
 

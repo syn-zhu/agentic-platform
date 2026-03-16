@@ -16,7 +16,7 @@ import (
 
 func setupTestServer() (*Server, *pool.Registry) {
 	registry := pool.NewRegistry()
-	s := New(registry)
+	s := New(registry, nil)
 	return s, registry
 }
 

@@ -64,7 +64,9 @@ func (m *PoolManager) Reconcile(ctx context.Context) {
 		m.logger.Info("scaling down, deleting pod", "pool", m.pool.Name(), "pod", podName)
 		if err := m.client.DeletePod(ctx, m.namespace, podName); err != nil {
 			m.logger.Error("failed to delete pod for scale down", "pod", podName, "err", err)
+			continue
 		}
+		m.pool.RemoveAvailable(podName)
 	}
 
 	for i := 0; i < toCreate; i++ {
