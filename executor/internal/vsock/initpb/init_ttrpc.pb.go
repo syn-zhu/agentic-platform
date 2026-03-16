@@ -9,7 +9,6 @@ import (
 
 type InitControlService interface {
 	Init(context.Context, *InitRequest) (*InitResponse, error)
-	EmitEvent(context.Context, *EmitEventRequest) (*EmitEventResponse, error)
 }
 
 func RegisterInitControlService(srv *ttrpc.Server, svc InitControlService) {
@@ -21,13 +20,6 @@ func RegisterInitControlService(srv *ttrpc.Server, svc InitControlService) {
 					return nil, err
 				}
 				return svc.Init(ctx, &req)
-			},
-			"EmitEvent": func(ctx context.Context, unmarshal func(interface{}) error) (interface{}, error) {
-				var req EmitEventRequest
-				if err := unmarshal(&req); err != nil {
-					return nil, err
-				}
-				return svc.EmitEvent(ctx, &req)
 			},
 		},
 	})
@@ -46,14 +38,6 @@ func NewInitControlClient(client *ttrpc.Client) InitControlService {
 func (c *initcontrolClient) Init(ctx context.Context, req *InitRequest) (*InitResponse, error) {
 	var resp InitResponse
 	if err := c.client.Call(ctx, "executor.init.v1.InitControl", "Init", req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *initcontrolClient) EmitEvent(ctx context.Context, req *EmitEventRequest) (*EmitEventResponse, error) {
-	var resp EmitEventResponse
-	if err := c.client.Call(ctx, "executor.init.v1.InitControl", "EmitEvent", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

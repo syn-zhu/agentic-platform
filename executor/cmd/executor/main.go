@@ -41,7 +41,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer leaseClient.Close()
-	runner := executor.NewRunner(cfg, imgCfg, sm, leaseClient)
+
+	runner, err := executor.NewRunner(cfg, imgCfg, sm, leaseClient)
+	if err != nil {
+		slog.Error("failed to create runner", "error", err)
+		os.Exit(1)
+	}
+	defer runner.Close()
 
 	srv := server.New(sm, runner)
 

@@ -3,13 +3,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"syscall"
 	"time"
@@ -41,14 +38,13 @@ func main() {
 	mustMount("devpts", "/dev/pts", "devpts", 0, "")
 	log.Println("init: pseudo-filesystems mounted")
 
-	// 2. Dial host over vsock.
+	// 2. Dial host over vsock to get config.
 	conn, err := dialHost(ctx)
 	if err != nil {
 		fatal("dial host: %v", err)
 	}
 	log.Println("init: connected to host via vsock")
 
-	// 3. Create ttrpc client and call Init.
 	ttrpcClient := ttrpc.NewClient(conn)
 	initClient := initpb.NewInitControlClient(ttrpcClient)
 
@@ -56,12 +52,13 @@ func main() {
 	if err != nil {
 		fatal("Init RPC: %v", err)
 	}
-	log.Printf("init: got config (payload=%d bytes)", len(resp.Payload))
+	ttrpcClient.Close()
+	log.Println("init: got config from host")
 
-	// 4. Wait for rootfs block device.
+	// 3. Wait for rootfs block device.
 	waitForDevice("/dev/vda", 5*time.Second)
 
-	// 5. Mount rootfs as overlayfs (read-only lower + tmpfs upper).
+	// 4. Mount rootfs as overlayfs (read-only lower + tmpfs upper).
 	mustMkdir("/mnt", 0755)
 	mustMkdir("/mnt/lower", 0755)
 	mustMount("/dev/vda", "/mnt/lower", "ext4", unix.MS_RDONLY, "")
@@ -73,7 +70,7 @@ func main() {
 		"lowerdir=/mnt/lower,upperdir=/mnt/upper/upper,workdir=/mnt/upper/work")
 	log.Println("init: overlayfs mounted")
 
-	// 6. Configure network using netlink.
+	// 5. Configure network using netlink.
 	if resp.Network != nil {
 		if err := configureNetwork(resp.Network); err != nil {
 			fatal("configure network: %v", err)
@@ -81,7 +78,7 @@ func main() {
 		log.Println("init: network configured")
 	}
 
-	// 7. Write injected files into the merged rootfs.
+	// 6. Write injected files into the merged rootfs.
 	for _, f := range resp.Files {
 		path := "/mnt/merged" + f.Path
 		dir := path
@@ -98,116 +95,29 @@ func main() {
 	}
 	log.Println("init: files written")
 
-	// 8. Switch root to the merged overlay.
+	// 7. Switch root to the merged overlay.
 	if err := switchRoot("/mnt/merged"); err != nil {
 		fatal("switch root: %v", err)
 	}
 	log.Println("init: switched root")
 
-	// 9. Read image config from rootfs.
+	// 8. Read image config and exec into agent.
 	imgCfg, err := image.LoadConfig("/etc")
 	if err != nil {
 		fatal("load image config: %v", err)
 	}
-	log.Printf("init: image config: entrypoint=%v port=%d", imgCfg.Entrypoint, imgCfg.Port)
+	log.Printf("init: exec-ing into agent: %v", imgCfg.Entrypoint)
 
-	// 10. Start the agent process.
-	log.Printf("init: starting agent: %v", imgCfg.Entrypoint)
-
-	agentEnv := append(os.Environ(), fmt.Sprintf("PORT=%d", imgCfg.Port))
+	agentEnv := os.Environ()
+	agentEnv = append(agentEnv, fmt.Sprintf("PORT=%d", imgCfg.Port))
 	for k, v := range imgCfg.Env {
 		agentEnv = append(agentEnv, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	agent := &syscall.ProcAttr{
-		Env:   agentEnv,
-		Files: []uintptr{os.Stdin.Fd(), os.Stdout.Fd(), os.Stderr.Fd()},
-		Sys:   &syscall.SysProcAttr{Setpgid: true},
+	// Exec replaces this process with the agent. The agent becomes PID 1.
+	if err := syscall.Exec(imgCfg.Entrypoint[0], imgCfg.Entrypoint, agentEnv); err != nil {
+		fatal("exec agent: %v", err)
 	}
-	agentPid, err := syscall.ForkExec(imgCfg.Entrypoint[0], imgCfg.Entrypoint, agent)
-	if err != nil {
-		fatal("start agent: %v", err)
-	}
-	log.Printf("init: agent started (pid=%d)", agentPid)
-
-	// 10. Wait for agent to be ready (poll the health endpoint).
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", imgCfg.Port)
-	if err := waitForAgent(ctx, agentAddr, 30*time.Second); err != nil {
-		fatal("agent not ready: %v", err)
-	}
-	log.Println("init: agent is ready")
-
-	// 11. Forward payload to agent.
-	agentURL := fmt.Sprintf("http://%s/run", agentAddr)
-	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, bytes.NewReader(resp.Payload))
-	if err != nil {
-		fatal("create agent request: %v", err)
-	}
-	for k, v := range resp.PayloadHeaders {
-		agentReq.Header.Set(k, v)
-	}
-
-	agentResp, err := http.DefaultClient.Do(agentReq)
-	if err != nil {
-		initClient.EmitEvent(ctx, &initpb.EmitEventRequest{
-			Done:  true,
-			Error: fmt.Sprintf("agent request failed: %v", err),
-		})
-		goto shutdown
-	}
-	defer agentResp.Body.Close()
-
-	log.Printf("init: agent responded with %d", agentResp.StatusCode)
-
-	// 12. Stream agent response back to host via Stream RPC.
-	{
-		buf := make([]byte, 4096)
-		for {
-			n, readErr := agentResp.Body.Read(buf)
-			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
-				if _, err := initClient.EmitEvent(ctx, &initpb.EmitEventRequest{Data: chunk}); err != nil {
-					log.Printf("init: Stream RPC error: %v", err)
-					break
-				}
-			}
-			if readErr != nil {
-				if readErr != io.EOF {
-					log.Printf("init: agent read error: %v", readErr)
-					initClient.EmitEvent(ctx, &initpb.EmitEventRequest{
-						Done:  true,
-						Error: readErr.Error(),
-					})
-				} else {
-					initClient.EmitEvent(ctx, &initpb.EmitEventRequest{Done: true})
-				}
-				break
-			}
-		}
-	}
-	log.Println("init: stream complete")
-
-shutdown:
-	// 13. Kill agent and reboot.
-	syscall.Kill(-agentPid, syscall.SIGTERM)
-	done := make(chan struct{})
-	go func() {
-		var ws syscall.WaitStatus
-		syscall.Wait4(agentPid, &ws, 0, nil)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		syscall.Kill(-agentPid, syscall.SIGKILL)
-		<-done
-	}
-
-	ttrpcClient.Close()
-	log.Println("init: rebooting")
-	unix.Sync()
-	unix.Reboot(unix.LINUX_REBOOT_CMD_RESTART)
 }
 
 // dialHost connects to the executor over vsock with retries.
@@ -223,21 +133,17 @@ func dialHost(ctx context.Context) (net.Conn, error) {
 }
 
 // configureNetwork sets up eth0 using netlink.
-// Uses RTNH_F_ONLINK because the gateway is outside the /32 prefix.
 func configureNetwork(cfg *initpb.NetworkConfig) error {
-	// Find eth0.
 	link, err := netlink.LinkByName("eth0")
 	if err != nil {
 		return fmt.Errorf("find eth0: %w", err)
 	}
 
-	// Bring up loopback.
 	lo, err := netlink.LinkByName("lo")
 	if err == nil {
 		netlink.LinkSetUp(lo)
 	}
 
-	// Add IP address.
 	addr, err := netlink.ParseAddr(fmt.Sprintf("%s/%d", cfg.Ip, cfg.PrefixLen))
 	if err != nil {
 		return fmt.Errorf("parse addr: %w", err)
@@ -246,22 +152,16 @@ func configureNetwork(cfg *initpb.NetworkConfig) error {
 		return fmt.Errorf("add addr: %w", err)
 	}
 
-	// Set MTU.
 	if cfg.Mtu > 0 {
 		if err := netlink.LinkSetMTU(link, int(cfg.Mtu)); err != nil {
 			return fmt.Errorf("set MTU: %w", err)
 		}
 	}
 
-	// Bring up eth0.
 	if err := netlink.LinkSetUp(link); err != nil {
 		return fmt.Errorf("link up: %w", err)
 	}
 
-	// Add default route with ONLINK flag.
-	// The gateway (169.254.1.1) is outside the /32 prefix, so the kernel
-	// needs RTNH_F_ONLINK to accept the route without a connected route
-	// to the gateway.
 	gw := net.ParseIP(cfg.Gateway)
 	if gw == nil {
 		return fmt.Errorf("invalid gateway: %s", cfg.Gateway)
@@ -278,7 +178,6 @@ func configureNetwork(cfg *initpb.NetworkConfig) error {
 	return nil
 }
 
-// waitForDevice polls for a block device to appear.
 func waitForDevice(path string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -290,24 +189,6 @@ func waitForDevice(path string, timeout time.Duration) {
 	log.Printf("init: warning: device %s not found after %v", path, timeout)
 }
 
-// waitForAgent polls the agent's health endpoint until it responds.
-func waitForAgent(ctx context.Context, addr string, timeout time.Duration) error {
-	client := &http.Client{Timeout: 1 * time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(fmt.Sprintf("http://%s/healthz", addr))
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("agent at %s not ready after %v", addr, timeout)
-}
-
-// switchRoot performs a pivot_root into the new root.
 func switchRoot(newRoot string) error {
 	oldRoot := newRoot + "/old_root"
 	os.MkdirAll(oldRoot, 0755)
@@ -338,6 +219,5 @@ func mustMkdir(path string, perm os.FileMode) {
 
 func fatal(format string, args ...any) {
 	log.Printf("init: FATAL: "+format, args...)
-	// Trigger kernel panic → Firecracker exits.
 	*(*int)(unsafe.Pointer(uintptr(0))) = 0
 }

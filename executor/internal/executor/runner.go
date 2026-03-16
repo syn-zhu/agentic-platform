@@ -10,39 +10,54 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/siyanzhu/agentic-platform/executor/internal/config"
 	"github.com/siyanzhu/agentic-platform/executor/internal/image"
 	"github.com/siyanzhu/agentic-platform/executor/internal/lease"
-	execnet "github.com/siyanzhu/agentic-platform/executor/internal/net"
+	"github.com/siyanzhu/agentic-platform/executor/internal/pasta"
 	"github.com/siyanzhu/agentic-platform/executor/internal/vm"
 	"github.com/siyanzhu/agentic-platform/executor/internal/vsock"
 	initpb "github.com/siyanzhu/agentic-platform/executor/internal/vsock/initpb"
 )
 
 // Runner orchestrates the full execution lifecycle:
-// state transitions → TAP setup → VM boot → vsock Init/EmitEvent → teardown → release.
+// state transitions → boot VM in pasta netns → HTTP to agent on localhost → teardown → release.
 type Runner struct {
 	cfg    *config.Config
 	imgCfg *image.Config
 	sm     *StateMachine
 	lease  *lease.Client
-	netCfg *execnet.Config
+	pasta  *pasta.Instance // Started once at pod startup, reused across executions.
 }
 
 // NewRunner creates a runner with the given configuration.
-func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, leaseClient *lease.Client) *Runner {
+// Starts the pasta process (once, for the lifetime of the pod).
+func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, leaseClient *lease.Client) (*Runner, error) {
+	pastaCfg := pasta.DefaultConfig(imgCfg.Port)
+	pastaInst, err := pasta.Start(pastaCfg)
+	if err != nil {
+		return nil, fmt.Errorf("start pasta: %w", err)
+	}
+
 	return &Runner{
 		cfg:    cfg,
 		imgCfg: imgCfg,
 		sm:     sm,
 		lease:  leaseClient,
-		netCfg: execnet.DefaultConfig(),
+		pasta:  pastaInst,
+	}, nil
+}
+
+// Close stops the pasta process.
+func (r *Runner) Close() {
+	if r.pasta != nil {
+		r.pasta.Stop()
 	}
 }
 
 // Run implements server.Runner. Blocks until execution completes,
-// streaming SSE chunks to w.
+// streaming SSE from the agent to w.
 func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error {
 	ctx := context.Background()
 	log := slog.With("exec_id", execID, "claim_id", claimID)
@@ -70,30 +85,21 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	defer leaseCancel()
 	r.lease.StartRenewal(leaseCtx, claimID)
 
-	// Set up routed TAP.
-	if err := execnet.Setup(r.netCfg); err != nil {
-		return fmt.Errorf("TAP setup: %w", err)
-	}
-
-	// Prepare vsock server with Init response.
+	// Prepare vsock server with Init response (config delivery to guest).
 	workDir := filepath.Join(r.cfg.WorkloadDir, execID)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
 
-	guestNet := r.netCfg.GuestNetworkConfig()
+	guestIP, guestGW, prefixLen, mtu := pasta.GuestNetConfig()
 	initResp := &initpb.InitResponse{
 		Network: &initpb.NetworkConfig{
-			Ip:        guestNet.IP,
-			Gateway:   guestNet.Gateway,
-			PrefixLen: int32(guestNet.PrefixLen),
-			Mtu:       int32(guestNet.MTU),
+			Ip:        guestIP,
+			Gateway:   guestGW,
+			PrefixLen: int32(prefixLen),
+			Mtu:       int32(mtu),
 		},
-		Files:   r.guestFiles(),
-		Payload: payloadBytes,
-		PayloadHeaders: map[string]string{
-			"Content-Type": "application/json",
-		},
+		Files: r.guestFiles(),
 	}
 
 	vsockPath := filepath.Join(workDir, "vsock")
@@ -103,10 +109,10 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	}
 	defer vsockSrv.Close()
 
-	// Start vsock server in background (accepts guest connections).
+	// Start vsock server in background (for guest Init RPC).
 	go vsockSrv.Serve(ctx)
 
-	// Boot VM.
+	// Boot VM in pasta's dedicated netns.
 	bootCtx, bootCancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
 	defer bootCancel()
 
@@ -114,11 +120,12 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		KernelPath: filepath.Join(r.cfg.ImageDir, "vmlinux"),
 		InitrdPath: filepath.Join(r.cfg.ImageDir, "initramfs.cpio.lz4"),
 		RootfsPath: filepath.Join(r.cfg.ImageDir, "rootfs.ext4"),
-		TAPName:    r.netCfg.TAPName,
+		TAPName:    "eth0", // pasta names the TAP eth0 in the dedicated netns
 		VCPUs:      r.cfg.VCPUs,
 		MemoryMB:   r.cfg.MemoryMB,
 		WorkDir:    workDir,
 		VsockPath:  vsockPath,
+		NsPath:     r.pasta.NsPath(), // Boot in pasta's netns
 	}
 
 	machine, err := vm.Boot(bootCtx, vmCfg)
@@ -126,72 +133,76 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		return fmt.Errorf("VM boot: %w", err)
 	}
 
-	log.Info("VM booted, waiting for guest Init + Stream")
+	// Wait for agent to be ready on localhost (via pasta port forwarding).
+	agentAddr := fmt.Sprintf("localhost:%d", r.imgCfg.Port)
+	log.Info("waiting for agent", "addr", agentAddr)
+
+	if err := waitForAgent(bootCtx, agentAddr); err != nil {
+		machine.Stop()
+		return fmt.Errorf("agent not ready: %w", err)
+	}
 
 	// STARTING → RUNNING
-	// The guest will call Init (gets config + payload), configure itself,
-	// start the agent, forward the payload, then call Stream repeatedly
-	// with SSE chunks. We proxy those chunks to the HTTP response.
 	if err := r.sm.Transition(Running); err != nil {
 		machine.Stop()
 		return fmt.Errorf("transition to RUNNING: %w", err)
 	}
 
-	// Set SSE headers.
+	log.Info("agent ready, forwarding payload")
+
+	// Send payload to agent via pasta port forwarding (localhost:8080).
+	agentURL := fmt.Sprintf("http://%s/run", agentAddr)
+	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, io.NopCloser(
+		io.NewSectionReader(readerAtFromBytes(payloadBytes), 0, int64(len(payloadBytes))),
+	))
+	if err != nil {
+		machine.Stop()
+		return fmt.Errorf("create agent request: %w", err)
+	}
+	agentReq.Header.Set("Content-Type", "application/json")
+
+	agentResp, err := http.DefaultClient.Do(agentReq)
+	if err != nil {
+		machine.Stop()
+		return fmt.Errorf("agent request: %w", err)
+	}
+	defer agentResp.Body.Close()
+
+	// Set SSE headers and stream response from agent to waypoint.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Proxy SSE chunks from vsock to HTTP response.
 	flusher, _ := w.(http.Flusher)
-
-	execCtx, execCancel := context.WithTimeout(ctx, r.cfg.ExecTimeout)
-	defer execCancel()
+	buf := make([]byte, 4096)
 
 	for {
-		select {
-		case chunk, ok := <-vsockSrv.EventCh():
-			if !ok {
-				// Channel closed.
-				log.Info("stream channel closed")
+		n, readErr := agentResp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				log.Warn("client disconnected", "error", writeErr)
+				machine.Stop()
 				return nil
-			}
-			if chunk.Error != "" {
-				log.Error("agent error", "error", chunk.Error)
-				return fmt.Errorf("agent error: %s", chunk.Error)
-			}
-			if chunk.Done {
-				log.Info("stream complete")
-				return nil
-			}
-			if _, err := w.Write(chunk.Data); err != nil {
-				log.Warn("write to client failed", "error", err)
-				return nil // Client disconnected.
 			}
 			if flusher != nil {
 				flusher.Flush()
 			}
-
-		case <-execCtx.Done():
-			log.Warn("execution timeout")
-			machine.Stop()
-			return fmt.Errorf("execution timeout")
-
-		case <-vsockSrv.Done():
-			log.Info("guest signaled done")
-			return nil
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				log.Warn("agent read error", "error", readErr)
+			}
+			break
 		}
 	}
+
+	log.Info("execution complete")
+	return nil
 }
 
 // teardown cleans up after an execution.
 func (r *Runner) teardown(ctx context.Context, log *slog.Logger, claimID, execID string) {
 	log.Info("tearing down execution")
-
-	// Teardown TAP.
-	if err := execnet.Teardown(r.netCfg); err != nil {
-		log.Warn("TAP teardown error", "error", err)
-	}
 
 	// Clean work directory.
 	workDir := filepath.Join(r.cfg.WorkloadDir, execID)
@@ -209,7 +220,6 @@ func (r *Runner) teardown(ctx context.Context, log *slog.Logger, claimID, execID
 func (r *Runner) guestFiles() []*initpb.FileConfig {
 	var files []*initpb.FileConfig
 
-	// /etc/resolv.conf — copy from the pod's own DNS config.
 	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
 		files = append(files, &initpb.FileConfig{
 			Path:    "/etc/resolv.conf",
@@ -218,7 +228,6 @@ func (r *Runner) guestFiles() []*initpb.FileConfig {
 		})
 	}
 
-	// /etc/hosts — minimal.
 	files = append(files, &initpb.FileConfig{
 		Path:    "/etc/hosts",
 		Content: []byte("127.0.0.1 localhost\n::1 localhost\n"),
@@ -228,3 +237,41 @@ func (r *Runner) guestFiles() []*initpb.FileConfig {
 	return files
 }
 
+// waitForAgent polls the agent's health endpoint until it responds.
+func waitForAgent(ctx context.Context, addr string) error {
+	client := &http.Client{Timeout: 1 * time.Second}
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for agent at %s", addr)
+		default:
+		}
+
+		resp, err := client.Get(fmt.Sprintf("http://%s/healthz", addr))
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// readerAtFromBytes wraps a byte slice as an io.ReaderAt.
+type bytesReaderAt []byte
+
+func (b bytesReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off >= int64(len(b)) {
+		return 0, io.EOF
+	}
+	n := copy(p, b[off:])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func readerAtFromBytes(b []byte) io.ReaderAt {
+	return bytesReaderAt(b)
+}

@@ -28,6 +28,7 @@ type Config struct {
 	MemoryMB    int
 	WorkDir     string // Per-execution working directory
 	VsockPath   string // Host-side Unix socket path (created by vsock server before boot)
+	NsPath      string // Network namespace path (from pasta) — Firecracker runs in this netns
 }
 
 // VM wraps a Firecracker machine instance.
@@ -44,6 +45,7 @@ func Boot(ctx context.Context, cfg Config) (*VM, error) {
 		"vcpus", cfg.VCPUs,
 		"memory_mb", cfg.MemoryMB,
 		"tap", cfg.TAPName,
+		"netns", cfg.NsPath,
 	)
 
 	if err := os.MkdirAll(cfg.WorkDir, 0755); err != nil {

@@ -16,8 +16,6 @@ type Config struct {
 	VCPUs            int           `env:"VCPUS" envDefault:"1"`
 	MemoryMB         int           `env:"MEMORY_MB" envDefault:"256"`
 	BootTimeout      time.Duration `env:"BOOT_TIMEOUT" envDefault:"30s"`
-	ReadyTimeout     time.Duration `env:"READY_TIMEOUT" envDefault:"10s"`
-	ExecTimeout      time.Duration `env:"EXEC_TIMEOUT" envDefault:"5m"`
 }
 
 // Load reads configuration from environment variables.

@@ -58,22 +58,16 @@ func (*InitRequest) Descriptor() ([]byte, []int) {
 	return file_init_proto_rawDescGZIP(), []int{0}
 }
 
-// InitResponse carries everything the guest needs to boot,
-// configure, and handle the client request.
+// InitResponse carries everything the guest needs to configure
+// itself before starting the agent.
 type InitResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Network configuration for the guest's eth0 interface.
 	Network *NetworkConfig `protobuf:"bytes,1,opt,name=network,proto3" json:"network,omitempty"`
 	// Files to inject into the guest filesystem.
-	Files []*FileConfig `protobuf:"bytes,2,rep,name=files,proto3" json:"files,omitempty"`
-	// Payload is the client's request body, forwarded from
-	// the waypoint's POST /run request.
-	Payload []byte `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
-	// Payload headers from the client request that should
-	// be forwarded to the agent (e.g., Content-Type).
-	PayloadHeaders map[string]string `protobuf:"bytes,4,rep,name=payload_headers,json=payloadHeaders,proto3" json:"payload_headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	Files         []*FileConfig `protobuf:"bytes,2,rep,name=files,proto3" json:"files,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *InitResponse) Reset() {
@@ -120,30 +114,16 @@ func (x *InitResponse) GetFiles() []*FileConfig {
 	return nil
 }
 
-func (x *InitResponse) GetPayload() []byte {
-	if x != nil {
-		return x.Payload
-	}
-	return nil
-}
-
-func (x *InitResponse) GetPayloadHeaders() map[string]string {
-	if x != nil {
-		return x.PayloadHeaders
-	}
-	return nil
-}
-
 // NetworkConfig for the guest's eth0 interface.
 type NetworkConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// IP address (e.g., "169.254.1.2").
+	// IP address (e.g., "192.168.1.5").
 	Ip string `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
-	// Default gateway (e.g., "169.254.1.1").
+	// Default gateway (e.g., "192.168.1.1").
 	Gateway string `protobuf:"bytes,2,opt,name=gateway,proto3" json:"gateway,omitempty"`
-	// Prefix length (e.g., 32).
+	// Prefix length (e.g., 24).
 	PrefixLen int32 `protobuf:"varint,3,opt,name=prefix_len,json=prefixLen,proto3" json:"prefix_len,omitempty"`
-	// MTU matching the host TAP device.
+	// MTU matching the host interface.
 	Mtu           int32 `protobuf:"varint,4,opt,name=mtu,proto3" json:"mtu,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -271,123 +251,16 @@ func (x *FileConfig) GetMode() uint32 {
 	return 0
 }
 
-// EmitEventRequest carries one SSE event or signals completion.
-type EmitEventRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// SSE event data. Empty when done=true.
-	Data []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
-	// True when the agent's response is complete.
-	Done bool `protobuf:"varint,2,opt,name=done,proto3" json:"done,omitempty"`
-	// Error message if the agent request failed.
-	// Non-empty only when done=true and the request errored.
-	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EmitEventRequest) Reset() {
-	*x = EmitEventRequest{}
-	mi := &file_init_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EmitEventRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EmitEventRequest) ProtoMessage() {}
-
-func (x *EmitEventRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_init_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EmitEventRequest.ProtoReflect.Descriptor instead.
-func (*EmitEventRequest) Descriptor() ([]byte, []int) {
-	return file_init_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *EmitEventRequest) GetData() []byte {
-	if x != nil {
-		return x.Data
-	}
-	return nil
-}
-
-func (x *EmitEventRequest) GetDone() bool {
-	if x != nil {
-		return x.Done
-	}
-	return false
-}
-
-func (x *EmitEventRequest) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
-// EmitEventResponse is an acknowledgment.
-type EmitEventResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EmitEventResponse) Reset() {
-	*x = EmitEventResponse{}
-	mi := &file_init_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EmitEventResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EmitEventResponse) ProtoMessage() {}
-
-func (x *EmitEventResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_init_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EmitEventResponse.ProtoReflect.Descriptor instead.
-func (*EmitEventResponse) Descriptor() ([]byte, []int) {
-	return file_init_proto_rawDescGZIP(), []int{5}
-}
-
 var File_init_proto protoreflect.FileDescriptor
 
 const file_init_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
 	"init.proto\x12\x10executor.init.v1\"\r\n" +
-	"\vInitRequest\"\xb7\x02\n" +
+	"\vInitRequest\"}\n" +
 	"\fInitResponse\x129\n" +
 	"\anetwork\x18\x01 \x01(\v2\x1f.executor.init.v1.NetworkConfigR\anetwork\x122\n" +
-	"\x05files\x18\x02 \x03(\v2\x1c.executor.init.v1.FileConfigR\x05files\x12\x18\n" +
-	"\apayload\x18\x03 \x01(\fR\apayload\x12[\n" +
-	"\x0fpayload_headers\x18\x04 \x03(\v22.executor.init.v1.InitResponse.PayloadHeadersEntryR\x0epayloadHeaders\x1aA\n" +
-	"\x13PayloadHeadersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"j\n" +
+	"\x05files\x18\x02 \x03(\v2\x1c.executor.init.v1.FileConfigR\x05files\"j\n" +
 	"\rNetworkConfig\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x18\n" +
 	"\agateway\x18\x02 \x01(\tR\agateway\x12\x1d\n" +
@@ -398,15 +271,9 @@ const file_init_proto_rawDesc = "" +
 	"FileConfig\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\fR\acontent\x12\x12\n" +
-	"\x04mode\x18\x03 \x01(\rR\x04mode\"P\n" +
-	"\x10EmitEventRequest\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\x12\x12\n" +
-	"\x04done\x18\x02 \x01(\bR\x04done\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x13\n" +
-	"\x11EmitEventResponse2\xaa\x01\n" +
+	"\x04mode\x18\x03 \x01(\rR\x04mode2T\n" +
 	"\vInitControl\x12E\n" +
-	"\x04Init\x12\x1d.executor.init.v1.InitRequest\x1a\x1e.executor.init.v1.InitResponse\x12T\n" +
-	"\tEmitEvent\x12\".executor.init.v1.EmitEventRequest\x1a#.executor.init.v1.EmitEventResponseBEZCgithub.com/siyanzhu/agentic-platform/executor/internal/vsock/initpbb\x06proto3"
+	"\x04Init\x12\x1d.executor.init.v1.InitRequest\x1a\x1e.executor.init.v1.InitResponseBEZCgithub.com/siyanzhu/agentic-platform/executor/internal/vsock/initpbb\x06proto3"
 
 var (
 	file_init_proto_rawDescOnce sync.Once
@@ -420,29 +287,23 @@ func file_init_proto_rawDescGZIP() []byte {
 	return file_init_proto_rawDescData
 }
 
-var file_init_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_init_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_init_proto_goTypes = []any{
-	(*InitRequest)(nil),       // 0: executor.init.v1.InitRequest
-	(*InitResponse)(nil),      // 1: executor.init.v1.InitResponse
-	(*NetworkConfig)(nil),     // 2: executor.init.v1.NetworkConfig
-	(*FileConfig)(nil),        // 3: executor.init.v1.FileConfig
-	(*EmitEventRequest)(nil),  // 4: executor.init.v1.EmitEventRequest
-	(*EmitEventResponse)(nil), // 5: executor.init.v1.EmitEventResponse
-	nil,                       // 6: executor.init.v1.InitResponse.PayloadHeadersEntry
+	(*InitRequest)(nil),   // 0: executor.init.v1.InitRequest
+	(*InitResponse)(nil),  // 1: executor.init.v1.InitResponse
+	(*NetworkConfig)(nil), // 2: executor.init.v1.NetworkConfig
+	(*FileConfig)(nil),    // 3: executor.init.v1.FileConfig
 }
 var file_init_proto_depIdxs = []int32{
 	2, // 0: executor.init.v1.InitResponse.network:type_name -> executor.init.v1.NetworkConfig
 	3, // 1: executor.init.v1.InitResponse.files:type_name -> executor.init.v1.FileConfig
-	6, // 2: executor.init.v1.InitResponse.payload_headers:type_name -> executor.init.v1.InitResponse.PayloadHeadersEntry
-	0, // 3: executor.init.v1.InitControl.Init:input_type -> executor.init.v1.InitRequest
-	4, // 4: executor.init.v1.InitControl.EmitEvent:input_type -> executor.init.v1.EmitEventRequest
-	1, // 5: executor.init.v1.InitControl.Init:output_type -> executor.init.v1.InitResponse
-	5, // 6: executor.init.v1.InitControl.EmitEvent:output_type -> executor.init.v1.EmitEventResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0, // 2: executor.init.v1.InitControl.Init:input_type -> executor.init.v1.InitRequest
+	1, // 3: executor.init.v1.InitControl.Init:output_type -> executor.init.v1.InitResponse
+	3, // [3:4] is the sub-list for method output_type
+	2, // [2:3] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_init_proto_init() }
@@ -456,7 +317,7 @@ func file_init_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_init_proto_rawDesc), len(file_init_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
