@@ -11,13 +11,13 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/containerd/ttrpc"
 	"github.com/mdlayher/vsock"
+	"github.com/vishvananda/netlink"
 	initpb "github.com/siyanzhu/agentic-platform/executor/internal/vsock/initpb"
 	"golang.org/x/sys/unix"
 )
@@ -62,6 +62,7 @@ func main() {
 
 	// 5. Mount rootfs as overlayfs (read-only lower + tmpfs upper).
 	mustMkdir("/mnt", 0755)
+	mustMkdir("/mnt/lower", 0755)
 	mustMount("/dev/vda", "/mnt/lower", "ext4", unix.MS_RDONLY, "")
 	mustMount("tmpfs", "/mnt/upper", "tmpfs", 0, "size=128M")
 	mustMkdir("/mnt/upper/upper", 0755)
@@ -71,7 +72,7 @@ func main() {
 		"lowerdir=/mnt/lower,upperdir=/mnt/upper/upper,workdir=/mnt/upper/work")
 	log.Println("init: overlayfs mounted")
 
-	// 6. Configure network.
+	// 6. Configure network using netlink (no shell-out to ip command).
 	if resp.Network != nil {
 		if err := configureNetwork(resp.Network); err != nil {
 			fatal("configure network: %v", err)
@@ -79,10 +80,17 @@ func main() {
 		log.Println("init: network configured")
 	}
 
-	// 7. Write injected files.
+	// 7. Write injected files into the merged rootfs.
 	for _, f := range resp.Files {
 		path := "/mnt/merged" + f.Path
-		mustMkdirAll(path)
+		dir := path
+		for i := len(path) - 1; i >= 0; i-- {
+			if path[i] == '/' {
+				dir = path[:i]
+				break
+			}
+		}
+		os.MkdirAll(dir, 0755)
 		if err := os.WriteFile(path, f.Content, os.FileMode(f.Mode)); err != nil {
 			fatal("write file %s: %v", f.Path, err)
 		}
@@ -96,23 +104,22 @@ func main() {
 	log.Println("init: switched root")
 
 	// 9. Start the agent process.
-	// The agent's entrypoint is /entrypoint.sh or whatever the image defines.
-	// For now we look for /entrypoint.sh, then fall back to /bin/sh.
-	agentCmd := findEntrypoint()
-	log.Printf("init: starting agent: %s", agentCmd)
+	agentCmd := resp.AgentCommand
+	if len(agentCmd) == 0 {
+		agentCmd = []string{"/entrypoint.sh"}
+	}
+	log.Printf("init: starting agent: %v", agentCmd)
 
-	agent := exec.Command(agentCmd)
-	agent.Stdout = os.Stdout
-	agent.Stderr = os.Stderr
-	agent.Env = append(os.Environ(),
-		fmt.Sprintf("PORT=%d", resp.AgentPort),
-	)
-	agent.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := agent.Start(); err != nil {
+	agent := &syscall.ProcAttr{
+		Env:   append(os.Environ(), fmt.Sprintf("PORT=%d", resp.AgentPort)),
+		Files: []uintptr{os.Stdin.Fd(), os.Stdout.Fd(), os.Stderr.Fd()},
+		Sys:   &syscall.SysProcAttr{Setpgid: true},
+	}
+	agentPid, err := syscall.ForkExec(agentCmd[0], agentCmd, agent)
+	if err != nil {
 		fatal("start agent: %v", err)
 	}
-	log.Printf("init: agent started (pid=%d)", agent.Process.Pid)
+	log.Printf("init: agent started (pid=%d)", agentPid)
 
 	// 10. Wait for agent to be ready (poll the health endpoint).
 	agentAddr := fmt.Sprintf("127.0.0.1:%d", resp.AgentPort)
@@ -133,7 +140,6 @@ func main() {
 
 	agentResp, err := http.DefaultClient.Do(agentReq)
 	if err != nil {
-		// Report error to host via Stream.
 		initClient.Stream(ctx, &initpb.StreamRequest{
 			Done:  true,
 			Error: fmt.Sprintf("agent request failed: %v", err),
@@ -175,16 +181,18 @@ func main() {
 
 shutdown:
 	// 13. Kill agent and reboot.
-	if agent.Process != nil {
-		syscall.Kill(-agent.Process.Pid, syscall.SIGTERM)
-		done := make(chan error, 1)
-		go func() { done <- agent.Wait() }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			syscall.Kill(-agent.Process.Pid, syscall.SIGKILL)
-			<-done
-		}
+	syscall.Kill(-agentPid, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		var ws syscall.WaitStatus
+		syscall.Wait4(agentPid, &ws, 0, nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		syscall.Kill(-agentPid, syscall.SIGKILL)
+		<-done
 	}
 
 	ttrpcClient.Close()
@@ -205,52 +213,59 @@ func dialHost(ctx context.Context) (net.Conn, error) {
 	return nil, fmt.Errorf("vsock dial timed out after 2s")
 }
 
-// configureNetwork sets up eth0 with the given config.
+// configureNetwork sets up eth0 using netlink.
 // Uses RTNH_F_ONLINK because the gateway is outside the /32 prefix.
 func configureNetwork(cfg *initpb.NetworkConfig) error {
-	iface, err := net.InterfaceByName("eth0")
+	// Find eth0.
+	link, err := netlink.LinkByName("eth0")
 	if err != nil {
 		return fmt.Errorf("find eth0: %w", err)
 	}
 
-	// Parse IP.
-	ip := net.ParseIP(cfg.Ip)
-	if ip == nil {
-		return fmt.Errorf("invalid IP: %s", cfg.Ip)
+	// Bring up loopback.
+	lo, err := netlink.LinkByName("lo")
+	if err == nil {
+		netlink.LinkSetUp(lo)
 	}
 
-	// Add address using ioctl (netlink requires more deps in the guest).
-	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	// Add IP address.
+	addr, err := netlink.ParseAddr(fmt.Sprintf("%s/%d", cfg.Ip, cfg.PrefixLen))
 	if err != nil {
-		return fmt.Errorf("socket: %w", err)
+		return fmt.Errorf("parse addr: %w", err)
 	}
-	defer unix.Close(fd)
-
-	// Use ip command for simplicity in the guest (available in most rootfs).
-	// This avoids pulling netlink into the static init binary.
-	if err := run("ip", "addr", "add", fmt.Sprintf("%s/%d", cfg.Ip, cfg.PrefixLen), "dev", "eth0"); err != nil {
-		return fmt.Errorf("ip addr add: %w", err)
-	}
-	if err := run("ip", "link", "set", "eth0", "up"); err != nil {
-		return fmt.Errorf("ip link set up: %w", err)
-	}
-	if err := run("ip", "link", "set", "lo", "up"); err != nil {
-		return fmt.Errorf("ip link set lo up: %w", err)
+	if err := netlink.AddrAdd(link, addr); err != nil {
+		return fmt.Errorf("add addr: %w", err)
 	}
 
 	// Set MTU.
 	if cfg.Mtu > 0 {
-		if err := run("ip", "link", "set", "eth0", "mtu", fmt.Sprintf("%d", cfg.Mtu)); err != nil {
-			return fmt.Errorf("ip link set mtu: %w", err)
+		if err := netlink.LinkSetMTU(link, int(cfg.Mtu)); err != nil {
+			return fmt.Errorf("set MTU: %w", err)
 		}
 	}
 
-	// Add default route with onlink flag (gateway is outside /32 prefix).
-	if err := run("ip", "route", "add", "default", "via", cfg.Gateway, "onlink", "dev", "eth0"); err != nil {
-		return fmt.Errorf("ip route add: %w", err)
+	// Bring up eth0.
+	if err := netlink.LinkSetUp(link); err != nil {
+		return fmt.Errorf("link up: %w", err)
 	}
 
-	_ = iface
+	// Add default route with ONLINK flag.
+	// The gateway (169.254.1.1) is outside the /32 prefix, so the kernel
+	// needs RTNH_F_ONLINK to accept the route without a connected route
+	// to the gateway.
+	gw := net.ParseIP(cfg.Gateway)
+	if gw == nil {
+		return fmt.Errorf("invalid gateway: %s", cfg.Gateway)
+	}
+	route := &netlink.Route{
+		Gw:        gw,
+		LinkIndex: link.Attrs().Index,
+		Flags:     int(unix.RTNH_F_ONLINK),
+	}
+	if err := netlink.RouteAdd(route); err != nil {
+		return fmt.Errorf("add default route: %w", err)
+	}
+
 	return nil
 }
 
@@ -285,45 +300,20 @@ func waitForAgent(ctx context.Context, addr string, timeout time.Duration) error
 
 // switchRoot performs a pivot_root into the new root.
 func switchRoot(newRoot string) error {
-	// Create the old_root mount point.
 	oldRoot := newRoot + "/old_root"
-	mustMkdir(oldRoot, 0755)
+	os.MkdirAll(oldRoot, 0755)
 
-	// pivot_root.
 	if err := unix.PivotRoot(newRoot, oldRoot); err != nil {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
-
-	// Change to the new root.
 	if err := unix.Chdir("/"); err != nil {
 		return fmt.Errorf("chdir: %w", err)
 	}
-
-	// Unmount old root.
 	if err := unix.Unmount("/old_root", unix.MNT_DETACH); err != nil {
 		return fmt.Errorf("unmount old_root: %w", err)
 	}
 	os.RemoveAll("/old_root")
-
 	return nil
-}
-
-// findEntrypoint looks for common agent entrypoints.
-func findEntrypoint() string {
-	candidates := []string{"/entrypoint.sh", "/app/entrypoint.sh", "/agent/entrypoint.sh"}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c
-		}
-	}
-	return "/bin/sh"
-}
-
-func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func mustMount(source, target, fstype string, flags uintptr, data string) {
@@ -335,18 +325,6 @@ func mustMount(source, target, fstype string, flags uintptr, data string) {
 
 func mustMkdir(path string, perm os.FileMode) {
 	os.MkdirAll(path, perm)
-}
-
-func mustMkdirAll(path string) {
-	dir := path[:len(path)-len(path[len(path)-1:])]
-	// Extract directory from file path.
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' {
-			dir = path[:i]
-			break
-		}
-	}
-	os.MkdirAll(dir, 0755)
 }
 
 func fatal(format string, args ...any) {

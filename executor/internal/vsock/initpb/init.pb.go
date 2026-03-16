@@ -74,7 +74,11 @@ type InitResponse struct {
 	PayloadHeaders map[string]string `protobuf:"bytes,4,rep,name=payload_headers,json=payloadHeaders,proto3" json:"payload_headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Agent port — the port the agent listens on inside
 	// the VM (e.g., 8080).
-	AgentPort     int32 `protobuf:"varint,5,opt,name=agent_port,json=agentPort,proto3" json:"agent_port,omitempty"`
+	AgentPort int32 `protobuf:"varint,5,opt,name=agent_port,json=agentPort,proto3" json:"agent_port,omitempty"`
+	// Agent command — the entrypoint to exec inside the VM.
+	// Set by the operator from the agent registration.
+	// E.g., ["python", "/agent/serve.py"] or ["/entrypoint.sh"].
+	AgentCommand  []string `protobuf:"bytes,6,rep,name=agent_command,json=agentCommand,proto3" json:"agent_command,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -142,6 +146,13 @@ func (x *InitResponse) GetAgentPort() int32 {
 		return x.AgentPort
 	}
 	return 0
+}
+
+func (x *InitResponse) GetAgentCommand() []string {
+	if x != nil {
+		return x.AgentCommand
+	}
+	return nil
 }
 
 // NetworkConfig for the guest's eth0 interface.
@@ -390,14 +401,15 @@ const file_init_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
 	"init.proto\x12\x10executor.init.v1\"\r\n" +
-	"\vInitRequest\"\xd6\x02\n" +
+	"\vInitRequest\"\xfb\x02\n" +
 	"\fInitResponse\x129\n" +
 	"\anetwork\x18\x01 \x01(\v2\x1f.executor.init.v1.NetworkConfigR\anetwork\x122\n" +
 	"\x05files\x18\x02 \x03(\v2\x1c.executor.init.v1.FileConfigR\x05files\x12\x18\n" +
 	"\apayload\x18\x03 \x01(\fR\apayload\x12[\n" +
 	"\x0fpayload_headers\x18\x04 \x03(\v22.executor.init.v1.InitResponse.PayloadHeadersEntryR\x0epayloadHeaders\x12\x1d\n" +
 	"\n" +
-	"agent_port\x18\x05 \x01(\x05R\tagentPort\x1aA\n" +
+	"agent_port\x18\x05 \x01(\x05R\tagentPort\x12#\n" +
+	"\ragent_command\x18\x06 \x03(\tR\fagentCommand\x1aA\n" +
 	"\x13PayloadHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"j\n" +

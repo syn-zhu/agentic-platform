@@ -14,6 +14,7 @@ type Config struct {
 	LeaseTTL         time.Duration
 	ImageDir         string
 	WorkloadDir      string
+	AgentCommand     string
 	AgentPort        int
 	VCPUs            int
 	Memory           string
@@ -29,6 +30,7 @@ func Load() (*Config, error) {
 		PoolOperatorAddr: os.Getenv("POOL_OPERATOR_ADDR"),
 		ImageDir:         envOr("IMAGE_DIR", "/opt/firecracker"),
 		WorkloadDir:      envOr("WORKLOAD_DIR", "/workload"),
+		AgentCommand:     envOr("AGENT_COMMAND", "/entrypoint.sh"),
 		AgentPort:        envIntOr("AGENT_PORT", 8080),
 		VCPUs:            envIntOr("VCPUS", 1),
 		Memory:           envOr("MEMORY", "256M"),

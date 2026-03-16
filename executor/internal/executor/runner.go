@@ -91,7 +91,8 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		PayloadHeaders: map[string]string{
 			"Content-Type": "application/json",
 		},
-		AgentPort: int32(r.cfg.AgentPort),
+		AgentPort:    int32(r.cfg.AgentPort),
+		AgentCommand: []string{r.cfg.AgentCommand},
 	}
 
 	vsockPath := filepath.Join(workDir, "vsock")

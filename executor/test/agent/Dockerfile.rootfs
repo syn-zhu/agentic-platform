@@ -22,24 +22,21 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/agent ./main.go
 FROM debian:bookworm-slim AS rootfs
 
 RUN apt-get update -qq && apt-get install -y -qq \
-    iproute2 busybox-static e2fsprogs \
+    busybox-static e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 # Create rootfs directory structure.
-RUN mkdir -p /rootfs/bin /rootfs/sbin /rootfs/usr/bin /rootfs/usr/sbin \
-    /rootfs/etc /rootfs/tmp /rootfs/var /rootfs/run /rootfs/dev /rootfs/proc /rootfs/sys
+RUN mkdir -p /rootfs/bin /rootfs/etc /rootfs/tmp /rootfs/var /rootfs/run \
+    /rootfs/dev /rootfs/proc /rootfs/sys
 
-# Copy busybox for /bin/sh and basic tools.
+# Copy busybox for /bin/sh and basic tools (useful for debugging).
 RUN cp /bin/busybox /rootfs/bin/busybox && \
     cd /rootfs/bin && \
-    for cmd in sh cat ls mkdir rm cp mv mount umount ping; do \
+    for cmd in sh cat ls mkdir rm cp mv; do \
         ln -sf busybox $cmd; \
     done
 
-# Copy iproute2 tools into rootfs (needed by guest init for network config).
-RUN cp /sbin/ip /rootfs/sbin/ip
-
-# Copy the test agent binary.
+# Copy the test agent binary as the entrypoint.
 COPY --from=builder /out/agent /rootfs/entrypoint.sh
 RUN chmod 755 /rootfs/entrypoint.sh
 
