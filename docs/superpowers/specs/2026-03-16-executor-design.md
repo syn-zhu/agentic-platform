@@ -78,9 +78,6 @@ fctr's `tc redirect` installs TC-layer filters that shuttle packets directly bet
 
 No tc redirect filters. No address/route release from eth0.
 
-**Prerequisites:**
-- Global IP forwarding must be enabled: `sysctl net.ipv4.ip_forward=1` (may already be set by istio-cni or the container runtime — verify on the cluster, set explicitly if not)
-
 **Guest config (via vsock Init):**
 
 - IP: `169.254.1.2/32`
