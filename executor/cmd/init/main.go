@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +18,7 @@ import (
 	"github.com/containerd/ttrpc"
 	"github.com/mdlayher/vsock"
 	"github.com/vishvananda/netlink"
+	"github.com/siyanzhu/agentic-platform/executor/internal/image"
 	initpb "github.com/siyanzhu/agentic-platform/executor/internal/vsock/initpb"
 	"golang.org/x/sys/unix"
 )
@@ -105,7 +105,7 @@ func main() {
 	log.Println("init: switched root")
 
 	// 9. Read image config from rootfs.
-	imgCfg, err := loadImageConfig("/etc/image-config.json")
+	imgCfg, err := image.LoadConfig("/etc")
 	if err != nil {
 		fatal("load image config: %v", err)
 	}
@@ -323,33 +323,6 @@ func switchRoot(newRoot string) error {
 	}
 	os.RemoveAll("/old_root")
 	return nil
-}
-
-// imageConfig is read from /etc/image-config.json in the rootfs.
-// It defines the agent entrypoint, port, and environment — the
-// equivalent of OCI image config (ENTRYPOINT, EXPOSE, ENV).
-type imageConfig struct {
-	Entrypoint []string          `json:"entrypoint"`
-	Port       int               `json:"port"`
-	Env        map[string]string `json:"env"`
-}
-
-func loadImageConfig(path string) (*imageConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
-	var cfg imageConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if len(cfg.Entrypoint) == 0 {
-		return nil, fmt.Errorf("entrypoint is required in %s", path)
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 8080
-	}
-	return &cfg, nil
 }
 
 func mustMount(source, target, fstype string, flags uintptr, data string) {
