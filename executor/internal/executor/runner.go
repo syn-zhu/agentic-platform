@@ -33,12 +33,14 @@ type Runner struct {
 }
 
 // NewRunner creates a runner with the given configuration.
-// Starts the pasta process (once, for the lifetime of the pod).
+// Sets up pasta (once, for the lifetime of the pod).
 func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, leaseClient *lease.Client) (*Runner, error) {
-	pastaCfg := pasta.DefaultConfig(imgCfg.Port)
-	pastaInst, err := pasta.Start(pastaCfg)
+	pastaInst, err := pasta.Setup(&pasta.Config{
+		AgentPort: imgCfg.Port,
+		NsDir:     cfg.WorkloadDir,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("start pasta: %w", err)
+		return nil, fmt.Errorf("setup pasta: %w", err)
 	}
 
 	return &Runner{
@@ -50,10 +52,10 @@ func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, lease
 	}, nil
 }
 
-// Close stops the pasta process.
+// Close tears down the pasta netns (pasta exits automatically).
 func (r *Runner) Close() {
 	if r.pasta != nil {
-		r.pasta.Stop()
+		r.pasta.Teardown()
 	}
 }
 
@@ -92,13 +94,17 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		return fmt.Errorf("create work dir: %w", err)
 	}
 
-	guestIP, guestGW, prefixLen, mtu := pasta.GuestNetConfig()
+	// pasta auto-configures the dedicated netns with the pod's network.
+	// The guest init still needs the config to set up eth0 inside the VM.
+	// Use the first IP from pasta's result.
+	var guestIP string
+	if ips := r.pasta.IPAddresses(); len(ips) > 0 {
+		guestIP = ips[0].String()
+	}
+
 	initResp := &initpb.InitResponse{
 		Network: &initpb.NetworkConfig{
-			Ip:        guestIP,
-			Gateway:   guestGW,
-			PrefixLen: int32(prefixLen),
-			Mtu:       int32(mtu),
+			Ip: guestIP,
 		},
 		Files: r.guestFiles(),
 	}
