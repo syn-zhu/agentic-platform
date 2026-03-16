@@ -13,32 +13,33 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 )
 
+const (
+	// GuestCID is the vsock CID assigned to the guest. Always 3 in Firecracker.
+	GuestCID = 3
+)
+
 // Config holds VM configuration.
 type Config struct {
-	KernelPath string
-	RootfsPath string
-	TAPName    string
-	VCPUs      int
-	MemoryMB   int
-	WorkDir    string // Per-execution working directory
-	VsockCID   uint32
-}
-
-// VsockPath returns the host-side Unix socket path for the vsock device.
-func (c *Config) VsockPath() string {
-	return filepath.Join(c.WorkDir, "vsock")
+	KernelPath  string
+	InitrdPath  string // Path to initramfs (cpio+lz4 with our init binary)
+	RootfsPath  string
+	TAPName     string
+	VCPUs       int
+	MemoryMB    int
+	WorkDir     string // Per-execution working directory
+	VsockPath   string // Host-side Unix socket path (created by vsock server before boot)
 }
 
 // VM wraps a Firecracker machine instance.
 type VM struct {
 	machine *firecracker.Machine
-	cfg     Config
 }
 
 // Boot creates and starts a Firecracker VM.
 func Boot(ctx context.Context, cfg Config) (*VM, error) {
 	slog.Info("booting VM",
 		"kernel", cfg.KernelPath,
+		"initrd", cfg.InitrdPath,
 		"rootfs", cfg.RootfsPath,
 		"vcpus", cfg.VCPUs,
 		"memory_mb", cfg.MemoryMB,
@@ -58,6 +59,7 @@ func Boot(ctx context.Context, cfg Config) (*VM, error) {
 	fcCfg := firecracker.Config{
 		SocketPath:      socketPath,
 		KernelImagePath: cfg.KernelPath,
+		InitrdPath:      cfg.InitrdPath,
 		KernelArgs:      "console=ttyS0 reboot=k panic=1 pci=off net.ifnames=0 rdinit=/init",
 		Drives: []models.Drive{
 			{
@@ -81,8 +83,8 @@ func Boot(ctx context.Context, cfg Config) (*VM, error) {
 		},
 		VsockDevices: []firecracker.VsockDevice{
 			{
-				Path: cfg.VsockPath(),
-				CID:  cfg.VsockCID,
+				Path: cfg.VsockPath,
+				CID:  GuestCID,
 			},
 		},
 	}
@@ -97,7 +99,7 @@ func Boot(ctx context.Context, cfg Config) (*VM, error) {
 	}
 
 	slog.Info("VM started")
-	return &VM{machine: m, cfg: cfg}, nil
+	return &VM{machine: m}, nil
 }
 
 // Wait blocks until the VM exits.
@@ -109,9 +111,4 @@ func (v *VM) Wait(ctx context.Context) error {
 func (v *VM) Stop() {
 	slog.Info("stopping VM")
 	v.machine.StopVMM()
-}
-
-// Cleanup removes the per-execution working directory.
-func (v *VM) Cleanup() error {
-	return os.RemoveAll(v.cfg.WorkDir)
 }

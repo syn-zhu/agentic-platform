@@ -44,7 +44,7 @@ spec:
             initialDelaySeconds: 2
           env:
             - name: POOL_OPERATOR_ADDR
-              value: "pool-operator.executor-system.svc:8080"
+              value: "pool-operator.executor-system.svc:50051"
             - name: LEASE_TTL
               value: "30s"
             - name: AGENT_COMMAND

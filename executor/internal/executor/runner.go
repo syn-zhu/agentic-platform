@@ -109,12 +109,13 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	vmCfg := vm.Config{
 		KernelPath: filepath.Join(r.cfg.ImageDir, "vmlinux"),
+		InitrdPath: filepath.Join(r.cfg.ImageDir, "initramfs.cpio.lz4"),
 		RootfsPath: filepath.Join(r.cfg.ImageDir, "rootfs.ext4"),
 		TAPName:    r.netCfg.TAPName,
 		VCPUs:      r.cfg.VCPUs,
 		MemoryMB:   parseMemoryMB(r.cfg.Memory),
 		WorkDir:    workDir,
-		VsockCID:   3,
+		VsockPath:  vsockPath,
 	}
 
 	machine, err := vm.Boot(bootCtx, vmCfg)

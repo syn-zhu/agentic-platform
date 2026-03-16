@@ -57,13 +57,25 @@ spec:
       serviceAccountName: pool-operator
       containers:
         - name: pool-operator
-          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/pool-operator:v1
+          image: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform/pool-operator:v2
+          imagePullPolicy: Always
           ports:
-            - containerPort: 8080
-              name: http
+            - containerPort: 50051
+              name: grpc
+            - containerPort: 8081
+              name: health
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            periodSeconds: 5
           env:
+            - name: LISTEN_ADDR
+              value: ":50051"
             - name: NAMESPACE
               value: executor-system
+            - name: HEALTH_ADDR
+              value: ":8081"
           resources:
             requests:
               cpu: 100m
@@ -81,6 +93,6 @@ spec:
   selector:
     app: pool-operator
   ports:
-    - port: 8080
-      targetPort: 8080
-      name: http
+    - port: 50051
+      targetPort: 50051
+      name: grpc
