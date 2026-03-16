@@ -59,31 +59,21 @@ func (r *Runner) Close() {
 	}
 }
 
-// Run implements server.Runner. Writes SSE events to w, including
-// error events. Never returns an error — all errors are dispatched
-// as SSE error events on the stream.
-func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) {
+// Run executes a request. Streams SSE data from the agent to w.
+// Returns an error if something fails — the caller writes an SSE
+// error event.
+func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error {
 	ctx := context.Background()
 	log := slog.With("exec_id", execID, "claim_id", claimID)
 
-	// Set SSE headers early so all responses (including errors) are SSE.
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, _ := w.(http.Flusher)
-
-	// Read payload.
 	payloadBytes, err := io.ReadAll(payload)
 	if err != nil {
-		sseError(w, flusher, "read payload: %v", err)
-		return
+		return fmt.Errorf("read payload: %w", err)
 	}
 
 	// IDLE → STARTING
 	if err := r.sm.Transition(Starting); err != nil {
-		sseError(w, flusher, "executor busy: %v", err)
-		return
+		return fmt.Errorf("executor busy: %w", err)
 	}
 
 	// Ensure we always end up back at IDLE.
@@ -101,8 +91,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	// Prepare vsock server with Init response (config delivery to guest).
 	workDir := filepath.Join(r.cfg.WorkloadDir, execID)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
-		sseError(w, flusher, "create work dir: %v", err)
-		return
+		return fmt.Errorf("create work dir: %w", err)
 	}
 
 	var guestIP string
@@ -120,8 +109,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	vsockPath := filepath.Join(workDir, "vsock")
 	vsockSrv, err := vsock.NewServer(vsockPath, initResp)
 	if err != nil {
-		sseError(w, flusher, "vsock server: %v", err)
-		return
+		return fmt.Errorf("vsock server: %w", err)
 	}
 	defer vsockSrv.Close()
 
@@ -145,8 +133,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	machine, err := vm.Boot(bootCtx, vmCfg)
 	if err != nil {
-		sseError(w, flusher, "VM boot failed: %v", err)
-		return
+		return fmt.Errorf("VM boot failed: %w", err)
 	}
 
 	// Wait for agent to be ready.
@@ -155,15 +142,13 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	if err := waitForAgent(bootCtx, agentAddr); err != nil {
 		machine.Stop()
-		sseError(w, flusher, "agent not ready: %v", err)
-		return
+		return fmt.Errorf("agent not ready: %w", err)
 	}
 
 	// STARTING → RUNNING
 	if err := r.sm.Transition(Running); err != nil {
 		machine.Stop()
-		sseError(w, flusher, "transition to RUNNING: %v", err)
-		return
+		return fmt.Errorf("transition to RUNNING: %w", err)
 	}
 
 	log.Info("agent ready, forwarding payload")
@@ -173,8 +158,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		machine.Stop()
-		sseError(w, flusher, "create agent request: %v", err)
-		return
+		return fmt.Errorf("create agent request: %w", err)
 	}
 	agentReq.Header.Set("Content-Type", "application/json")
 	agentReq.Header.Set("X-Execution-Id", execID)
@@ -182,12 +166,12 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	agentResp, err := http.DefaultClient.Do(agentReq)
 	if err != nil {
 		machine.Stop()
-		sseError(w, flusher, "agent request failed: %v", err)
-		return
+		return fmt.Errorf("agent request failed: %w", err)
 	}
 	defer agentResp.Body.Close()
 
 	// Stream SSE response from agent to waypoint.
+	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 4096)
 	for {
 		n, readErr := agentResp.Body.Read(buf)
@@ -195,7 +179,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				log.Warn("client disconnected", "error", writeErr)
 				machine.Stop()
-				return
+				return nil // Client gone, not an error to report.
 			}
 			if flusher != nil {
 				flusher.Flush()
@@ -210,16 +194,7 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	}
 
 	log.Info("execution complete")
-}
-
-// sseError writes an SSE error event to the response.
-func sseError(w http.ResponseWriter, flusher http.Flusher, format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	slog.Error("execution error", "error", msg)
-	fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
-	if flusher != nil {
-		flusher.Flush()
-	}
+	return nil
 }
 
 // teardown cleans up after an execution.

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -9,11 +10,11 @@ import (
 )
 
 // Runner is called by the /run handler to execute a request.
-// It writes SSE events to w (including error events) and returns
-// when the stream is complete. It never returns an error — all
-// errors are dispatched as SSE error events on the stream.
+// It streams SSE data to w. If it returns an error, the server
+// writes an SSE error event (if headers haven't been flushed yet)
+// or logs the error (if streaming already started).
 type Runner interface {
-	Run(w http.ResponseWriter, claimID, execID string, payload io.Reader)
+	Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error
 }
 
 // Server is the executor HTTP server.
@@ -73,7 +74,17 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.runner.Run(w, claimID, execID, r.Body)
+	// Set SSE headers before calling runner so errors are also valid SSE.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	if err := s.runner.Run(w, claimID, execID, r.Body); err != nil {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
