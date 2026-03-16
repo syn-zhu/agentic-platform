@@ -13,7 +13,7 @@ if [[ ! -f "$ROOT_DIR/.env" ]]; then
 fi
 set -a; source "$ROOT_DIR/.env"; set +a
 
-KEYCLOAK_URL="http://keycloak.keycloak.svc.cluster.local:8080"
+KEYCLOAK_URL="http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth"
 ADMIN_USER="admin"
 ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD}"
 REALM_FILE="$ROOT_DIR/platform/manifests/keycloak-agents-realm.json"
@@ -34,7 +34,7 @@ kc_curl() {
 # ── Wait for Keycloak to be ready ──
 # keycloakx chart deploys a StatefulSet
 echo "Waiting for Keycloak to be ready..."
-kubectl rollout status statefulset/keycloak -n keycloak --timeout=180s >/dev/null 2>&1
+kubectl rollout status statefulset/keycloak-keycloakx -n keycloak --timeout=180s >/dev/null 2>&1
 
 # ── Get admin token ──
 echo "Authenticating to Keycloak admin API..."

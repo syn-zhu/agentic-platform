@@ -30,7 +30,7 @@ spec:
     jwtAuthentication:
       mode: Strict
       providers:
-        - issuer: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+        - issuer: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/agents"
           jwks:
             remote:
               jwksPath: "/realms/agents/protocol/openid-connect/certs"

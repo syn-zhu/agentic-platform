@@ -74,7 +74,7 @@ data:
 
   # OIDC — Keycloak agents realm
   AGENT_REGISTRY_OIDC_ENABLED: "true"
-  AGENT_REGISTRY_OIDC_ISSUER: "http://keycloak.keycloak.svc.cluster.local:8080/realms/agents"
+  AGENT_REGISTRY_OIDC_ISSUER: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/agents"
   AGENT_REGISTRY_OIDC_CLIENT_ID: "agentregistry"
 
   # Permissions (all authenticated users get full access for now)

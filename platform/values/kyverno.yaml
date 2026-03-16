@@ -110,5 +110,7 @@ reportsController:
   enabled: false
 
 cleanupJobs:
-  admissionReports: {}
-  clusterAdmissionReports: {}
+  admissionReports:
+    enabled: false
+  clusterAdmissionReports:
+    enabled: false
