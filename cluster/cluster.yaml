@@ -79,6 +79,25 @@ managedNodeGroups:
     tags:
       role: agents
 
+  # Executor node group: metal instances for Firecracker microVMs.
+  # Part of the agents pool (same taint/label) but with /dev/kvm.
+  # Executor pods target these via node.kubernetes.io/instance-type selector.
+  - name: executors
+    instanceType: c5.metal
+    minSize: 0
+    maxSize: 2
+    desiredCapacity: 1
+    labels:
+      node-role: agents
+    taints:
+      - key: workload
+        value: agents
+        effect: NoSchedule
+    volumeSize: 50
+    volumeType: gp3
+    tags:
+      role: executors
+
   # Gateway node group: AgentGateway data plane proxies
   - name: gateway
     instanceType: t3.medium
