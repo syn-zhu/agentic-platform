@@ -12,7 +12,6 @@ type Config struct {
 	ListenAddr       string
 	PoolOperatorAddr string
 	LeaseTTL         time.Duration
-	AgentCommand     string
 	AgentPort        int
 	ImageDir         string
 	WorkloadDir      string
@@ -28,7 +27,6 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:       envOr("LISTEN_ADDR", ":9090"),
 		PoolOperatorAddr: os.Getenv("POOL_OPERATOR_ADDR"),
-		AgentCommand:     os.Getenv("AGENT_COMMAND"),
 		AgentPort:        envIntOr("AGENT_PORT", 8080),
 		ImageDir:         envOr("IMAGE_DIR", "/opt/firecracker"),
 		WorkloadDir:      envOr("WORKLOAD_DIR", "/workload"),
@@ -52,10 +50,6 @@ func Load() (*Config, error) {
 	cfg.ExecTimeout, err = envDurationOr("EXEC_TIMEOUT", 5*time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("EXEC_TIMEOUT: %w", err)
-	}
-
-	if cfg.AgentCommand == "" {
-		return nil, fmt.Errorf("AGENT_COMMAND is required")
 	}
 
 	return cfg, nil

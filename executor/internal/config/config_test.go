@@ -8,8 +8,6 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
-	t.Setenv("AGENT_COMMAND", "python /agent/serve.py")
-
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
@@ -35,7 +33,6 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", ":8080")
 	t.Setenv("POOL_OPERATOR_ADDR", "pool-op:8080")
 	t.Setenv("LEASE_TTL", "60s")
-	t.Setenv("AGENT_COMMAND", "python /agent/run.py")
 	t.Setenv("VCPUS", "2")
 	t.Setenv("MEMORY", "512M")
 
@@ -52,25 +49,12 @@ func TestLoadFromEnv(t *testing.T) {
 	if cfg.LeaseTTL != 60*time.Second {
 		t.Errorf("LeaseTTL = %v, want 60s", cfg.LeaseTTL)
 	}
-	if cfg.AgentCommand != "python /agent/run.py" {
-		t.Errorf("AgentCommand = %q, want %q", cfg.AgentCommand, "python /agent/run.py")
-	}
 	if cfg.VCPUs != 2 {
 		t.Errorf("VCPUs = %d, want 2", cfg.VCPUs)
 	}
 }
 
-func TestLoadValidation(t *testing.T) {
-	t.Setenv("AGENT_COMMAND", "")
-
-	_, err := config.Load()
-	if err == nil {
-		t.Fatal("Load() should fail when AGENT_COMMAND is empty")
-	}
-}
-
 func TestLoadInvalidDuration(t *testing.T) {
-	t.Setenv("AGENT_COMMAND", "test")
 	t.Setenv("LEASE_TTL", "not-a-duration")
 
 	_, err := config.Load()
