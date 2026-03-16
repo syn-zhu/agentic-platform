@@ -66,17 +66,15 @@ type InitResponse struct {
 	Network *NetworkConfig `protobuf:"bytes,1,opt,name=network,proto3" json:"network,omitempty"`
 	// Files to inject into the guest filesystem.
 	Files []*FileConfig `protobuf:"bytes,2,rep,name=files,proto3" json:"files,omitempty"`
-	// Hostname (set to the execution ID).
-	Hostname string `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	// Payload is the client's request body, forwarded from
 	// the waypoint's POST /run request.
-	Payload []byte `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	Payload []byte `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
 	// Payload headers from the client request that should
 	// be forwarded to the agent (e.g., Content-Type).
-	PayloadHeaders map[string]string `protobuf:"bytes,5,rep,name=payload_headers,json=payloadHeaders,proto3" json:"payload_headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	PayloadHeaders map[string]string `protobuf:"bytes,4,rep,name=payload_headers,json=payloadHeaders,proto3" json:"payload_headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Agent port — the port the agent listens on inside
 	// the VM (e.g., 8080).
-	AgentPort     int32 `protobuf:"varint,6,opt,name=agent_port,json=agentPort,proto3" json:"agent_port,omitempty"`
+	AgentPort     int32 `protobuf:"varint,5,opt,name=agent_port,json=agentPort,proto3" json:"agent_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -123,13 +121,6 @@ func (x *InitResponse) GetFiles() []*FileConfig {
 		return x.Files
 	}
 	return nil
-}
-
-func (x *InitResponse) GetHostname() string {
-	if x != nil {
-		return x.Hostname
-	}
-	return ""
 }
 
 func (x *InitResponse) GetPayload() []byte {
@@ -399,15 +390,14 @@ const file_init_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
 	"init.proto\x12\x10executor.init.v1\"\r\n" +
-	"\vInitRequest\"\xf2\x02\n" +
+	"\vInitRequest\"\xd6\x02\n" +
 	"\fInitResponse\x129\n" +
 	"\anetwork\x18\x01 \x01(\v2\x1f.executor.init.v1.NetworkConfigR\anetwork\x122\n" +
-	"\x05files\x18\x02 \x03(\v2\x1c.executor.init.v1.FileConfigR\x05files\x12\x1a\n" +
-	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x18\n" +
-	"\apayload\x18\x04 \x01(\fR\apayload\x12[\n" +
-	"\x0fpayload_headers\x18\x05 \x03(\v22.executor.init.v1.InitResponse.PayloadHeadersEntryR\x0epayloadHeaders\x12\x1d\n" +
+	"\x05files\x18\x02 \x03(\v2\x1c.executor.init.v1.FileConfigR\x05files\x12\x18\n" +
+	"\apayload\x18\x03 \x01(\fR\apayload\x12[\n" +
+	"\x0fpayload_headers\x18\x04 \x03(\v22.executor.init.v1.InitResponse.PayloadHeadersEntryR\x0epayloadHeaders\x12\x1d\n" +
 	"\n" +
-	"agent_port\x18\x06 \x01(\x05R\tagentPort\x1aA\n" +
+	"agent_port\x18\x05 \x01(\x05R\tagentPort\x1aA\n" +
 	"\x13PayloadHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"j\n" +

@@ -86,9 +86,8 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 			PrefixLen: int32(guestNet.PrefixLen),
 			Mtu:       int32(guestNet.MTU),
 		},
-		Files:    r.guestFiles(),
-		Hostname: execID,
-		Payload:  payloadBytes,
+		Files:   r.guestFiles(),
+		Payload: payloadBytes,
 		PayloadHeaders: map[string]string{
 			"Content-Type": "application/json",
 		},

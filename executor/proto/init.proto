@@ -49,26 +49,23 @@ message InitResponse {
   /* Files to inject into the guest filesystem. */
   repeated FileConfig files = 2;
 
-  /* Hostname (set to the execution ID). */
-  string hostname = 3;
-
   /*
    * Payload is the client's request body, forwarded from
    * the waypoint's POST /run request.
    */
-  bytes payload = 4;
+  bytes payload = 3;
 
   /*
    * Payload headers from the client request that should
    * be forwarded to the agent (e.g., Content-Type).
    */
-  map<string, string> payload_headers = 5;
+  map<string, string> payload_headers = 4;
 
   /*
    * Agent port — the port the agent listens on inside
    * the VM (e.g., 8080).
    */
-  int32 agent_port = 6;
+  int32 agent_port = 5;
 }
 
 /* NetworkConfig for the guest's eth0 interface. */
