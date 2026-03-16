@@ -74,7 +74,16 @@ Called by waypoint (via ExtProc) to claim an available executor pod.
 }
 ```
 
-The operator generates `claim_id`. The executor uses it for `/renew` and `/release`.
+The operator generates `claim_id`. The waypoint passes it to the executor as an `X-Claim-Id` header on the `/run` request. The executor uses it for `/renew` and `/release`.
+
+**Claim ID delivery flow:**
+```
+1. Waypoint calls POST /claim → operator returns {claim_id, pod_ip, ...}
+2. Waypoint forwards request to executor: POST http://{pod_ip}:9090/run
+   with header X-Claim-Id: clm-a1b2c3
+3. Executor reads X-Claim-Id from the incoming request
+4. Executor uses it for /renew and /release calls
+```
 
 ### POST /renew
 
@@ -168,6 +177,10 @@ spec:
   # How long a pod can stay in warming before being
   # considered stuck and deleted.
   warmingTimeout: 5m
+
+  # Max pods to create per reconcile cycle (prevents
+  # API server overload on large scale-ups).
+  maxSurge: 10
 
   # Pod template for executor pods in this pool
   podTemplate:
@@ -303,11 +316,13 @@ labels:
   agentic.example.com/pool: "poc-agent"
   agentic.example.com/status: "warming"    # warming | available | claimed
   agentic.example.com/claim-id: ""         # set when claimed
+annotations:
+  agentic.example.com/lease-expires-at: "" # RFC3339 timestamp, set on claim and each renewal
 ```
 
 Labels serve two purposes:
 1. **Informer filtering** — operator only watches pods with the `pool` label.
-2. **State rebuild** — on leader failover, in-memory state is reconstructed from labels.
+2. **State rebuild** — on leader failover, in-memory state is reconstructed from labels and annotations.
 
 Labels are updated **asynchronously** after in-memory state changes. In-memory state is authoritative during normal operation.
 
@@ -334,6 +349,16 @@ Operator creates pod
          │  ...next claim...
 ```
 
+## Pod Reuse Safety
+
+Executor pods are reused across executions. Each execution creates a fresh Firecracker VM, TAP device, and working directory — all scoped to the execution ID and torn down on completion. The pod itself is stateless between executions.
+
+**Race condition: new claim arrives before teardown completes.** The operator returns a pod to available immediately on `/release`, but the executor may still be tearing down the VM. If waypoint sends a new `/run` to the pod before teardown finishes, the executor's own mutex guard rejects it (returns 503, state is still "occupied"). The waypoint should treat this as a transient failure and retry — it will get a different pod.
+
+In practice this is rare: `/release` is called after teardown, not before. The window is only possible if the operator's in-memory state and the executor's internal state disagree momentarily (e.g., after failover recovery).
+
+**No inter-execution state leakage.** The Firecracker VM is destroyed, the TAP device is removed, iptables rules are cleaned up, and the working directory (`/tmp/firecracker/{execution-id}`) is deleted. The rootfs volume is read-only. There is no persistent state on the pod between executions.
+
 ## Pool Management
 
 The pool manager runs a reconcile loop every 5 seconds per pool.
@@ -345,11 +370,14 @@ supply = len(available) + len(warming)
 deficit = desired - supply
 
 if deficit > 0:
-    create `deficit` new pods from podTemplate
+    toCreate = min(deficit, maxSurge)   # cap per-cycle creation
+    create `toCreate` new pods from podTemplate
     add to warming set
 ```
 
-`desired` governs the **available pool size**, not total pods. If 3 pods are claimed, the pool manager still targets `desired` available pods. Claims trigger automatic backfill.
+`desired` governs the number of pods that are either **available or warming up to become available**. Claimed pods are separate — they do not count toward supply. If 3 pods are claimed, the pool manager still targets `desired` pods in the available+warming pipeline. Claims trigger automatic backfill.
+
+`maxSurge` (default: 10) caps how many pods are created per reconcile cycle to avoid overwhelming the K8s API server when starting from zero or after a large scale-up. The deficit is resolved over multiple cycles if needed.
 
 ### Scale Down
 
@@ -357,9 +385,11 @@ if deficit > 0:
 excess = supply - desired
 
 if excess > 0:
-    delete min(excess, len(available)) pods from available
+    delete min(excess, len(available)) pods from available (oldest first)
     never delete from claimed or warming
 ```
+
+Scale-down operates on the **in-memory available list**, not on label queries. Pod selection: oldest first (by creation timestamp), to prefer keeping fresher pods. Only available pods are eligible for deletion.
 
 ### Release Behavior
 
@@ -370,6 +400,14 @@ When a pod is released:
 ### Dynamic Resize
 
 Updating `spec.desired` on the ExecutorPool CR triggers the CR watcher, which updates the pool's desired count. The pool manager picks up the change on the next reconcile cycle (≤5 seconds) and scales up or down accordingly.
+
+### Pod Template Changes
+
+When `spec.podTemplate` changes on the ExecutorPool CR:
+- **Existing pods keep running** on the old template. They are not restarted or replaced.
+- **New pods** (created for backfill or scale-up) use the new template.
+- The pool **gradually converges** as old pods are claimed, released, and eventually cycled out.
+- To force an immediate rollout (e.g., critical rootfs image update), set `spec.desired` to 0, wait for available pods to drain, then set it back. Claimed pods finish naturally.
 
 ## Safety Nets
 
@@ -419,9 +457,9 @@ t=25s     Pod dies → informer fires immediately
 3. On becoming leader:
    a. List all ExecutorPool CRDs → create Pool entries in memory.
    b. List all pods with `agentic.example.com/pool` label.
-   c. Rebuild in-memory state from pod labels:
+   c. Rebuild in-memory state from pod labels and annotations:
       - `status=available` → available
-      - `status=claimed` → claimed (with claim-id from label)
+      - `status=claimed` → claimed, with `claim-id` from label and `ExpiresAt` from the `lease-expires-at` annotation. If the annotation is missing or unparseable, set `ExpiresAt = now + leaseTTL` (give the executor a fresh grace period rather than immediately killing running work).
       - `status=warming` or pod not Ready → warming
    d. Start HTTP server (readiness probe passes).
    e. Start pod informer.
@@ -449,7 +487,7 @@ Because labels are written asynchronously, they may be slightly stale after fail
 The pod ends up in the available pool. If claimed again, the executor rejects the new request (it's still occupied). The new claim fails at the executor level, caller retries and gets a different pod. Original execution finishes, executor calls `/release`. Self-healing.
 
 **Pod labeled "claimed" but was actually released:**
-The pod sits in the claimed set with a stale lease. The lease expiry sweep deletes it within leaseTTL. Pool manager replaces it. Self-healing — costs one pod being temporarily unavailable.
+The pod sits in the claimed set with a stale lease. The `ExpiresAt` is recovered from the `lease-expires-at` annotation (or set to `now + leaseTTL` if missing). The lease expiry sweep deletes it when the lease expires. Pool manager replaces it. Self-healing — costs one pod being temporarily unavailable.
 
 ## CR Deletion Behavior
 
@@ -512,3 +550,12 @@ The executor's responsibilities are minimal:
 3. **On `/release` failure after all retries**: log a warning and move on. The operator will detect the expired lease and delete the pod.
 
 The executor does NOT need to: register, heartbeat outside of claims, deregister, or manage pool state in any way.
+
+## Migration from Current System
+
+The current system uses `template_hash` (e.g., `"poc-agent"`) to partition pools. The new system uses pool names (the ExecutorPool CR name). For a smooth migration:
+
+1. **Name ExecutorPool CRs to match existing template hashes.** E.g., `ExecutorPool` named `poc-agent` replaces the `idle-executors:poc-agent` Redis sorted set.
+2. **Update waypoint ExtProc** to call the pool operator's `/claim` endpoint (with `{"pool": "poc-agent"}`) instead of the assignment service's `/assign` endpoint (with `{"template_hash": "poc-agent"}`). The waypoint must also forward the `claim_id` to the executor via the `X-Claim-Id` header.
+3. **Update executor** to read `X-Claim-Id` from incoming requests, run a `/renew` goroutine during execution, and call `/release` on completion. Remove the registration, heartbeat, and deregistration logic.
+4. **Decommission** the assignment service and Redis instance.
