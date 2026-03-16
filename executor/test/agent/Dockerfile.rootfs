@@ -1,0 +1,54 @@
+# Test agent rootfs builder.
+#
+# Builds a minimal ext4 rootfs containing:
+#   - The test agent binary at /entrypoint.sh (actually a binary)
+#   - Basic networking tools (ip, iptables) for the guest init
+#   - /bin/sh for debugging
+#
+# The rootfs is output as /rootfs.ext4 — the init container copies
+# this into the executor pod's emptyDir volume.
+
+FROM golang:1.25-bookworm AS builder
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY test/agent/main.go ./main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/agent ./main.go
+
+# ---------------------------------------------------------------------------
+# Rootfs assembly: build an ext4 image with the agent binary + tools.
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS rootfs
+
+RUN apt-get update -qq && apt-get install -y -qq \
+    iproute2 busybox-static e2fsprogs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create rootfs directory structure.
+RUN mkdir -p /rootfs/bin /rootfs/sbin /rootfs/usr/bin /rootfs/usr/sbin \
+    /rootfs/etc /rootfs/tmp /rootfs/var /rootfs/run /rootfs/dev /rootfs/proc /rootfs/sys
+
+# Copy busybox for /bin/sh and basic tools.
+RUN cp /bin/busybox /rootfs/bin/busybox && \
+    cd /rootfs/bin && \
+    for cmd in sh cat ls mkdir rm cp mv mount umount ping; do \
+        ln -sf busybox $cmd; \
+    done
+
+# Copy iproute2 tools into rootfs (needed by guest init for network config).
+RUN cp /sbin/ip /rootfs/sbin/ip
+
+# Copy the test agent binary.
+COPY --from=builder /out/agent /rootfs/entrypoint.sh
+RUN chmod 755 /rootfs/entrypoint.sh
+
+# Build ext4 image.
+RUN truncate -s 64M /rootfs.ext4 && \
+    mkfs.ext4 -d /rootfs /rootfs.ext4 && \
+    tune2fs -O ^has_journal /rootfs.ext4 && \
+    e2fsck -fy /rootfs.ext4 || true
+
+# The final image just carries the rootfs file.
+FROM scratch
+COPY --from=rootfs /rootfs.ext4 /rootfs.ext4

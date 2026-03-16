@@ -5,7 +5,9 @@ go 1.25.7
 require (
 	github.com/containerd/ttrpc v1.2.8
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
+	github.com/mdlayher/vsock v1.2.1
 	github.com/vishvananda/netlink v1.3.1
+	golang.org/x/sys v0.42.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -33,6 +35,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mdlayher/socket v0.4.1 // indirect
 	github.com/mitchellh/mapstructure v1.4.3 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
@@ -41,7 +44,7 @@ require (
 	github.com/vishvananda/netns v0.0.5 // indirect
 	go.mongodb.org/mongo-driver v1.8.3 // indirect
 	golang.org/x/net v0.30.0 // indirect
-	golang.org/x/sys v0.26.0 // indirect
+	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/text v0.19.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241021214115-324edc3d5d38 // indirect
 	google.golang.org/grpc v1.69.2 // indirect
