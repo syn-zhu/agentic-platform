@@ -30,6 +30,7 @@ type Runner struct {
 	sm       *StateMachine
 	lease    *lease.Client
 	eventLog *proxy.EventLog
+	proxy    *proxy.Proxy
 	pasta    *pasta.Instance // Started once at pod startup, reused across executions.
 }
 
@@ -159,10 +160,15 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	log.Info("agent ready, forwarding payload")
 
 	// Log execution start — blocks until persisted.
-	// This guarantees execution_start is written before any proxy events.
 	r.eventLog.LogEvent(ctx, execID, execID, proxy.EventExecutionStart, map[string]any{
 		"claim_id": claimID,
 	})
+
+	// Open the proxy gate — now that execution_start is persisted,
+	// the proxy can start processing the agent's outbound HTTP calls.
+	if r.proxy != nil {
+		r.proxy.Open()
+	}
 
 	// Send payload to agent via pasta port forwarding.
 	agentURL := fmt.Sprintf("http://%s/run", agentAddr)

@@ -22,7 +22,12 @@ type Proxy struct {
 	sessionID   string
 	executionID string
 
-	server   *http.Server
+	// gate blocks all incoming proxy requests until opened.
+	// The runner opens the gate after execution_start is persisted.
+	gate     chan struct{}
+	gateOnce sync.Once
+
+	server    *http.Server
 	closeOnce sync.Once
 }
 
@@ -63,6 +68,7 @@ func New(cfg *Config) (*Proxy, error) {
 		listener:    ln,
 		interceptor: interceptor,
 		eventLog:    cfg.EventLog,
+		gate:        make(chan struct{}),
 	}
 
 	p.server = &http.Server{
@@ -79,10 +85,21 @@ func New(cfg *Config) (*Proxy, error) {
 	return p, nil
 }
 
-// SetExecution updates the session and execution IDs.
+// SetExecution updates the session and execution IDs and closes
+// the gate (blocks requests until Open is called).
 func (p *Proxy) SetExecution(sessionID, executionID string) {
 	p.sessionID = sessionID
 	p.executionID = executionID
+	p.gate = make(chan struct{})
+	p.gateOnce = sync.Once{}
+}
+
+// Open unblocks the proxy to start processing requests.
+// Call this after execution_start has been persisted.
+func (p *Proxy) Open() {
+	p.gateOnce.Do(func() {
+		close(p.gate)
+	})
 }
 
 // Close shuts down the proxy and detaches the eBPF program.
@@ -96,7 +113,16 @@ func (p *Proxy) Close() {
 }
 
 // handleConnect handles both HTTP and HTTPS (CONNECT) requests.
+// Blocks until the gate is opened (after execution_start is persisted).
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
+	// Wait for the gate to open. This ensures execution_start is
+	// persisted before any proxy events.
+	select {
+	case <-p.gate:
+	case <-r.Context().Done():
+		return
+	}
+
 	if r.Method == http.MethodConnect {
 		p.handleHTTPS(w, r)
 		return
