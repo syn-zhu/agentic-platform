@@ -17,6 +17,7 @@ import (
 	"github.com/siyanzhu/agentic-platform/executor/internal/image"
 	"github.com/siyanzhu/agentic-platform/executor/internal/lease"
 	"github.com/siyanzhu/agentic-platform/executor/internal/pasta"
+	"github.com/siyanzhu/agentic-platform/executor/internal/proxy"
 	"github.com/siyanzhu/agentic-platform/executor/internal/vm"
 	"github.com/siyanzhu/agentic-platform/executor/internal/vsock"
 )
@@ -24,11 +25,12 @@ import (
 // Runner orchestrates the full execution lifecycle:
 // state transitions → boot VM in pasta netns → HTTP to agent on localhost → teardown → release.
 type Runner struct {
-	cfg    *config.Config
-	imgCfg *image.Config
-	sm     *StateMachine
-	lease  *lease.Client
-	pasta  *pasta.Instance // Started once at pod startup, reused across executions.
+	cfg      *config.Config
+	imgCfg   *image.Config
+	sm       *StateMachine
+	lease    *lease.Client
+	eventLog *proxy.EventLog
+	pasta    *pasta.Instance // Started once at pod startup, reused across executions.
 }
 
 // NewRunner creates a runner with the given configuration.
@@ -43,11 +45,12 @@ func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, lease
 	}
 
 	return &Runner{
-		cfg:    cfg,
-		imgCfg: imgCfg,
-		sm:     sm,
-		lease:  leaseClient,
-		pasta:  pastaInst,
+		cfg:      cfg,
+		imgCfg:   imgCfg,
+		sm:       sm,
+		lease:    leaseClient,
+		eventLog: proxy.NewNoopEventLog(), // TODO: replace with MongoDB-backed EventLog
+		pasta:    pastaInst,
 	}, nil
 }
 
@@ -155,6 +158,12 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	log.Info("agent ready, forwarding payload")
 
+	// Log execution start — blocks until persisted.
+	// This guarantees execution_start is written before any proxy events.
+	r.eventLog.LogEvent(ctx, execID, execID, proxy.EventExecutionStart, map[string]any{
+		"claim_id": claimID,
+	})
+
 	// Send payload to agent via pasta port forwarding.
 	agentURL := fmt.Sprintf("http://%s/run", agentAddr)
 	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, bytes.NewReader(payloadBytes))
@@ -178,6 +187,10 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	if _, err := io.Copy(fw, agentResp.Body); err != nil {
 		log.Warn("stream copy error", "error", err)
 	}
+
+	// Log execution end — blocks until persisted.
+	// This guarantees execution_end is written after all proxy events.
+	r.eventLog.LogEvent(ctx, execID, execID, proxy.EventExecutionEnd, nil)
 
 	log.Info("execution complete")
 	return nil
