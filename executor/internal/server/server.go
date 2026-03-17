@@ -1,38 +1,44 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
+	"time"
 
-	"github.com/siyanzhu/agentic-platform/executor/internal/executor"
+	"github.com/siyanzhu/agentic-platform/executor/internal/lifecycle"
 )
 
-// Runner is called by the /run handler to execute a request.
-// It streams SSE data to w. If it returns an error, the server
-// writes an SSE error event (if headers haven't been flushed yet)
-// or logs the error (if streaming already started).
-type Runner interface {
-	Run(w http.ResponseWriter, claimID, execID string, payload io.Reader) error
+// PrepareConfig holds configuration for the /prepare handler.
+type PrepareConfig struct {
+	RunArrivalTimeout time.Duration
+}
+
+// Proxy is the interface for wiring an execution into the proxy.
+type Proxy interface {
+	SetExecution(exec *lifecycle.ExecutionLifecycle)
 }
 
 // Server is the executor HTTP server.
 type Server struct {
-	mux    *http.ServeMux
-	sm     *executor.StateMachine
-	runner Runner
+	mux   *http.ServeMux
+	pod   *lifecycle.PodLifecycle
+	proxy Proxy
+	store lifecycle.EventStore
+	cfg   PrepareConfig
 }
 
-// New creates an HTTP server with the executor state machine and runner.
-func New(sm *executor.StateMachine, runner Runner) *Server {
+// New creates an HTTP server wired to the pod lifecycle state machine.
+func New(pod *lifecycle.PodLifecycle, proxy Proxy, store lifecycle.EventStore, cfg PrepareConfig) *Server {
 	s := &Server{
-		mux:    http.NewServeMux(),
-		sm:     sm,
-		runner: runner,
+		mux:   http.NewServeMux(),
+		pod:   pod,
+		proxy: proxy,
+		store: store,
+		cfg:   cfg,
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
-	s.mux.HandleFunc("POST /run", s.handleRun)
+	s.mux.HandleFunc("POST /prepare", s.handlePrepare)
 	s.mux.HandleFunc("GET /status", s.handleStatus)
 	return s
 }
@@ -42,54 +48,67 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if !s.sm.IsIdle() {
+	idle, err := s.pod.IsInState(lifecycle.PodIdle)
+	if err != nil || !idle {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
-	claimID := r.Header.Get("X-Claim-Id")
+func (s *Server) handlePrepare(w http.ResponseWriter, r *http.Request) {
 	execID := r.Header.Get("X-Execution-Id")
-
-	if claimID == "" || execID == "" {
+	if execID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "X-Claim-Id and X-Execution-Id headers required",
+			"error": "X-Execution-Id header required",
+		})
+		return
+	}
+	sessionID := r.Header.Get("X-Session-Id")
+
+	// Create an execution lifecycle and wire it into the proxy.
+	ctx := r.Context()
+	_, cancel := context.WithCancel(ctx)
+	exec := lifecycle.NewExecutionLifecycle(s.store, execID, sessionID, cancel)
+	s.proxy.SetExecution(exec)
+
+	// Fire TrigPrepare to move pod from Idle → Booting.
+	if err := s.pod.Fire(ctx, lifecycle.TrigPrepare, execID, sessionID); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": err.Error(),
 		})
 		return
 	}
 
-	if !s.sm.IsIdle() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "executor busy",
-		})
-		return
-	}
-
-	if s.runner == nil {
+	// Fire TrigHealthCheckOK to move pod from Booting → Ready.
+	if err := s.pod.Fire(ctx, lifecycle.TrigHealthCheckOK); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "no runner configured",
+			"error": err.Error(),
 		})
 		return
 	}
 
-	// Set SSE headers before calling runner so errors are also valid SSE.
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	if err := s.runner.Run(w, claimID, execID, r.Body); err != nil {
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
+	// Start /run arrival timeout in a background goroutine.
+	if s.cfg.RunArrivalTimeout > 0 {
+		go func() {
+			time.Sleep(s.cfg.RunArrivalTimeout)
+			_ = s.pod.Fire(context.Background(), lifecycle.TrigTimeout)
+		}()
 	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	state, err := s.pod.State(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"state": s.sm.State().String(),
+		"state": string(state),
 	})
 }
 
