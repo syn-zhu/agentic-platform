@@ -35,8 +35,9 @@ type Runner struct {
 }
 
 // NewRunner creates a runner with the given configuration.
-// Sets up pasta (once, for the lifetime of the pod).
+// Sets up pasta and the eBPF proxy (once, for the lifetime of the pod).
 func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, leaseClient *lease.Client) (*Runner, error) {
+	// Start pasta — creates dedicated netns + cgroup.
 	pastaInst, err := pasta.Setup(&pasta.Config{
 		AgentPort: imgCfg.Port,
 		NsDir:     cfg.WorkloadDir,
@@ -45,18 +46,39 @@ func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, lease
 		return nil, fmt.Errorf("setup pasta: %w", err)
 	}
 
+	// Start event log (NoopWriter for now — replace with MongoDB).
+	eventLog := proxy.NewNoopEventLog()
+
+	// Start eBPF proxy — attaches to pasta's cgroup, listens on :3128.
+	p, err := proxy.New(&proxy.Config{
+		CgroupPath: pastaInst.CgroupPath(),
+		BPFObjPath: filepath.Join(cfg.ImageDir, "connect4.o"),
+		EventLog:   eventLog,
+	})
+	if err != nil {
+		pastaInst.Teardown()
+		return nil, fmt.Errorf("setup proxy: %w", err)
+	}
+
 	return &Runner{
 		cfg:      cfg,
 		imgCfg:   imgCfg,
 		sm:       sm,
 		lease:    leaseClient,
-		eventLog: proxy.NewNoopEventLog(), // TODO: replace with MongoDB-backed EventLog
+		eventLog: eventLog,
+		proxy:    p,
 		pasta:    pastaInst,
 	}, nil
 }
 
-// Close tears down the pasta netns (pasta exits automatically).
+// Close shuts down the proxy, event log, and pasta.
 func (r *Runner) Close() {
+	if r.proxy != nil {
+		r.proxy.Close()
+	}
+	if r.eventLog != nil {
+		r.eventLog.Close()
+	}
 	if r.pasta != nil {
 		r.pasta.Teardown()
 	}
@@ -72,6 +94,11 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	payloadBytes, err := io.ReadAll(payload)
 	if err != nil {
 		return fmt.Errorf("read payload: %w", err)
+	}
+
+	// Set execution context on proxy (closes the gate until Open is called).
+	if r.proxy != nil {
+		r.proxy.SetExecution(execID, execID)
 	}
 
 	// IDLE → STARTING
