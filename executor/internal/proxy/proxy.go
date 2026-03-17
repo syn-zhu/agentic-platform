@@ -5,20 +5,21 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"sync"
+
+	"github.com/siyanzhu/agentic-platform/executor/internal/lifecycle"
 )
 
 // Proxy is a transparent HTTP forward proxy that intercepts outbound
-// connections redirected by the eBPF connect4 program. It logs
-// requests/responses via the ExecutionSerializer.
+// connections redirected by the eBPF connect4 program. It delegates request
+// handling to the SM-integrated Handler.
 type Proxy struct {
 	listener    net.Listener
 	interceptor *EBPFInterceptor
-	serializer  *ExecutionSerializer
+	handler     *Handler
 
 	server    *http.Server
 	closeOnce sync.Once
@@ -35,8 +36,8 @@ type Config struct {
 	// CgroupPath is the cgroup where the eBPF program is attached.
 	CgroupPath string
 
-	// Serializer is the shared execution serializer for event persistence.
-	Serializer *ExecutionSerializer
+	// Pod is the pod lifecycle state machine.
+	Pod *lifecycle.PodLifecycle
 }
 
 // New creates and starts the proxy.
@@ -60,7 +61,7 @@ func New(cfg *Config) (*Proxy, error) {
 	p := &Proxy{
 		listener:    ln,
 		interceptor: interceptor,
-		serializer:  cfg.Serializer,
+		handler:     NewHandler(cfg.Pod),
 	}
 
 	p.server = &http.Server{
@@ -77,6 +78,12 @@ func New(cfg *Config) (*Proxy, error) {
 	return p, nil
 }
 
+// SetExecution wires an execution lifecycle into the proxy handler.
+// This implements the server.Proxy interface.
+func (p *Proxy) SetExecution(exec *lifecycle.ExecutionLifecycle) {
+	p.handler.SetExecution(exec)
+}
+
 // Close shuts down the proxy and detaches the eBPF program.
 func (p *Proxy) Close() {
 	p.closeOnce.Do(func() {
@@ -88,104 +95,10 @@ func (p *Proxy) Close() {
 }
 
 // handleConnect handles both HTTP and HTTPS (CONNECT) requests.
-// Blocks until the serializer's gate is open (execution_start persisted).
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
-		p.handleHTTPS(w, r)
+		p.handler.HandleOutboundCONNECT(w, r)
 		return
 	}
-	p.handleHTTP(w, r)
-}
-
-// handleHTTP proxies a plain HTTP request. Records each request/response
-// as an execution step via the serializer (blocks until persisted).
-func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Record request — blocks until persisted.
-	p.serializer.RecordExecutionStep(ctx, EventToolRequest,
-		FormatRequestData(r.Method, r.URL.String(), flattenHeaders(r.Header)))
-
-	// Forward request.
-	resp, err := http.DefaultTransport.RoundTrip(r)
-	if err != nil {
-		slog.Error("forward failed", "error", err)
-		p.serializer.RecordExecutionStep(ctx, EventError, FormatError(err))
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Record response — blocks until persisted.
-	p.serializer.RecordExecutionStep(ctx, EventToolResponse,
-		FormatResponseData(resp.StatusCode, flattenHeaders(resp.Header)))
-
-	// Copy response to client.
-	for k, vs := range resp.Header {
-		for _, v := range vs {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-// handleHTTPS handles CONNECT tunneling for TLS traffic.
-func (p *Proxy) handleHTTPS(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Record the CONNECT.
-	p.serializer.RecordExecutionStep(ctx, EventToolRequest,
-		FormatRequestData("CONNECT", r.Host, flattenHeaders(r.Header)))
-
-	// Connect to the real destination.
-	destConn, err := net.Dial("tcp", r.Host)
-	if err != nil {
-		slog.Error("tunnel dial failed", "error", err)
-		p.serializer.RecordExecutionStep(ctx, EventError, FormatError(err))
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		slog.Error("response writer does not support hijack")
-		destConn.Close()
-		return
-	}
-
-	clientConn, _, err := hijacker.Hijack()
-	if err != nil {
-		slog.Error("hijack failed", "error", err)
-		destConn.Close()
-		return
-	}
-
-	// Bidirectional copy.
-	done := make(chan struct{}, 2)
-	go func() {
-		io.Copy(destConn, clientConn)
-		destConn.Close()
-		done <- struct{}{}
-	}()
-	go func() {
-		io.Copy(clientConn, destConn)
-		clientConn.Close()
-		done <- struct{}{}
-	}()
-	<-done
-	<-done
-}
-
-// flattenHeaders converts http.Header to a simple map (first value only).
-func flattenHeaders(h http.Header) map[string]string {
-	m := make(map[string]string, len(h))
-	for k, vs := range h {
-		if len(vs) > 0 {
-			m[k] = vs[0]
-		}
-	}
-	return m
+	p.handler.HandleOutbound(w, r)
 }
