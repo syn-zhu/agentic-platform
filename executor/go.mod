@@ -5,8 +5,10 @@ go 1.25.7
 require (
 	github.com/caarlos0/env/v11 v11.4.0
 	github.com/cilium/ebpf v0.21.0
+	github.com/containernetworking/plugins v1.7.1
 	github.com/containers/common v0.64.2
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
+	github.com/sirupsen/logrus v1.9.3
 	google.golang.org/grpc v1.79.2
 	google.golang.org/protobuf v1.36.11
 )
@@ -18,7 +20,6 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d // indirect
 	github.com/containerd/fifo v1.0.0 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
-	github.com/containernetworking/plugins v1.7.1 // indirect
 	github.com/containers/storage v1.59.1 // indirect
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -49,7 +50,6 @@ require (
 	github.com/opencontainers/selinux v1.12.0 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	go.mongodb.org/mongo-driver v1.8.3 // indirect
