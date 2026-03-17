@@ -50,6 +50,7 @@ require (
 	github.com/opencontainers/selinux v1.12.0 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/qmuntal/stateless v1.8.0 // indirect
 	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	go.mongodb.org/mongo-driver v1.8.3 // indirect
