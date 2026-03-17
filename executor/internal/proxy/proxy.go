@@ -14,18 +14,11 @@ import (
 
 // Proxy is a transparent HTTP forward proxy that intercepts outbound
 // connections redirected by the eBPF connect4 program. It logs
-// requests/responses via the EventLog.
+// requests/responses via the ExecutionSerializer.
 type Proxy struct {
 	listener    net.Listener
 	interceptor *EBPFInterceptor
-	eventLog    *EventLog
-	sessionID   string
-	executionID string
-
-	// gate blocks all incoming proxy requests until opened.
-	// The runner opens the gate after execution_start is persisted.
-	gate     chan struct{}
-	gateOnce sync.Once
+	serializer  *ExecutionSerializer
 
 	server    *http.Server
 	closeOnce sync.Once
@@ -42,8 +35,8 @@ type Config struct {
 	// CgroupPath is the cgroup where the eBPF program is attached.
 	CgroupPath string
 
-	// EventLog is the shared event log for serialized persistence.
-	EventLog *EventLog
+	// Serializer is the shared execution serializer for event persistence.
+	Serializer *ExecutionSerializer
 }
 
 // New creates and starts the proxy.
@@ -67,8 +60,7 @@ func New(cfg *Config) (*Proxy, error) {
 	p := &Proxy{
 		listener:    ln,
 		interceptor: interceptor,
-		eventLog:    cfg.EventLog,
-		gate:        make(chan struct{}),
+		serializer:  cfg.Serializer,
 	}
 
 	p.server = &http.Server{
@@ -85,23 +77,6 @@ func New(cfg *Config) (*Proxy, error) {
 	return p, nil
 }
 
-// SetExecution updates the session and execution IDs and closes
-// the gate (blocks requests until Open is called).
-func (p *Proxy) SetExecution(sessionID, executionID string) {
-	p.sessionID = sessionID
-	p.executionID = executionID
-	p.gate = make(chan struct{})
-	p.gateOnce = sync.Once{}
-}
-
-// Open unblocks the proxy to start processing requests.
-// Call this after execution_start has been persisted.
-func (p *Proxy) Open() {
-	p.gateOnce.Do(func() {
-		close(p.gate)
-	})
-}
-
 // Close shuts down the proxy and detaches the eBPF program.
 func (p *Proxy) Close() {
 	p.closeOnce.Do(func() {
@@ -113,16 +88,8 @@ func (p *Proxy) Close() {
 }
 
 // handleConnect handles both HTTP and HTTPS (CONNECT) requests.
-// Blocks until the gate is opened (after execution_start is persisted).
+// Blocks until the serializer's gate is open (execution_start persisted).
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
-	// Wait for the gate to open. This ensures execution_start is
-	// persisted before any proxy events.
-	select {
-	case <-p.gate:
-	case <-r.Context().Done():
-		return
-	}
-
 	if r.Method == http.MethodConnect {
 		p.handleHTTPS(w, r)
 		return
@@ -130,28 +97,27 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	p.handleHTTP(w, r)
 }
 
-// handleHTTP proxies a plain HTTP request. Logs the request before
-// forwarding and the response after — each LogEvent call blocks
-// until persisted (the "yield" point).
+// handleHTTP proxies a plain HTTP request. Records each request/response
+// as an execution step via the serializer (blocks until persisted).
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Log request — blocks until persisted.
-	p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventHTTPRequest,
+	// Record request — blocks until persisted.
+	p.serializer.RecordExecutionStep(ctx, EventToolRequest,
 		FormatRequestData(r.Method, r.URL.String(), flattenHeaders(r.Header)))
 
 	// Forward request.
 	resp, err := http.DefaultTransport.RoundTrip(r)
 	if err != nil {
 		slog.Error("forward failed", "error", err)
-		p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventError, FormatError(err))
+		p.serializer.RecordExecutionStep(ctx, EventError, FormatError(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	// Log response — blocks until persisted.
-	p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventHTTPResponse,
+	// Record response — blocks until persisted.
+	p.serializer.RecordExecutionStep(ctx, EventToolResponse,
 		FormatResponseData(resp.StatusCode, flattenHeaders(resp.Header)))
 
 	// Copy response to client.
@@ -168,15 +134,15 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Log the CONNECT — blocks until persisted.
-	p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventHTTPRequest,
+	// Record the CONNECT.
+	p.serializer.RecordExecutionStep(ctx, EventToolRequest,
 		FormatRequestData("CONNECT", r.Host, flattenHeaders(r.Header)))
 
 	// Connect to the real destination.
 	destConn, err := net.Dial("tcp", r.Host)
 	if err != nil {
 		slog.Error("tunnel dial failed", "error", err)
-		p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventError, FormatError(err))
+		p.serializer.RecordExecutionStep(ctx, EventError, FormatError(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}

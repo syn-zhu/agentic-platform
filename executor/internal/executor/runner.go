@@ -3,7 +3,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -25,13 +24,13 @@ import (
 // Runner orchestrates the full execution lifecycle:
 // state transitions → boot VM in pasta netns → HTTP to agent on localhost → teardown → release.
 type Runner struct {
-	cfg      *config.Config
-	imgCfg   *image.Config
-	sm       *StateMachine
-	lease    *lease.Client
-	eventLog *proxy.EventLog
-	proxy    *proxy.Proxy
-	pasta    *pasta.Instance // Started once at pod startup, reused across executions.
+	cfg        *config.Config
+	imgCfg     *image.Config
+	sm         *StateMachine
+	lease      *lease.Client
+	serializer *proxy.ExecutionSerializer
+	proxy      *proxy.Proxy
+	pasta      *pasta.Instance // Started once at pod startup, reused across executions.
 }
 
 // NewRunner creates a runner with the given configuration.
@@ -46,14 +45,14 @@ func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, lease
 		return nil, fmt.Errorf("setup pasta: %w", err)
 	}
 
-	// Start event log (NoopWriter for now — replace with MongoDB).
-	eventLog := proxy.NewNoopEventLog()
+	// Start execution serializer (NoopEventLog for now — replace with MongoDB).
+	serializer := proxy.NewExecutionSerializer(proxy.NoopEventLog{})
 
 	// Start eBPF proxy — attaches to pasta's cgroup, listens on :3128.
 	p, err := proxy.New(&proxy.Config{
 		CgroupPath: pastaInst.CgroupPath(),
 		BPFObjPath: filepath.Join(cfg.ImageDir, "connect4.o"),
-		EventLog:   eventLog,
+		Serializer: serializer,
 	})
 	if err != nil {
 		pastaInst.Teardown()
@@ -61,13 +60,13 @@ func NewRunner(cfg *config.Config, imgCfg *image.Config, sm *StateMachine, lease
 	}
 
 	return &Runner{
-		cfg:      cfg,
-		imgCfg:   imgCfg,
-		sm:       sm,
-		lease:    leaseClient,
-		eventLog: eventLog,
-		proxy:    p,
-		pasta:    pastaInst,
+		cfg:        cfg,
+		imgCfg:     imgCfg,
+		sm:         sm,
+		lease:      leaseClient,
+		serializer: serializer,
+		proxy:      p,
+		pasta:      pastaInst,
 	}, nil
 }
 
@@ -76,8 +75,8 @@ func (r *Runner) Close() {
 	if r.proxy != nil {
 		r.proxy.Close()
 	}
-	if r.eventLog != nil {
-		r.eventLog.Close()
+	if r.serializer != nil {
+		r.serializer.Close()
 	}
 	if r.pasta != nil {
 		r.pasta.Teardown()
@@ -91,15 +90,6 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 	ctx := context.Background()
 	log := slog.With("exec_id", execID, "claim_id", claimID)
 
-	payloadBytes, err := io.ReadAll(payload)
-	if err != nil {
-		return fmt.Errorf("read payload: %w", err)
-	}
-
-	// Set execution context on proxy (closes the gate until Open is called).
-	if r.proxy != nil {
-		r.proxy.SetExecution(execID, execID)
-	}
 
 	// IDLE → STARTING
 	if err := r.sm.Transition(Starting); err != nil {
@@ -186,20 +176,15 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 
 	log.Info("agent ready, forwarding payload")
 
-	// Log execution start — blocks until persisted.
-	r.eventLog.LogEvent(ctx, execID, execID, proxy.EventExecutionStart, map[string]any{
+	// Start execution — persists execution_start and opens the serializer gate.
+	// The proxy's RecordExecutionStep calls block until this completes.
+	r.serializer.StartExecution(ctx, execID, execID, map[string]any{
 		"claim_id": claimID,
 	})
 
-	// Open the proxy gate — now that execution_start is persisted,
-	// the proxy can start processing the agent's outbound HTTP calls.
-	if r.proxy != nil {
-		r.proxy.Open()
-	}
-
 	// Send payload to agent via pasta port forwarding.
 	agentURL := fmt.Sprintf("http://%s/run", agentAddr)
-	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, bytes.NewReader(payloadBytes))
+	agentReq, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL, payload)
 	if err != nil {
 		machine.Stop()
 		return fmt.Errorf("create agent request: %w", err)
@@ -221,9 +206,8 @@ func (r *Runner) Run(w http.ResponseWriter, claimID, execID string, payload io.R
 		log.Warn("stream copy error", "error", err)
 	}
 
-	// Log execution end — blocks until persisted.
-	// This guarantees execution_end is written after all proxy events.
-	r.eventLog.LogEvent(ctx, execID, execID, proxy.EventExecutionEnd, nil)
+	// End execution — persists execution_end after all proxy events.
+	r.serializer.EndExecution(ctx, "COMPLETED", nil)
 
 	log.Info("execution complete")
 	return nil
