@@ -30,6 +30,9 @@ type Instance struct {
 	result     *upstream.SetupResult
 }
 
+// Setup creates a network namespace with pasta, configures port forwarding,
+// and creates a cgroup for eBPF attachment.
+// pasta automatically exits when the netns path is deleted.
 func Setup(cfg *Config) (*Instance, error) {
 	slog.Info("setting up pasta", "agent_port", cfg.AgentPort)
 
