@@ -10,21 +10,20 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"sync/atomic"
 )
 
 // Proxy is a transparent HTTP forward proxy that intercepts outbound
 // connections redirected by the eBPF connect4 program. It logs
-// requests/responses and provides a replay cache for idempotent resume.
+// requests/responses via the EventLog.
 type Proxy struct {
 	listener    net.Listener
 	interceptor *EBPFInterceptor
-	store       EventStore
+	eventLog    *EventLog
 	sessionID   string
-	step        atomic.Int64
+	executionID string
 
-	server *http.Server
-	once   sync.Once
+	server   *http.Server
+	closeOnce sync.Once
 }
 
 // Config holds proxy configuration.
@@ -38,15 +37,11 @@ type Config struct {
 	// CgroupPath is the cgroup where the eBPF program is attached.
 	CgroupPath string
 
-	// Store persists event logs and serves the replay cache.
-	Store EventStore
-
-	// SessionID is the current execution's session ID.
-	SessionID string
+	// EventLog is the shared event log for serialized persistence.
+	EventLog *EventLog
 }
 
-// New creates and starts the proxy. It loads the eBPF program,
-// attaches it to the cgroup, and starts listening for redirected connections.
+// New creates and starts the proxy.
 func New(cfg *Config) (*Proxy, error) {
 	addr := cfg.ListenAddr
 	if addr == "" {
@@ -67,8 +62,7 @@ func New(cfg *Config) (*Proxy, error) {
 	p := &Proxy{
 		listener:    ln,
 		interceptor: interceptor,
-		store:       cfg.Store,
-		sessionID:   cfg.SessionID,
+		eventLog:    cfg.EventLog,
 	}
 
 	p.server = &http.Server{
@@ -85,15 +79,15 @@ func New(cfg *Config) (*Proxy, error) {
 	return p, nil
 }
 
-// SetSessionID updates the session ID for step counting and replay cache.
-func (p *Proxy) SetSessionID(sessionID string) {
+// SetExecution updates the session and execution IDs.
+func (p *Proxy) SetExecution(sessionID, executionID string) {
 	p.sessionID = sessionID
-	p.step.Store(0)
+	p.executionID = executionID
 }
 
 // Close shuts down the proxy and detaches the eBPF program.
 func (p *Proxy) Close() {
-	p.once.Do(func() {
+	p.closeOnce.Do(func() {
 		slog.Info("closing proxy")
 		p.server.Shutdown(context.Background())
 		p.listener.Close()
@@ -110,47 +104,29 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	p.handleHTTP(w, r)
 }
 
-// handleHTTP proxies a plain HTTP request with logging.
+// handleHTTP proxies a plain HTTP request. Logs the request before
+// forwarding and the response after — each LogEvent call blocks
+// until persisted (the "yield" point).
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	step := int(p.step.Add(1))
-	log := slog.With("session", p.sessionID, "step", step, "url", r.URL.String())
+	ctx := r.Context()
 
-	// Check replay cache.
-	if p.store != nil && p.sessionID != "" {
-		cached, err := p.store.GetCachedResponse(r.Context(), p.sessionID, step)
-		if err == nil && cached != nil {
-			log.Info("replay cache hit")
-			for k, vs := range cached.Header {
-				for _, v := range vs {
-					w.Header().Add(k, v)
-				}
-			}
-			w.WriteHeader(cached.StatusCode)
-			io.Copy(w, cached.Body)
-			cached.Body.Close()
-			return
-		}
-	}
-
-	// Log request.
-	if p.store != nil {
-		p.store.LogRequest(r.Context(), p.sessionID, step, r)
-	}
+	// Log request — blocks until persisted.
+	p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventHTTPRequest,
+		FormatRequestData(r.Method, r.URL.String(), flattenHeaders(r.Header)))
 
 	// Forward request.
-	log.Info("forwarding request")
 	resp, err := http.DefaultTransport.RoundTrip(r)
 	if err != nil {
-		log.Error("forward failed", "error", err)
+		slog.Error("forward failed", "error", err)
+		p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventError, FormatError(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	// Log response.
-	if p.store != nil {
-		p.store.LogResponse(r.Context(), p.sessionID, step, resp)
-	}
+	// Log response — blocks until persisted.
+	p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventHTTPResponse,
+		FormatResponseData(resp.StatusCode, flattenHeaders(resp.Header)))
 
 	// Copy response to client.
 	for k, vs := range resp.Header {
@@ -163,52 +139,61 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHTTPS handles CONNECT tunneling for TLS traffic.
-// We tunnel the raw bytes — we can log the connection metadata
-// (destination host:port) but not the encrypted payload.
 func (p *Proxy) handleHTTPS(w http.ResponseWriter, r *http.Request) {
-	step := int(p.step.Add(1))
-	log := slog.With("session", p.sessionID, "step", step, "host", r.Host)
+	ctx := r.Context()
 
-	// Log the CONNECT (we can't see the encrypted payload).
-	if p.store != nil {
-		p.store.LogRequest(r.Context(), p.sessionID, step, r)
-	}
-
-	log.Info("tunneling HTTPS")
+	// Log the CONNECT — blocks until persisted.
+	p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventHTTPRequest,
+		FormatRequestData("CONNECT", r.Host, flattenHeaders(r.Header)))
 
 	// Connect to the real destination.
 	destConn, err := net.Dial("tcp", r.Host)
 	if err != nil {
-		log.Error("tunnel dial failed", "error", err)
+		slog.Error("tunnel dial failed", "error", err)
+		p.eventLog.LogEvent(ctx, p.sessionID, p.executionID, EventError, FormatError(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 
-	// Tell the client the tunnel is established.
 	w.WriteHeader(http.StatusOK)
 
-	// Hijack the client connection for raw TCP tunneling.
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		log.Error("response writer does not support hijack")
+		slog.Error("response writer does not support hijack")
 		destConn.Close()
 		return
 	}
 
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		log.Error("hijack failed", "error", err)
+		slog.Error("hijack failed", "error", err)
 		destConn.Close()
 		return
 	}
 
 	// Bidirectional copy.
+	done := make(chan struct{}, 2)
 	go func() {
 		io.Copy(destConn, clientConn)
 		destConn.Close()
+		done <- struct{}{}
 	}()
 	go func() {
 		io.Copy(clientConn, destConn)
 		clientConn.Close()
+		done <- struct{}{}
 	}()
+	<-done
+	<-done
+}
+
+// flattenHeaders converts http.Header to a simple map (first value only).
+func flattenHeaders(h http.Header) map[string]string {
+	m := make(map[string]string, len(h))
+	for k, vs := range h {
+		if len(vs) > 0 {
+			m[k] = vs[0]
+		}
+	}
+	return m
 }

@@ -2,74 +2,114 @@ package proxy_test
 
 import (
 	"context"
-	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/siyanzhu/agentic-platform/executor/internal/proxy"
 )
 
-func TestNoopStore(t *testing.T) {
-	store := proxy.NoopStore{}
+func TestNoopEventLog(t *testing.T) {
+	el := proxy.NewNoopEventLog()
+	defer el.Close()
+
+	err := el.LogEvent(context.Background(), "sess-1", "exec-1", "test", nil)
+	if err != nil {
+		t.Errorf("LogEvent: %v", err)
+	}
+}
+
+func TestEventLogOrdering(t *testing.T) {
+	var mu sync.Mutex
+	var events []string
+
+	writer := &recordingWriter{
+		mu:     &mu,
+		events: &events,
+	}
+
+	el := proxy.NewEventLog(writer)
+	defer el.Close()
+
 	ctx := context.Background()
 
-	if err := store.LogRequest(ctx, "sess-1", 1, nil); err != nil {
-		t.Errorf("LogRequest: %v", err)
-	}
-	if err := store.LogResponse(ctx, "sess-1", 1, nil); err != nil {
-		t.Errorf("LogResponse: %v", err)
+	// Send events in order — the channel + single worker guarantees
+	// they're persisted in the same order.
+	el.LogEvent(ctx, "s", "e", "execution_start", nil)
+	el.LogEvent(ctx, "s", "e", "http_request", nil)
+	el.LogEvent(ctx, "s", "e", "http_response", nil)
+	el.LogEvent(ctx, "s", "e", "http_request", nil)
+	el.LogEvent(ctx, "s", "e", "http_response", nil)
+	el.LogEvent(ctx, "s", "e", "execution_end", nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	expected := []string{
+		"execution_start",
+		"http_request",
+		"http_response",
+		"http_request",
+		"http_response",
+		"execution_end",
 	}
 
-	resp, err := store.GetCachedResponse(ctx, "sess-1", 1)
-	if err != nil {
-		t.Errorf("GetCachedResponse: %v", err)
+	if len(events) != len(expected) {
+		t.Fatalf("got %d events, want %d", len(events), len(expected))
 	}
-	if resp != nil {
-		t.Error("expected nil response from NoopStore")
+
+	for i, e := range events {
+		if e != expected[i] {
+			t.Errorf("event[%d] = %q, want %q", i, e, expected[i])
+		}
 	}
 }
 
-func TestEventStoreInterface(t *testing.T) {
-	// Verify NoopStore implements EventStore.
-	var _ proxy.EventStore = proxy.NoopStore{}
-	var _ proxy.EventStore = &proxy.NoopStore{}
-}
+func TestLogEventBlocksUntilPersisted(t *testing.T) {
+	persisted := make(chan struct{})
 
-// MemoryStore implements EventStore for testing.
-type MemoryStore struct {
-	requests  map[string]map[int]*http.Request
-	responses map[string]map[int]*http.Response
-}
+	writer := &blockingWriter{persisted: persisted}
+	el := proxy.NewEventLog(writer)
+	defer el.Close()
 
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
-		requests:  make(map[string]map[int]*http.Request),
-		responses: make(map[string]map[int]*http.Response),
+	done := make(chan struct{})
+	go func() {
+		el.LogEvent(context.Background(), "s", "e", "test", nil)
+		close(done)
+	}()
+
+	// LogEvent should block because the writer hasn't returned yet.
+	select {
+	case <-done:
+		t.Fatal("LogEvent returned before writer finished")
+	default:
 	}
+
+	// Unblock the writer.
+	close(persisted)
+
+	// Now LogEvent should complete.
+	<-done
 }
 
-func (m *MemoryStore) LogRequest(ctx context.Context, sessionID string, step int, req *http.Request) error {
-	if m.requests[sessionID] == nil {
-		m.requests[sessionID] = make(map[int]*http.Request)
-	}
-	m.requests[sessionID][step] = req
+// recordingWriter records event types in order.
+type recordingWriter struct {
+	mu     *sync.Mutex
+	events *[]string
+}
+
+func (w *recordingWriter) WriteEvent(ctx context.Context, event *proxy.Event) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	*w.events = append(*w.events, event.Type)
 	return nil
 }
 
-func (m *MemoryStore) LogResponse(ctx context.Context, sessionID string, step int, resp *http.Response) error {
-	if m.responses[sessionID] == nil {
-		m.responses[sessionID] = make(map[int]*http.Response)
-	}
-	m.responses[sessionID][step] = resp
+// blockingWriter blocks until the persisted channel is closed.
+type blockingWriter struct {
+	persisted chan struct{}
+}
+
+func (w *blockingWriter) WriteEvent(ctx context.Context, event *proxy.Event) error {
+	<-w.persisted
 	return nil
-}
-
-func (m *MemoryStore) GetCachedResponse(ctx context.Context, sessionID string, step int) (*http.Response, error) {
-	if m.responses[sessionID] == nil {
-		return nil, nil
-	}
-	return m.responses[sessionID][step], nil
-}
-
-func TestMemoryStoreImplementsEventStore(t *testing.T) {
-	var _ proxy.EventStore = &MemoryStore{}
 }
