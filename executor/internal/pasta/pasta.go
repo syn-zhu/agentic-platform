@@ -7,14 +7,15 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
-	"syscall"
+
+	"github.com/containers/common/libnetwork/pasta"
+	"github.com/containers/common/libnetwork/types"
 )
 
 const (
 	// ProxyPort is the port the eBPF proxy listens on.
+	// Also forwarded by pasta so the agent can reach it.
 	ProxyPort = 3128
 
 	// CgroupName is the cgroup created for the pasta process.
@@ -34,93 +35,77 @@ type Config struct {
 type Instance struct {
 	nsPath     string
 	cgroupPath string
-	ips        []net.IP
+	result     *pasta.SetupResult
 }
 
 // Setup creates a network namespace with pasta, configures port forwarding,
-// and starts pasta in a dedicated cgroup for eBPF attachment.
-// pasta forks a daemon and exits — the daemon runs in the cgroup and
-// automatically exits when the netns path is deleted.
+// and creates a cgroup for eBPF attachment.
+// pasta automatically exits when the netns path is deleted.
 func Setup(cfg *Config) (*Instance, error) {
 	slog.Info("setting up pasta", "agent_port", cfg.AgentPort)
 
-	pastaPath, err := findPasta()
-	if err != nil {
-		return nil, err
-	}
-
-	// Create cgroup for the pasta daemon.
+	// Create a cgroup for the pasta process.
+	// The eBPF connect4 program attaches to this cgroup to intercept
+	// pasta's outbound connect() calls.
 	cgroupPath := filepath.Join("/sys/fs/cgroup", CgroupName)
 	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
 		return nil, fmt.Errorf("create cgroup %s: %w", cgroupPath, err)
 	}
 
-	// Open the cgroup directory fd for UseCgroupFD.
-	cgroupFd, err := syscall.Open(cgroupPath, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+	// Move the current process into the cgroup temporarily so that
+	// pasta (which forks from us) inherits it.
+	// Save original cgroup to restore after.
+	origCgroup, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
-		return nil, fmt.Errorf("open cgroup fd: %w", err)
+		return nil, fmt.Errorf("read current cgroup: %w", err)
 	}
-	defer syscall.Close(cgroupFd)
 
-	// Create netns path.
+	if err := os.WriteFile(filepath.Join(cgroupPath, "cgroup.procs"), []byte("0"), 0644); err != nil {
+		return nil, fmt.Errorf("move to pasta cgroup: %w", err)
+	}
+
+	// Create a netns path for pasta.
 	if err := os.MkdirAll(cfg.NsDir, 0755); err != nil {
 		return nil, fmt.Errorf("create ns dir: %w", err)
 	}
 	nsPath := filepath.Join(cfg.NsDir, "pasta-netns")
+
 	f, err := os.Create(nsPath)
 	if err != nil {
 		return nil, fmt.Errorf("create netns file: %w", err)
 	}
 	f.Close()
 
-	// Build pasta command args.
-	args := []string{
-		"--config-net",
-		"--quiet",
-		"--no-map-gw",
-		"-t", fmt.Sprintf("%d-%d:%d-%d", cfg.AgentPort, cfg.AgentPort, cfg.AgentPort, cfg.AgentPort),
-		"-T", "none",
-		"-u", "none",
-		"-U", "none",
-		"--dns-forward", "169.254.1.1",
-		"--map-guest-addr", "169.254.1.2",
-		"--netns", nsPath,
-	}
+	result, err := pasta.Setup(&pasta.SetupOptions{
+		Netns: nsPath,
+		Ports: []types.PortMapping{
+			{
+				ContainerPort: uint16(cfg.AgentPort),
+				HostPort:      uint16(cfg.AgentPort),
+				Protocol:      "tcp",
+			},
+		},
+	})
 
-	// Start pasta in the dedicated cgroup.
-	// pasta forks a daemon — the child inherits the cgroup.
-	cmd := exec.Command(pastaPath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		UseCgroupFD: true,
-		CgroupFD:    cgroupFd,
-	}
+	// Move ourselves back to the original cgroup regardless of pasta result.
+	// Parse the original cgroup path from /proc/self/cgroup format "0::/path"
+	restoreCgroup(origCgroup)
 
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		os.Remove(nsPath)
-		return nil, fmt.Errorf("pasta failed: %w\noutput: %s", err, string(out))
-	}
-
-	if len(out) > 0 {
-		slog.Info("pasta output", "msg", strings.TrimSpace(string(out)))
-	}
-
-	// Discover IPs configured by pasta in the netns.
-	ips, err := discoverNetnsIPs(nsPath)
-	if err != nil {
-		slog.Warn("failed to discover pasta IPs", "error", err)
+		return nil, fmt.Errorf("pasta setup: %w", err)
 	}
 
 	slog.Info("pasta setup complete",
 		"ns", nsPath,
 		"cgroup", cgroupPath,
-		"ips", ips,
+		"ipv6", result.IPv6,
 	)
 
 	return &Instance{
 		nsPath:     nsPath,
 		cgroupPath: cgroupPath,
-		ips:        ips,
+		result:     result,
 	}, nil
 }
 
@@ -136,7 +121,7 @@ func (i *Instance) CgroupPath() string {
 
 // IPAddresses returns the IP addresses configured by pasta.
 func (i *Instance) IPAddresses() []net.IP {
-	return i.ips
+	return i.result.IPAddresses
 }
 
 // Teardown removes the netns path (pasta exits automatically)
@@ -147,39 +132,21 @@ func (i *Instance) Teardown() {
 	os.Remove(i.cgroupPath)
 }
 
-// findPasta locates the pasta binary.
-func findPasta() (string, error) {
-	for _, p := range []string{"/usr/bin/pasta", "/usr/local/bin/pasta"} {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	path, err := exec.LookPath("pasta")
-	if err != nil {
-		return "", fmt.Errorf("pasta binary not found: %w", err)
-	}
-	return path, nil
-}
-
-// discoverNetnsIPs reads IP addresses from the pasta netns.
-func discoverNetnsIPs(nsPath string) ([]net.IP, error) {
-	// Use ip command to list addresses in the netns.
-	out, err := exec.Command("ip", "-n", nsPath, "-o", "-4", "addr", "show").Output()
-	if err != nil {
-		return nil, err
-	}
-
-	var ips []net.IP
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		for i, f := range fields {
-			if f == "inet" && i+1 < len(fields) {
-				parts := strings.Split(fields[i+1], "/")
-				if ip := net.ParseIP(parts[0]); ip != nil && !ip.IsLoopback() {
-					ips = append(ips, ip)
-				}
+// restoreCgroup moves the current process back to its original cgroup.
+func restoreCgroup(origData []byte) {
+	// /proc/self/cgroup format: "0::/path\n"
+	// Extract the path after "::"
+	s := string(origData)
+	for i := 0; i < len(s); i++ {
+		if i+2 < len(s) && s[i] == ':' && s[i+1] == ':' {
+			path := s[i+2:]
+			// Trim newline
+			for len(path) > 0 && (path[len(path)-1] == '\n' || path[len(path)-1] == '\r') {
+				path = path[:len(path)-1]
 			}
+			cgPath := filepath.Join("/sys/fs/cgroup", path, "cgroup.procs")
+			os.WriteFile(cgPath, []byte("0"), 0644)
+			return
 		}
 	}
-	return ips, nil
 }
