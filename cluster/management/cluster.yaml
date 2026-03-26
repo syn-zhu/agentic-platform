@@ -1,0 +1,40 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: agentic-mgmt
+  region: us-east-1
+  version: "1.31"
+
+vpc:
+  cidr: "10.0.0.0/16"
+  nat:
+    gateway: Single
+
+iam:
+  withOIDC: true
+
+addons:
+  - name: vpc-cni
+    version: latest
+    configurationValues: '{"enableNetworkPolicy":"true"}'
+  - name: coredns
+    version: latest
+  - name: kube-proxy
+    version: latest
+  - name: aws-ebs-csi-driver
+    version: latest
+
+managedNodeGroups:
+  - name: management
+    instanceType: t3.medium
+    minSize: 2
+    maxSize: 3
+    desiredCapacity: 2
+    labels:
+      node-role: management
+    volumeSize: 30
+    volumeType: gp3
+    tags:
+      role: management
+      cluster: agentic-mgmt

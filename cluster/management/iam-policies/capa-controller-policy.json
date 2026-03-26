@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "eks:*",
+        "ec2:*",
+        "autoscaling:*",
+        "iam:CreateServiceLinkedRole",
+        "iam:PassRole",
+        "iam:GetRole",
+        "iam:ListAttachedRolePolicies",
+        "iam:CreateRole",
+        "iam:TagRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:DeleteRole",
+        "iam:CreateOpenIDConnectProvider",
+        "iam:DeleteOpenIDConnectProvider",
+        "iam:GetOpenIDConnectProvider",
+        "iam:TagOpenIDConnectProvider",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "ssm:GetParameter",
+        "sts:GetCallerIdentity",
+        "cloudformation:*",
+        "elasticloadbalancing:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
