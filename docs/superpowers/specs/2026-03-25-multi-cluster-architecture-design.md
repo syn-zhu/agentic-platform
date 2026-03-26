@@ -8,11 +8,12 @@
 
 ## 1. Cluster Topology
 
-Four clusters total. Each cluster that runs a mesh has its own independent Istio installation — there is no cross-cluster mesh. Cross-cluster communication uses standard HTTPS over AWS Transit Gateway.
+Five clusters total. Each cluster that runs a mesh has its own independent Istio installation — there is no cross-cluster mesh. Cross-cluster communication uses standard HTTPS over AWS Transit Gateway.
 
 | Cluster | Mesh | Purpose |
 |---------|------|---------|
-| **control-plane** | Istio sidecar (internal only) | Platform API, Keycloak, OpenFGA, AgentRegistry, Langfuse+ClickHouse, CAPA, N-S ingress |
+| **management** | None | CAPA (manages cell + obs clusters). ArgoCD later. |
+| **control-plane** | Istio sidecar (internal only) | Platform API, Keycloak, OpenFGA, AgentRegistry, Langfuse+ClickHouse, N-S ingress |
 | **observability** | None | VictoriaMetrics, Grafana, Kiali (per-cell mesh visualization) |
 | **cell-1** | Istio ambient (independent) | Tenant workloads, EverMemOS, kagent, own gateway, own waypoints |
 | **cell-2** | Istio ambient (independent) | Tenant workloads, EverMemOS, kagent, own gateway, own waypoints |
@@ -27,15 +28,24 @@ In typical cell-based architectures, control plane and data plane are deliberate
 
 This eliminates: east-west gateways, remote secrets, shared CA, ServiceScope, HBONE tunneling between clusters. Each cluster is a self-contained island.
 
+### Management Cluster
+
+Outside the mesh. Manages cluster lifecycle.
+
+| Component | Namespace | Purpose |
+|-----------|-----------|---------|
+| Cluster API (CAPA) | capi-system / capa-system | Provisions and manages cell + obs clusters |
+| cert-manager | cert-manager | TLS certificate management |
+| (ArgoCD — future) | argocd | GitOps delivery to all clusters |
+
 ### Control-Plane Cluster
 
-Platform services and cluster management. Istio in sidecar mode for internal service-to-service communication only.
+Platform services. Istio in sidecar mode for internal service-to-service communication only.
 
 | Component | Namespace | Purpose |
 |-----------|-----------|---------|
 | istiod (1.29, sidecar mode) | istio-system | Internal service mesh |
 | N-S ingress gateway | agentgateway-system | External access to platform services (NLB-backed) |
-| Cluster API (CAPA) | capi-system / capa-system | Provisions and manages cell clusters |
 | Keycloak | keycloak | OIDC/OAuth2, organizations, token exchange |
 | OpenFGA | openfga | Fine-grained authorization (per-tenant stores) |
 | Platform API | platform-api | Tenant management, cell assignment |
@@ -326,9 +336,9 @@ Agent request → tenant waypoint (cell)
 
 ## 9. Cluster Provisioning
 
-### Cluster API (Control-Plane Cluster)
+### Cluster API (Management Cluster)
 
-CAPA runs in the control-plane cluster (not a separate management cluster). It provisions and manages cell clusters and the observability cluster.
+CAPA runs in the management cluster. It provisions and manages cell clusters, the observability cluster, and the control-plane cluster. The management cluster itself is bootstrapped via eksctl.
 
 Each managed cluster is defined as CAPA CRs:
 - `AWSManagedControlPlane` — EKS control plane config
@@ -338,6 +348,7 @@ Each managed cluster is defined as CAPA CRs:
 
 | Cluster | VPC CIDR |
 |---------|----------|
+| management | 10.0.0.0/16 |
 | control-plane | 10.1.0.0/16 |
 | observability | 10.2.0.0/16 |
 | cell-1 | 10.3.0.0/16 |
@@ -347,7 +358,7 @@ Pod CIDRs can overlap — no cross-cluster pod routing.
 
 ### Transit Gateway
 
-- Single TGW in us-east-1, all 4 VPCs attached
+- Single TGW in us-east-1, all 5 VPCs attached
 - Security groups: TCP 443 between VPCs (HTTPS for control-plane services, kube API for CAPA/Kiali)
 - No mesh ports needed cross-cluster
 
@@ -366,7 +377,7 @@ Scripts use a `--cluster-type` parameter:
 
 | Current (single-cluster) | New (multi-cluster) |
 |--------------------------|---------------------|
-| 1 EKS cluster, 3 node groups | 4 EKS clusters (cp, obs, cell-1, cell-2) |
+| 1 EKS cluster, 3 node groups | 5 EKS clusters (mgmt, cp, obs, cell-1, cell-2) |
 | Istio 1.28.3 ambient (single mesh) | Istio 1.29: sidecar on control-plane, ambient per-cell (independent) |
 | All services co-located | Platform services in control-plane, tenant workloads in cells |
 | Single agentgateway ingress | Control-plane ingress + per-cell gateways |
@@ -376,8 +387,8 @@ Scripts use a `--cluster-type` parameter:
 | Kiali (single-cluster) | Kiali per-cell visualization (obs cluster) |
 | Kyverno | Removed — replaced by agentic-operator (separate design) |
 | Sandbox router (shared) | Removed — per-tenant routing TBD (separate design) |
-| eksctl | CAPA (in control-plane cluster) |
-| Single VPC | 4 VPCs + Transit Gateway |
+| eksctl | CAPA (in management cluster) |
+| Single VPC | 5 VPCs + Transit Gateway |
 
 ### HA Considerations
 
