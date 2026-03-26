@@ -1,0 +1,39 @@
+# Step 1: Bootstrap issuer (self-signed, only used to create the root CA cert)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+# Step 2: Root CA certificate (signed by the bootstrap issuer)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agentic-platform-root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: "Agentic Platform Root CA"
+  subject:
+    organizations:
+      - "Agentic Platform"
+  duration: 87600h    # 10 years
+  renewBefore: 8760h  # 1 year
+  secretName: agentic-platform-root-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+# Step 3: Root CA issuer (used to sign intermediate CAs for each cluster)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: agentic-platform-root-ca
+spec:
+  ca:
+    secretName: agentic-platform-root-ca

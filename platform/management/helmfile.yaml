@@ -1,0 +1,33 @@
+environments:
+  default: {}
+
+---
+repositories:
+  - name: jetstack
+    url: https://charts.jetstack.io
+  # NOTE: Verify this URL works before implementing:
+  #   helm repo add capi <url> && helm search repo capi/cluster-api-operator
+  - name: capi
+    url: https://kubernetes-sigs.github.io/cluster-api/charts
+
+helmDefaults:
+  createNamespace: true
+  wait: true
+  timeout: 300
+
+releases:
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: "v1.17.1"
+    values:
+      - values/cert-manager.yaml
+
+  - name: capi-operator
+    namespace: capi-system
+    chart: capi/cluster-api-operator
+    version: "0.16.0"
+    values:
+      - values/capa.yaml
+    needs:
+      - cert-manager/cert-manager

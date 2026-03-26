@@ -1,0 +1,24 @@
+# Intermediate CA for ${CLUSTER_NAME}
+# Issued by the root CA, used by istiod in ${CLUSTER_NAME} to sign SPIFFE workload certs.
+# The resulting secret is extracted and copied to ${CLUSTER_NAME}'s istio-system/cacerts.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: istio-ca-${CLUSTER_NAME}
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: "Istio CA - ${CLUSTER_NAME}"
+  subject:
+    organizations:
+      - "Agentic Platform"
+  duration: 8760h     # 1 year
+  renewBefore: 720h   # 30 days
+  secretName: istio-ca-${CLUSTER_NAME}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: agentic-platform-root-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
