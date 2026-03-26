@@ -1,0 +1,311 @@
+<h2>Multi-Cluster Architecture — Updated</h2>
+<p class="subtitle">4 clusters: Platform + Observability + 2 Cells, connected via AWS Transit Gateway and Istio 1.29 ambient mesh</p>
+
+<div style="width:100%;overflow-x:auto;padding:20px 0;">
+<svg viewBox="0 0 1200 900" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:1200px;margin:0 auto;display:block;font-family:system-ui,-apple-system,sans-serif;">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#666" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="900" fill="#0d1117" rx="8"/>
+  <text x="600" y="28" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="bold">Agentic Platform — Multi-Cluster Architecture (v2)</text>
+
+  <!-- ===== PLATFORM CLUSTER ===== -->
+  <rect x="15" y="45" width="370" height="475" rx="6" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="6,3"/>
+  <rect x="15" y="45" width="370" height="26" rx="6" fill="#1e3a5f"/>
+  <text x="200" y="62" text-anchor="middle" fill="#93c5fd" font-size="12" font-weight="bold">PLATFORM (network-platform)</text>
+
+  <!-- Row 1: Mesh infra -->
+  <rect x="30" y="80" width="85" height="32" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.8"/>
+  <text x="72" y="100" text-anchor="middle" fill="#93c5fd" font-size="9">istiod 1.29</text>
+  <rect x="120" y="80" width="85" height="32" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.8"/>
+  <text x="162" y="100" text-anchor="middle" fill="#93c5fd" font-size="9">cert-manager</text>
+  <rect x="210" y="80" width="80" height="32" rx="3" fill="#1a2332" stroke="#22c55e" stroke-width="1.2"/>
+  <text x="250" y="95" text-anchor="middle" fill="#86efac" font-size="8" font-weight="bold">E-W GW</text>
+  <text x="250" y="106" text-anchor="middle" fill="#9ca3af" font-size="7">:15008</text>
+
+  <!-- Ingress -->
+  <rect x="296" y="80" width="80" height="32" rx="3" fill="#1a2332" stroke="#e8914f" stroke-width="1.2"/>
+  <text x="336" y="93" text-anchor="middle" fill="#fbbf24" font-size="8" font-weight="bold">INGRESS</text>
+  <text x="336" y="106" text-anchor="middle" fill="#9ca3af" font-size="7">agentgw-proxy</text>
+
+  <!-- External arrow -->
+  <text x="336" y="52" text-anchor="middle" fill="#fbbf24" font-size="8">NLB</text>
+  <line x1="336" y1="55" x2="336" y2="78" stroke="#fbbf24" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Identity -->
+  <rect x="30" y="122" width="345" height="62" rx="3" fill="#1a1a2e" stroke="#8b5cf6" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="38" y="136" fill="#c4b5fd" font-size="9" font-weight="bold">Identity & Auth</text>
+  <rect x="38" y="142" width="80" height="26" rx="2" fill="#1a2332" stroke="#8b5cf6" stroke-width="0.5"/>
+  <text x="78" y="159" text-anchor="middle" fill="#d1d5db" font-size="9">Keycloak</text>
+  <rect x="124" y="142" width="80" height="26" rx="2" fill="#1a2332" stroke="#8b5cf6" stroke-width="0.5"/>
+  <text x="164" y="159" text-anchor="middle" fill="#d1d5db" font-size="9">OpenFGA</text>
+  <rect x="210" y="142" width="80" height="26" rx="2" fill="#1a2332" stroke="#8b5cf6" stroke-width="0.5"/>
+  <text x="250" y="159" text-anchor="middle" fill="#d1d5db" font-size="9">Platform API</text>
+
+  <!-- Agent Services -->
+  <rect x="30" y="194" width="345" height="62" rx="3" fill="#2e1a1a" stroke="#e8914f" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="38" y="208" fill="#fbbf24" font-size="9" font-weight="bold">Agent Services (Centralized)</text>
+  <rect x="38" y="214" width="100" height="26" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="88" y="231" text-anchor="middle" fill="#d1d5db" font-size="9">AgentRegistry</text>
+  <rect x="144" y="214" width="100" height="26" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="194" y="231" text-anchor="middle" fill="#d1d5db" font-size="9">EverMemOS</text>
+  <rect x="250" y="214" width="120" height="26" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="310" y="231" text-anchor="middle" fill="#d1d5db" font-size="9">agentic-operator*</text>
+
+  <!-- Local telemetry -->
+  <rect x="30" y="266" width="345" height="40" rx="3" fill="#1a2e1a" stroke="#22c55e" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="38" y="280" fill="#86efac" font-size="9" font-weight="bold">Local Telemetry</text>
+  <rect x="160" y="272" width="100" height="26" rx="2" fill="#1a2332" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="210" y="289" text-anchor="middle" fill="#d1d5db" font-size="9">OTel Agent+GW</text>
+  <rect x="266" y="272" width="100" height="26" rx="2" fill="#1a2332" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="316" y="289" text-anchor="middle" fill="#d1d5db" font-size="9">vmagent</text>
+
+  <!-- AWS -->
+  <rect x="30" y="316" width="345" height="48" rx="3" fill="#1a2332" stroke="#6b7280" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="38" y="330" fill="#9ca3af" font-size="9" font-weight="bold">AWS Managed (VPC-accessible)</text>
+  <rect x="38" y="336" width="80" height="22" rx="2" fill="#1a2332" stroke="#6b7280" stroke-width="0.5"/>
+  <text x="78" y="351" text-anchor="middle" fill="#9ca3af" font-size="8">RDS PG 17</text>
+  <rect x="124" y="336" width="80" height="22" rx="2" fill="#1a2332" stroke="#6b7280" stroke-width="0.5"/>
+  <text x="164" y="351" text-anchor="middle" fill="#9ca3af" font-size="8">ElastiCache</text>
+  <rect x="210" y="336" width="50" height="22" rx="2" fill="#1a2332" stroke="#6b7280" stroke-width="0.5"/>
+  <text x="235" y="351" text-anchor="middle" fill="#9ca3af" font-size="8">S3</text>
+
+  <!-- ztunnel -->
+  <rect x="30" y="374" width="345" height="28" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.5"/>
+  <text x="200" y="392" text-anchor="middle" fill="#93c5fd" font-size="8">ztunnel (DaemonSet) — L4 mTLS, SPIFFE</text>
+
+  <!-- Operator note -->
+  <text x="200" y="420" text-anchor="middle" fill="#6b7280" font-size="7" font-style="italic">* agentic-operator — separate design</text>
+
+  <!-- ===== OBSERVABILITY CLUSTER ===== -->
+  <rect x="15" y="445" width="370" height="210" rx="6" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="6,3"/>
+  <rect x="15" y="445" width="370" height="26" rx="6" fill="#1a2e1a"/>
+  <text x="200" y="462" text-anchor="middle" fill="#86efac" font-size="12" font-weight="bold">OBSERVABILITY (network-obs)</text>
+
+  <rect x="30" y="480" width="85" height="32" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.8"/>
+  <text x="72" y="500" text-anchor="middle" fill="#93c5fd" font-size="9">istiod 1.29</text>
+  <rect x="120" y="480" width="80" height="32" rx="3" fill="#1a2332" stroke="#22c55e" stroke-width="1.2"/>
+  <text x="160" y="495" text-anchor="middle" fill="#86efac" font-size="8" font-weight="bold">E-W GW</text>
+  <text x="160" y="506" text-anchor="middle" fill="#9ca3af" font-size="7">:15008</text>
+
+  <!-- Metrics -->
+  <rect x="30" y="522" width="170" height="62" rx="3" fill="#1a2332" stroke="#22c55e" stroke-width="0.8"/>
+  <text x="38" y="536" fill="#86efac" font-size="9" font-weight="bold">Metrics</text>
+  <rect x="38" y="542" width="150" height="34" rx="2" fill="#0d1117" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="113" y="556" text-anchor="middle" fill="#d1d5db" font-size="9">VictoriaMetrics</text>
+  <text x="113" y="568" text-anchor="middle" fill="#9ca3af" font-size="7">single-node (vminsert/select/storage)</text>
+
+  <!-- Traces -->
+  <rect x="206" y="522" width="170" height="62" rx="3" fill="#1a2332" stroke="#22c55e" stroke-width="0.8"/>
+  <text x="214" y="536" fill="#86efac" font-size="9" font-weight="bold">Traces</text>
+  <rect x="214" y="542" width="70" height="34" rx="2" fill="#0d1117" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="249" y="558" text-anchor="middle" fill="#d1d5db" font-size="9">Langfuse</text>
+  <text x="249" y="570" text-anchor="middle" fill="#9ca3af" font-size="7">OTLP ingest</text>
+  <rect x="290" y="542" width="80" height="34" rx="2" fill="#0d1117" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="330" y="558" text-anchor="middle" fill="#d1d5db" font-size="9">ClickHouse</text>
+  <text x="330" y="570" text-anchor="middle" fill="#9ca3af" font-size="7">analytics DB</text>
+
+  <!-- Dashboards -->
+  <rect x="30" y="594" width="345" height="40" rx="3" fill="#1a2332" stroke="#22c55e" stroke-width="0.8"/>
+  <text x="38" y="608" fill="#86efac" font-size="9" font-weight="bold">Dashboards</text>
+  <rect x="120" y="600" width="70" height="26" rx="2" fill="#0d1117" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="155" y="617" text-anchor="middle" fill="#d1d5db" font-size="9">Kiali</text>
+  <rect x="196" y="600" width="70" height="26" rx="2" fill="#0d1117" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="231" y="617" text-anchor="middle" fill="#d1d5db" font-size="9">Grafana</text>
+
+  <!-- ztunnel -->
+  <rect x="30" y="640" width="345" height="24" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.5"/>
+  <text x="200" y="656" text-anchor="middle" fill="#93c5fd" font-size="8">ztunnel — L4 mTLS</text>
+
+  <!-- ===== CELL CLUSTER 1 ===== -->
+  <rect x="415" y="45" width="375" height="475" rx="6" fill="none" stroke="#e8914f" stroke-width="2" stroke-dasharray="6,3"/>
+  <rect x="415" y="45" width="375" height="26" rx="6" fill="#3a2a1a"/>
+  <text x="602" y="62" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="bold">CELL 1 (network-cell-1)</text>
+
+  <rect x="430" y="80" width="85" height="32" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.8"/>
+  <text x="472" y="100" text-anchor="middle" fill="#93c5fd" font-size="9">istiod 1.29</text>
+  <rect x="520" y="80" width="80" height="32" rx="3" fill="#1a2332" stroke="#22c55e" stroke-width="1.2"/>
+  <text x="560" y="95" text-anchor="middle" fill="#86efac" font-size="8" font-weight="bold">E-W GW</text>
+  <text x="560" y="106" text-anchor="middle" fill="#9ca3af" font-size="7">:15008</text>
+
+  <!-- Agent control plane -->
+  <rect x="430" y="122" width="345" height="48" rx="3" fill="#2e1a1a" stroke="#e8914f" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="438" y="136" fill="#fbbf24" font-size="9" font-weight="bold">Agent Control Plane</text>
+  <rect x="438" y="142" width="65" height="22" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="470" y="157" text-anchor="middle" fill="#d1d5db" font-size="8">kagent</text>
+  <rect x="509" y="142" width="55" height="22" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="536" y="157" text-anchor="middle" fill="#d1d5db" font-size="8">kmcp</text>
+  <rect x="570" y="142" width="80" height="22" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="610" y="157" text-anchor="middle" fill="#d1d5db" font-size="8">sandbox-rtr</text>
+
+  <!-- Telemetry + Auth -->
+  <rect x="430" y="180" width="170" height="38" rx="3" fill="#1a2e1a" stroke="#22c55e" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="438" y="194" fill="#86efac" font-size="9" font-weight="bold">Telemetry</text>
+  <text x="438" y="210" fill="#d1d5db" font-size="8">OTel Agent+GW, vmagent</text>
+
+  <rect x="606" y="180" width="170" height="38" rx="3" fill="#1a1a2e" stroke="#8b5cf6" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="614" y="194" fill="#c4b5fd" font-size="9" font-weight="bold">Auth Adapter</text>
+  <text x="614" y="210" fill="#d1d5db" font-size="8">openfga-envoy</text>
+
+  <!-- Tenant namespaces -->
+  <rect x="430" y="228" width="345" height="255" rx="3" fill="#1a2332" stroke="#f59e0b" stroke-width="1"/>
+  <text x="438" y="244" fill="#fbbf24" font-size="9" font-weight="bold">Tenant Namespaces</text>
+
+  <rect x="438" y="252" width="330" height="85" rx="2" fill="#0d1117" stroke="#f59e0b" stroke-width="0.5"/>
+  <text x="446" y="266" fill="#fbbf24" font-size="8">tenant-alpha</text>
+  <rect x="446" y="274" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="478" y="288" text-anchor="middle" fill="#d1d5db" font-size="7">Agent A</text>
+  <rect x="516" y="274" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="548" y="288" text-anchor="middle" fill="#d1d5db" font-size="7">Agent B</text>
+  <rect x="586" y="274" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="618" y="288" text-anchor="middle" fill="#d1d5db" font-size="7">MCP Srv</text>
+  <rect x="656" y="274" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="688" y="288" text-anchor="middle" fill="#d1d5db" font-size="7">Sandbox</text>
+  <rect x="446" y="300" width="110" height="18" rx="2" fill="#1a2332" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="501" y="313" text-anchor="middle" fill="#86efac" font-size="7">agentgw waypoint</text>
+
+  <rect x="438" y="345" width="330" height="85" rx="2" fill="#0d1117" stroke="#f59e0b" stroke-width="0.5"/>
+  <text x="446" y="359" fill="#fbbf24" font-size="8">tenant-beta</text>
+  <rect x="446" y="367" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="478" y="381" text-anchor="middle" fill="#d1d5db" font-size="7">Agent C</text>
+  <rect x="516" y="367" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="548" y="381" text-anchor="middle" fill="#d1d5db" font-size="7">Agent D</text>
+  <rect x="446" y="393" width="110" height="18" rx="2" fill="#1a2332" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="501" y="406" text-anchor="middle" fill="#86efac" font-size="7">agentgw waypoint</text>
+
+  <!-- ztunnel -->
+  <rect x="430" y="493" width="345" height="24" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.5"/>
+  <text x="602" y="509" text-anchor="middle" fill="#93c5fd" font-size="8">ztunnel — L4 mTLS</text>
+
+  <!-- ===== CELL CLUSTER 2 ===== -->
+  <rect x="820" y="45" width="365" height="475" rx="6" fill="none" stroke="#e8914f" stroke-width="2" stroke-dasharray="6,3"/>
+  <rect x="820" y="45" width="365" height="26" rx="6" fill="#3a2a1a"/>
+  <text x="1002" y="62" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="bold">CELL 2 (network-cell-2)</text>
+
+  <rect x="835" y="80" width="85" height="32" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.8"/>
+  <text x="877" y="100" text-anchor="middle" fill="#93c5fd" font-size="9">istiod 1.29</text>
+  <rect x="925" y="80" width="80" height="32" rx="3" fill="#1a2332" stroke="#22c55e" stroke-width="1.2"/>
+  <text x="965" y="95" text-anchor="middle" fill="#86efac" font-size="8" font-weight="bold">E-W GW</text>
+  <text x="965" y="106" text-anchor="middle" fill="#9ca3af" font-size="7">:15008</text>
+
+  <rect x="835" y="122" width="335" height="48" rx="3" fill="#2e1a1a" stroke="#e8914f" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="843" y="136" fill="#fbbf24" font-size="9" font-weight="bold">Agent Control Plane</text>
+  <rect x="843" y="142" width="65" height="22" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="875" y="157" text-anchor="middle" fill="#d1d5db" font-size="8">kagent</text>
+  <rect x="914" y="142" width="55" height="22" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="941" y="157" text-anchor="middle" fill="#d1d5db" font-size="8">kmcp</text>
+  <rect x="975" y="142" width="80" height="22" rx="2" fill="#1a2332" stroke="#e8914f" stroke-width="0.5"/>
+  <text x="1015" y="157" text-anchor="middle" fill="#d1d5db" font-size="8">sandbox-rtr</text>
+
+  <rect x="835" y="180" width="165" height="38" rx="3" fill="#1a2e1a" stroke="#22c55e" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="843" y="194" fill="#86efac" font-size="9" font-weight="bold">Telemetry</text>
+  <text x="843" y="210" fill="#d1d5db" font-size="8">OTel Agent+GW, vmagent</text>
+
+  <rect x="1006" y="180" width="160" height="38" rx="3" fill="#1a1a2e" stroke="#8b5cf6" stroke-width="0.8" stroke-dasharray="3,2"/>
+  <text x="1014" y="194" fill="#c4b5fd" font-size="9" font-weight="bold">Auth Adapter</text>
+  <text x="1014" y="210" fill="#d1d5db" font-size="8">openfga-envoy</text>
+
+  <rect x="835" y="228" width="335" height="255" rx="3" fill="#1a2332" stroke="#f59e0b" stroke-width="1"/>
+  <text x="843" y="244" fill="#fbbf24" font-size="9" font-weight="bold">Tenant Namespaces</text>
+  <rect x="843" y="252" width="320" height="85" rx="2" fill="#0d1117" stroke="#f59e0b" stroke-width="0.5"/>
+  <text x="851" y="266" fill="#fbbf24" font-size="8">tenant-gamma</text>
+  <rect x="851" y="274" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="883" y="288" text-anchor="middle" fill="#d1d5db" font-size="7">Agent E</text>
+  <rect x="921" y="274" width="65" height="20" rx="2" fill="#1a2332" stroke="#f59e0b" stroke-width="0.4"/>
+  <text x="953" y="288" text-anchor="middle" fill="#d1d5db" font-size="7">Agent F</text>
+  <rect x="851" y="300" width="110" height="18" rx="2" fill="#1a2332" stroke="#22c55e" stroke-width="0.5"/>
+  <text x="906" y="313" text-anchor="middle" fill="#86efac" font-size="7">agentgw waypoint</text>
+
+  <rect x="835" y="493" width="335" height="24" rx="3" fill="#1a2332" stroke="#3b82f6" stroke-width="0.5"/>
+  <text x="1002" y="509" text-anchor="middle" fill="#93c5fd" font-size="8">ztunnel — L4 mTLS</text>
+
+  <!-- ===== TRANSIT GATEWAY ===== -->
+  <rect x="100" y="700" width="1000" height="50" rx="6" fill="#1a2332" stroke="#6b7280" stroke-width="2"/>
+  <text x="600" y="724" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="bold">AWS Transit Gateway</text>
+  <text x="600" y="740" text-anchor="middle" fill="#9ca3af" font-size="9">Hub-and-spoke — E-W gateway IPs routable across all cluster VPCs</text>
+
+  <!-- Connection lines to TGW -->
+  <line x1="250" y1="665" x2="250" y2="700" stroke="#22c55e" stroke-width="1.2" stroke-dasharray="4,2"/>
+  <line x1="560" y1="520" x2="560" y2="700" stroke="#22c55e" stroke-width="1.2" stroke-dasharray="4,2"/>
+  <line x1="965" y1="520" x2="965" y2="700" stroke="#22c55e" stroke-width="1.2" stroke-dasharray="4,2"/>
+  <line x1="200" y1="420" x2="200" y2="445" stroke="#22c55e" stroke-width="1.2" stroke-dasharray="4,2"/>
+
+  <!-- Shared CA -->
+  <rect x="100" y="760" width="1000" height="30" rx="4" fill="#1a1a2e" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="600" y="780" text-anchor="middle" fill="#c4b5fd" font-size="10">Shared Root CA (cert-manager) — single trust domain, intermediate CAs per cluster</text>
+
+  <!-- Telemetry flow arrows -->
+  <line x1="520" y1="199" x2="250" y2="522" stroke="#22c55e" stroke-width="0.8" stroke-dasharray="2,2" marker-end="url(#arrow)"/>
+  <line x1="920" y1="199" x2="280" y2="535" stroke="#22c55e" stroke-width="0.8" stroke-dasharray="2,2" marker-end="url(#arrow)"/>
+  <text x="380" y="370" fill="#86efac" font-size="7" transform="rotate(-35, 380, 370)">OTLP + remote-write</text>
+
+  <!-- Legend -->
+  <rect x="100" y="800" width="1000" height="28" rx="4" fill="#1a2332"/>
+  <circle cx="130" cy="814" r="4" fill="#3b82f6"/>
+  <text x="138" y="818" fill="#93c5fd" font-size="8">Mesh</text>
+  <circle cx="195" cy="814" r="4" fill="#22c55e"/>
+  <text x="203" y="818" fill="#86efac" font-size="8">Observability</text>
+  <circle cx="290" cy="814" r="4" fill="#e8914f"/>
+  <text x="298" y="818" fill="#fbbf24" font-size="8">Agent Runtime</text>
+  <circle cx="400" cy="814" r="4" fill="#8b5cf6"/>
+  <text x="408" y="818" fill="#c4b5fd" font-size="8">Auth</text>
+  <circle cx="465" cy="814" r="4" fill="#f59e0b"/>
+  <text x="473" y="818" fill="#fbbf24" font-size="8">Tenants</text>
+  <circle cx="535" cy="814" r="4" fill="#6b7280"/>
+  <text x="543" y="818" fill="#9ca3af" font-size="8">AWS Infra</text>
+  <line x1="610" y1="814" x2="635" y2="814" stroke="#22c55e" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="640" y="818" fill="#9ca3af" font-size="8">Cross-cluster (E-W GW, HBONE)</text>
+</svg>
+</div>
+
+<h3>Corrected Traffic Flows</h3>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px;">
+  <div style="background:#1a2332;border:1px solid #3b82f6;border-radius:6px;padding:14px;">
+    <h4 style="color:#93c5fd;margin:0 0 8px 0;font-size:12px;">North-South: External → Agent (Cell)</h4>
+    <pre style="color:#d1d5db;font-size:9px;line-height:1.5;margin:0;white-space:pre-wrap;">External Client
+→ NLB (platform)
+  → agentgateway-proxy (ingress)
+    → [double HBONE] → Cell E-W GW
+      → dest ztunnel
+        → tenant waypoint (L7 policy)
+          → Agent pod</pre>
+    <p style="color:#9ca3af;font-size:8px;margin:6px 0 0 0;">Ingress is L7 proxy — creates double HBONE to remote cell. Dest waypoint applies tenant policy.</p>
+  </div>
+
+  <div style="background:#1a2332;border:1px solid #e8914f;border-radius:6px;padding:14px;">
+    <h4 style="color:#fbbf24;margin:0 0 8px 0;font-size:12px;">East-West: Agent (Cell) → Platform Service</h4>
+    <pre style="color:#d1d5db;font-size:9px;line-height:1.5;margin:0;white-space:pre-wrap;">Agent pod (Cell 1)
+→ source ztunnel
+  → [single HBONE] → Platform E-W GW
+    → dest ztunnel
+      → EverMemOS / OpenFGA / etc.</pre>
+    <p style="color:#9ca3af;font-size:8px;margin:6px 0 0 0;">Standard L4 ztunnel-to-ztunnel. No waypoint — platform services don't have one.</p>
+  </div>
+
+  <div style="background:#1a2332;border:1px solid #f59e0b;border-radius:6px;padding:14px;">
+    <h4 style="color:#fbbf24;margin:0 0 8px 0;font-size:12px;">East-West: Agent (Cell 1) → Agent (Cell 2)</h4>
+    <pre style="color:#d1d5db;font-size:9px;line-height:1.5;margin:0;white-space:pre-wrap;">Agent pod (Cell 1)
+→ source ztunnel
+  → [single HBONE] → Cell 2 E-W GW
+    → dest ztunnel
+      → tenant waypoint (L7 policy)
+        → Agent pod (Cell 2)</pre>
+    <p style="color:#9ca3af;font-size:8px;margin:6px 0 0 0;">Source ztunnel direct to remote E-W GW. Dest waypoint in Cell 2 applies policy.</p>
+  </div>
+
+  <div style="background:#1a2332;border:1px solid #22c55e;border-radius:6px;padding:14px;">
+    <h4 style="color:#86efac;margin:0 0 8px 0;font-size:12px;">Telemetry: All Clusters → Observability</h4>
+    <pre style="color:#d1d5db;font-size:9px;line-height:1.5;margin:0;white-space:pre-wrap;">Traces: OTel Agent → OTel GW
+  → OTLP → Langfuse (obs cluster)
+
+Metrics: vmagent (per cluster)
+  → remote-write → VictoriaMetrics
+  ztunnel metrics: cluster label native
+  app metrics: cluster label via vmagent</pre>
+    <p style="color:#9ca3af;font-size:8px;margin:6px 0 0 0;">Kiali + Grafana query single VictoriaMetrics. Langfuse receives all OTLP.</p>
+  </div>
+</div>
