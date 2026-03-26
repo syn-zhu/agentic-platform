@@ -9,8 +9,6 @@ spec:
   template:
     spec:
       clusterName: agentic-obs
-      bootstrap:
-        dataSecretName: ""
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: AWSManagedMachinePool
