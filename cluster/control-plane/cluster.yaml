@@ -2,12 +2,12 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: agentic-mgmt
+  name: agentic-cp
   region: us-east-1
   version: "1.31"
 
 vpc:
-  cidr: "10.0.0.0/16"
+  cidr: "10.1.0.0/16"
   nat:
     gateway: Single
 
@@ -26,15 +26,15 @@ addons:
     version: latest
 
 managedNodeGroups:
-  - name: management
-    instanceType: t3.medium
+  - name: platform
+    instanceType: t3.large
     minSize: 2
-    maxSize: 3
+    maxSize: 4
     desiredCapacity: 2
     labels:
-      node-role: management
+      node-role: platform
     volumeSize: 30
     volumeType: gp3
     tags:
-      role: management
-      cluster: agentic-mgmt
+      role: platform
+      cluster: agentic-cp
