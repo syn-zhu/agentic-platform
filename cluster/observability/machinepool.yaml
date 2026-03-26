@@ -1,0 +1,35 @@
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachinePool
+metadata:
+  name: agentic-obs-pool
+  namespace: default
+spec:
+  clusterName: agentic-obs
+  replicas: 2
+  template:
+    spec:
+      clusterName: agentic-obs
+      bootstrap:
+        dataSecretName: ""
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: AWSManagedMachinePool
+        name: agentic-obs-pool
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSManagedMachinePool
+metadata:
+  name: agentic-obs-pool
+  namespace: default
+spec:
+  instanceType: t3.large
+  scaling:
+    minSize: 2
+    maxSize: 3
+  diskSize: 30
+  labels:
+    node-role: obs
+  capacityType: onDemand
+  additionalTags:
+    project: agentic-platform
+    role: obs

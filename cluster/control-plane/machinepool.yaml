@@ -1,0 +1,35 @@
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachinePool
+metadata:
+  name: agentic-cp-platform
+  namespace: default
+spec:
+  clusterName: agentic-cp
+  replicas: 2
+  template:
+    spec:
+      clusterName: agentic-cp
+      bootstrap:
+        dataSecretName: ""
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: AWSManagedMachinePool
+        name: agentic-cp-platform
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSManagedMachinePool
+metadata:
+  name: agentic-cp-platform
+  namespace: default
+spec:
+  instanceType: t3.large
+  scaling:
+    minSize: 2
+    maxSize: 4
+  diskSize: 30
+  labels:
+    node-role: platform
+  capacityType: onDemand
+  additionalTags:
+    project: agentic-platform
+    role: platform

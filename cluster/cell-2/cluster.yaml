@@ -1,7 +1,7 @@
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
-  name: agentic-cp
+  name: agentic-cell-2
   namespace: default
 spec:
   clusterNetwork:
@@ -12,31 +12,31 @@ spec:
   infrastructureRef:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
     kind: AWSManagedCluster
-    name: agentic-cp
+    name: agentic-cell-2
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta2
     kind: AWSManagedControlPlane
-    name: agentic-cp
+    name: agentic-cell-2
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: AWSManagedCluster
 metadata:
-  name: agentic-cp
+  name: agentic-cell-2
   namespace: default
 spec: {}
 ---
 apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: AWSManagedControlPlane
 metadata:
-  name: agentic-cp
+  name: agentic-cell-2
   namespace: default
 spec:
-  eksClusterName: agentic-cp
+  eksClusterName: agentic-cell-2
   region: us-east-1
   version: v1.31.0
   network:
     vpc:
-      cidrBlock: "10.1.0.0/16"
+      cidrBlock: "10.4.0.0/16"
   associateOIDCProvider: true
   addons:
     - name: vpc-cni
@@ -58,4 +58,4 @@ spec:
     enabled: false
   additionalTags:
     project: agentic-platform
-    cluster-type: control-plane
+    cluster-type: cell
