@@ -25,4 +25,6 @@ spec:
   manager:
     featureGates:
       EKS: true
+      EKSEnableIAM: true
+      EKSAllowAddRoles: true
       MachinePool: true
