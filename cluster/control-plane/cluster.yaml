@@ -33,7 +33,7 @@ metadata:
 spec:
   eksClusterName: agentic-cp
   region: us-east-1
-  version: v1.31.0
+  version: v1.35.0
   network:
     vpc:
       cidrBlock: "10.1.0.0/16"
