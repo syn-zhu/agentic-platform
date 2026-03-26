@@ -18,7 +18,7 @@ kubectl --context "$CONTEXT" cluster-info > /dev/null 2>&1 || {
 # Deploy cert-manager via helmfile
 echo "Installing cert-manager..."
 cd "$ROOT_DIR/platform/management"
-KUBECONFIG_CONTEXT="$CONTEXT" helmfile --kube-context "$CONTEXT" sync
+KUBECONFIG_CONTEXT="$CONTEXT" helmfile --kube-context "$CONTEXT" -l name=cert-manager sync
 cd "$ROOT_DIR"
 
 # Wait for cert-manager webhook to be ready

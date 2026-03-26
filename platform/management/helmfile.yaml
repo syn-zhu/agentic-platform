@@ -5,10 +5,8 @@ environments:
 repositories:
   - name: jetstack
     url: https://charts.jetstack.io
-  # NOTE: Verify this URL works before implementing:
-  #   helm repo add capi <url> && helm search repo capi/cluster-api-operator
   - name: capi
-    url: https://kubernetes-sigs.github.io/cluster-api/charts
+    url: https://kubernetes-sigs.github.io/cluster-api-operator
 
 helmDefaults:
   createNamespace: true
@@ -26,7 +24,7 @@ releases:
   - name: capi-operator
     namespace: capi-system
     chart: capi/cluster-api-operator
-    version: "0.16.0"
+    version: "0.26.0"
     values:
       - values/capa.yaml
     needs:
