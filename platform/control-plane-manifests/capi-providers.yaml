@@ -20,3 +20,7 @@ spec:
   version: v2.7.1
   configSecret:
     name: aws-credentials
+  manager:
+    featureGates:
+      EKS: true
+      MachinePool: true
