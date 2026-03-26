@@ -9,6 +9,11 @@ spec:
   template:
     spec:
       clusterName: agentic-obs
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+          kind: EKSConfigTemplate
+          name: agentic-obs-pool
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: AWSManagedMachinePool
@@ -31,3 +36,12 @@ spec:
   additionalTags:
     project: agentic-platform
     role: obs
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+kind: EKSConfigTemplate
+metadata:
+  name: agentic-obs-pool
+  namespace: default
+spec:
+  template:
+    spec: {}

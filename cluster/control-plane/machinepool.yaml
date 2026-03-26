@@ -9,6 +9,11 @@ spec:
   template:
     spec:
       clusterName: agentic-cp
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+          kind: EKSConfigTemplate
+          name: agentic-cp-platform
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: AWSManagedMachinePool
@@ -31,3 +36,12 @@ spec:
   additionalTags:
     project: agentic-platform
     role: platform
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+kind: EKSConfigTemplate
+metadata:
+  name: agentic-cp-platform
+  namespace: default
+spec:
+  template:
+    spec: {}
