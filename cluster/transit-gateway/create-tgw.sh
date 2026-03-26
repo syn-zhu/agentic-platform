@@ -36,14 +36,15 @@ MGMT_VPC_ID=$(aws eks describe-cluster --name "agentic-mgmt" --region "$REGION" 
   --query 'cluster.resourcesVpcConfig.vpcId' --output text 2>/dev/null || echo "")
 
 if [[ -n "$MGMT_VPC_ID" && "$MGMT_VPC_ID" != "None" ]]; then
-  MGMT_SUBNETS=$(aws ec2 describe-subnets \
-    --filters "Name=vpc-id,Values=$MGMT_VPC_ID" "Name=tag:aws:cloudformation:logical-id,Values=SubnetPrivate*" \
-    --query 'Subnets[].SubnetId' --output text --region "$REGION")
+  # Use array to handle tab-separated output from --output text
+  MGMT_SUBNETS=($(aws ec2 describe-subnets \
+    --filters "Name=vpc-id,Values=$MGMT_VPC_ID" "Name=map-public-ip-on-launch,Values=false" \
+    --query 'Subnets[].SubnetId' --output text --region "$REGION"))
 
   aws ec2 create-transit-gateway-vpc-attachment \
     --transit-gateway-id "$TGW_ID" \
     --vpc-id "$MGMT_VPC_ID" \
-    --subnet-ids $MGMT_SUBNETS \
+    --subnet-ids "${MGMT_SUBNETS[@]}" \
     --tag-specifications "ResourceType=transit-gateway-attachment,Tags=[{Key=Name,Value=agentic-mgmt},{Key=project,Value=agentic-platform}]" \
     --region "$REGION" 2>/dev/null || echo "  Management VPC attachment already exists."
   echo "  Management VPC ($MGMT_VPC_ID) attached."

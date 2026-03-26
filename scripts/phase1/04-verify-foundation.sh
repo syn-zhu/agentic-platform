@@ -13,10 +13,10 @@ check() {
   local desc="$1"; shift
   if eval "$*" > /dev/null 2>&1; then
     echo "  ✓ $desc"
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
     echo "  ✗ $desc"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 }
 
@@ -48,7 +48,7 @@ if [[ -n "$TGW_ID" ]]; then
   check "Management VPC attached" "aws ec2 describe-transit-gateway-vpc-attachments --filters 'Name=transit-gateway-id,Values=$TGW_ID' --region $REGION --query 'TransitGatewayVpcAttachments[0].State' --output text | grep -q available"
 else
   echo "  ✗ TGW ID file not found — run 01-create-transit-gateway.sh"
-  ((FAIL+=2))
+  FAIL=$((FAIL + 2))
 fi
 
 echo ""
