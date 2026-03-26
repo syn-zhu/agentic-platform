@@ -1,0 +1,2 @@
+# Istio sidecar mode — internal control-plane service mesh only
+profile: default

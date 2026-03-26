@@ -1,0 +1,2 @@
+# Istio ambient mode — cell-local mesh, no multi-cluster
+profile: ambient
