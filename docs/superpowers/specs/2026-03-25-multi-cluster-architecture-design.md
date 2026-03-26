@@ -1,107 +1,86 @@
 # Multi-Cluster Architecture Design
 
-**Goal:** Rearchitect the agentic-platform from a single EKS cluster to a multi-cluster topology that separates platform control-plane services, observability, ingress, and tenant workloads into dedicated clusters — connected via Istio 1.29 ambient mesh and AWS Transit Gateway.
+**Goal:** Rearchitect the agentic-platform from a single EKS cluster to a multi-cluster topology that separates platform control-plane services, observability, and tenant workloads into dedicated clusters — with independent meshes per cluster and standard HTTPS for cross-cluster communication.
 
-**Status:** Design — pending implementation plan
+**Status:** Design — pending implementation plan (Phase 2 rework)
 
 ---
 
 ## 1. Cluster Topology
 
-Six clusters total. Five participate in the Istio mesh; the management cluster sits outside.
+Four clusters total. Each cluster that runs a mesh has its own independent Istio installation — there is no cross-cluster mesh. Cross-cluster communication uses standard HTTPS over AWS Transit Gateway.
 
-| Cluster | Network Label | In Mesh | Purpose |
-|---------|--------------|---------|---------|
-| **management** | — (not in mesh) | No | Cluster lifecycle (CAPA), root CA (cert-manager). ArgoCD later. |
-| **control-plane** | `network-cp` | Yes | Platform services: auth, agent registry, memory, platform API |
-| **gateway** | `network-gw` | Yes | North-south ingress (agentgateway-proxy, NLB-backed) |
-| **observability** | `network-obs` | Yes | Metrics (VictoriaMetrics), traces (Langfuse+ClickHouse), dashboards (Kiali, Grafana) |
-| **cell-1** | `network-cell-1` | Yes | Tenant workloads: agents, MCP servers, sandboxes, waypoints |
-| **cell-2** | `network-cell-2` | Yes | Tenant workloads: agents, MCP servers, sandboxes, waypoints |
+| Cluster | Mesh | Purpose |
+|---------|------|---------|
+| **control-plane** | Istio sidecar (internal only) | Platform API, Keycloak, OpenFGA, AgentRegistry, Langfuse+ClickHouse, CAPA, N-S ingress |
+| **observability** | None | VictoriaMetrics, Grafana, Kiali (per-cell mesh visualization) |
+| **cell-1** | Istio ambient (independent) | Tenant workloads, EverMemOS, kagent, own gateway, own waypoints |
+| **cell-2** | Istio ambient (independent) | Tenant workloads, EverMemOS, kagent, own gateway, own waypoints |
 
-### Management Cluster
+### Why No Multi-Cluster Mesh
 
-Outside the mesh. Provisions and manages all other clusters.
+In typical cell-based architectures, control plane and data plane are deliberately separated:
+- **Blast radius** — a mesh issue in a cell doesn't affect platform services
+- **Upgrade independence** — Istio upgrades per-cell without touching control-plane
+- **Failure domains** — each cluster's Istio is fully independent
+- **Simpler trust model** — cross-cluster uses standard TLS + API keys, not SPIFFE
 
-| Component | Purpose |
-|-----------|---------|
-| Cluster API (CAPA provider) | EKS cluster lifecycle — create, upgrade, scale node groups |
-| cert-manager | Root CA issuer. Issues intermediate CAs for each managed cluster's istiod |
-| (ArgoCD — future) | GitOps delivery to all managed clusters |
+This eliminates: east-west gateways, remote secrets, shared CA, ServiceScope, HBONE tunneling between clusters. Each cluster is a self-contained island.
 
 ### Control-Plane Cluster
 
-Platform services that all clusters depend on.
+Platform services and cluster management. Istio in sidecar mode for internal service-to-service communication only.
 
 | Component | Namespace | Purpose |
 |-----------|-----------|---------|
-| istiod (1.29) | istio-system | Mesh control plane (ambient profile) |
-| ztunnel | istio-system | L4 mTLS (DaemonSet) |
-| East-west gateway | istio-system | Inbound HBONE from other clusters |
+| istiod (1.29, sidecar mode) | istio-system | Internal service mesh |
+| N-S ingress gateway | agentgateway-system | External access to platform services (NLB-backed) |
+| Cluster API (CAPA) | capi-system / capa-system | Provisions and manages cell clusters |
 | Keycloak | keycloak | OIDC/OAuth2, organizations, token exchange |
 | OpenFGA | openfga | Fine-grained authorization (per-tenant stores) |
 | Platform API | platform-api | Tenant management, cell assignment |
 | AgentRegistry | agentregistry | Cross-cluster agent/MCP/skill discovery |
-| EverMemOS | evermemos | Long-term memory (MongoDB, Elasticsearch, Milvus, Redis) |
+| Langfuse | langfuse | LLM observability — customer trace data (OTLP ingest) |
+| ClickHouse | langfuse | Trace/event analytics storage for Langfuse |
 | agentic-operator* | TBD | Tenant namespace provisioning (separate design) |
-| OTel Agent + Gateway | otel-system | Local telemetry → obs cluster |
-| vmagent | monitoring | Local metrics → VictoriaMetrics |
-
-### Gateway Cluster
-
-Dedicated north-south ingress, decoupled from platform service scaling.
-
-| Component | Namespace | Purpose |
-|-----------|-----------|---------|
-| istiod (1.29) | istio-system | Mesh control plane |
-| ztunnel | istio-system | L4 mTLS |
-| East-west gateway | istio-system | Cross-cluster mesh connectivity |
-| agentgateway-proxy | agentgateway-system | Ingress gateway (NLB-backed, HTTPRoutes) |
-| OTel Agent + Gateway | otel-system | Local telemetry → obs cluster |
-| vmagent | monitoring | Local metrics → VictoriaMetrics |
+| OTel Agent + Gateway | otel-system | Local telemetry → Langfuse (local) + VictoriaMetrics (obs) |
+| vmagent | monitoring | Local metrics → VictoriaMetrics (obs) |
+| (ArgoCD — future) | argocd | GitOps delivery to all clusters |
 
 ### Observability Cluster
 
-Centralized observability stack. All clusters export metrics and traces here.
+Platform-level infrastructure metrics and mesh visualization. No mesh — receives data over standard networking.
 
 | Component | Namespace | Purpose |
 |-----------|-----------|---------|
-| istiod (1.29) | istio-system | Mesh control plane |
-| ztunnel | istio-system | L4 mTLS |
-| East-west gateway | istio-system | Inbound HBONE for metric/trace ingestion |
 | VictoriaMetrics | monitoring | Single-node. Receives remote-write from all vmagents. Query endpoint for Kiali + Grafana. |
-| Langfuse | langfuse | OTLP HTTP trace ingest from all OTel gateways |
-| ClickHouse | langfuse | Trace/event analytics storage for Langfuse |
-| Kiali | kiali-operator | Multi-cluster mesh visualization. Queries VictoriaMetrics, remote secrets for API access. |
+| Kiali | kiali-operator | Per-cell mesh visualization. Queries VictoriaMetrics + remote API access to each cell. |
 | Grafana | monitoring | Dashboards. Datasource: VictoriaMetrics. |
-| OTel Agent + Gateway | otel-system | Local telemetry (self-monitoring) |
 | vmagent | monitoring | Local metrics (self-monitoring) |
+
+Kiali monitors each cell's ambient mesh individually — no unified cross-cluster graph, but full per-cell service graph visualization by switching between cluster views.
 
 ### Cell Clusters (cell-1, cell-2)
 
-Tenant workloads. Each cell is identical in structure; tenants are pinned to a single cell.
+Tenant workloads. Each cell is identical in structure with its own independent ambient mesh. Tenants are pinned to a single cell.
 
 | Component | Namespace | Purpose |
 |-----------|-----------|---------|
-| istiod (1.29) | istio-system | Mesh control plane |
-| ztunnel | istio-system | L4 mTLS |
-| East-west gateway | istio-system | Cross-cluster mesh connectivity |
+| istiod (1.29, ambient mode) | istio-system | Cell-local ambient mesh |
+| ztunnel | istio-system | L4 mTLS (DaemonSet) |
+| istio-cni | istio-system | eBPF traffic redirection |
+| Cell gateway | agentgateway-system | External access to agents in this cell (NLB-backed) |
 | kagent | kagent-system | Agent CRD reconciliation |
 | kmcp | kagent-system | MCP server pod lifecycle |
-| openfga-envoy | openfga | Ext_authz adapter (one Deployment per cell, shared by all tenants). Calls OpenFGA in control-plane over mesh. |
-| OTel Agent + Gateway | otel-system | Local telemetry → obs cluster |
-| vmagent | monitoring | Local metrics → VictoriaMetrics |
+| EverMemOS | evermemos | Long-term memory (per-cell, local) |
+| openfga-envoy | openfga | Ext_authz adapter — calls OpenFGA in control-plane over HTTPS |
+| OTel Agent + Gateway | otel-system | Local telemetry → Langfuse (control-plane) |
+| vmagent | monitoring | Local metrics → VictoriaMetrics (obs) |
 | **Per-tenant namespace:** | tenant-{name} | Agent pods, MCP servers, sandboxes, agentgateway waypoint |
 
 ---
 
 ## 2. Node Groups
-
-### Management Cluster
-
-| Node Group | Instance | Scaling | Workloads |
-|-----------|----------|---------|-----------|
-| `management` | t3.medium | Fixed 2 | CAPA controllers, cert-manager |
 
 ### Control-Plane Cluster
 
@@ -109,17 +88,11 @@ Tenant workloads. Each cell is identical in structure; tenants are pinned to a s
 |-----------|----------|---------|-----------|
 | `platform` | t3.large | 2-4 | All control-plane services |
 
-### Gateway Cluster
-
-| Node Group | Instance | Scaling | Workloads |
-|-----------|----------|---------|-----------|
-| `gateway` | t3.medium | 1-3 | agentgateway-proxy, istiod, ztunnel |
-
 ### Observability Cluster
 
 | Node Group | Instance | Scaling | Workloads |
 |-----------|----------|---------|-----------|
-| `obs` | t3.large | 2-4 | VictoriaMetrics, Langfuse, ClickHouse, Kiali, Grafana |
+| `obs` | t3.large | 2-3 | VictoriaMetrics, Kiali, Grafana |
 
 ### Cell Clusters (each)
 
@@ -127,7 +100,7 @@ Tenant workloads. Each cell is identical in structure; tenants are pinned to a s
 |-----------|----------|---------|-------|-----------|
 | `workload` | t3.large | 1-10, autoscaled | `role=workload:NoSchedule` | Agent pods, MCP servers, sandboxes |
 | `waypoint` | t3.small | 1-5, autoscaled | `role=waypoint:NoSchedule` | Per-tenant agentgateway waypoints |
-| `gateway` | t3.medium | Fixed 1-2 | `role=gateway:NoSchedule` | East-west gateway |
+| `gateway` | t3.medium | Fixed 1-2 | `role=gateway:NoSchedule` | Cell gateway (NLB-backed) |
 
 ---
 
@@ -135,150 +108,127 @@ Tenant workloads. Each cell is identical in structure; tenants are pinned to a s
 
 ### AWS Transit Gateway
 
-All 6 VPCs attach to a single Transit Gateway in us-east-1. Each cluster gets its own VPC with a unique CIDR. Pod CIDRs can overlap since Istio multi-network tunnels all cross-cluster traffic through E-W gateways.
+All 4 VPCs attach to a single Transit Gateway in us-east-1. Cross-cluster communication (cell → control-plane, cell → obs) uses standard HTTPS routed over TGW. No mesh traffic crosses cluster boundaries.
 
 | Cluster | VPC CIDR |
 |---------|----------|
-| management | 10.0.0.0/16 |
 | control-plane | 10.1.0.0/16 |
-| gateway | 10.2.0.0/16 |
-| observability | 10.3.0.0/16 |
-| cell-1 | 10.4.0.0/16 |
-| cell-2 | 10.5.0.0/16 |
+| observability | 10.2.0.0/16 |
+| cell-1 | 10.3.0.0/16 |
+| cell-2 | 10.4.0.0/16 |
 
 **TGW route table:** Routes each VPC CIDR to its attachment.
 
-**Security groups:** Allow TCP 15008 (HBONE), TCP 15012 (istiod xDS for remote secrets), TCP 443 (kube API for CAPA and Kiali remote access) between VPCs.
+**Security groups:** Allow TCP 443 (HTTPS — control-plane services, kube API for CAPA and Kiali) between VPCs. No mesh ports (15008, 15012) needed cross-cluster.
 
-**Management cluster:** Only needs outbound to kube API (443) on all managed clusters. No inbound mesh traffic.
+### Istio Configuration — Control-Plane Cluster
 
-### Istio Multi-Network Configuration
+Sidecar mode, internal only. No multi-cluster, no ambient.
 
-Each in-mesh cluster:
-- Labeled `topology.istio.io/network: <network-label>`
-- Runs its own istiod (multi-primary model)
-- Has an east-west gateway on port 15008 (`protocol: HBONE`, `TLS.Mode: Passthrough`)
-- Has remote secrets (kubeconfigs) for all other in-mesh clusters
+```yaml
+# istiod values
+profile: default  # sidecar mode
+```
 
-**Remote secrets** (5 clusters × 4 remote secrets each = 20 total):
-- Each istiod uses remote secrets to discover services and endpoints in other clusters
-- istiod also auto-discovers E-W gateway IPs from the remote cluster's Gateway Service via the remote secret API access — no static meshNetworks configuration needed
-- Each E-W gateway gets a `LoadBalancer` Service with a private IP routable via TGW
+Namespaces that need mesh: labeled `istio-injection: enabled`. Services communicate via sidecar proxies within the cluster.
 
-**Remote secret RBAC:** Each remote secret kubeconfig uses a dedicated ServiceAccount per remote cluster with read-only permissions: `get`/`list`/`watch` on Services, Endpoints, Pods, Namespaces, and Istio CRDs. Created by `istioctl create-remote-secret` or equivalent automation.
+### Istio Configuration — Cell Clusters
 
-**Remote secret lifecycle:** Initially created by deployment scripts during cluster bootstrap. Rotated by re-running the creation script (kubeconfigs use long-lived SA tokens). Future: managed by ArgoCD with external-secrets-operator for automated rotation.
+Ambient mode, cell-local. Each cell has its own independent istiod with its own self-signed CA.
 
-### Istio Feature Flags
+```yaml
+# istiod values
+profile: ambient
+```
 
-`AMBIENT_ENABLE_BAGGAGE` enables cross-network peer metadata exchange via baggage headers on HBONE CONNECT requests. Required for telemetry attribution across E-W gateways.
-
-**Note:** The exact configuration path for this flag (ztunnel env var vs. meshConfig) should be verified against Istio 1.29 release notes during implementation. It may be set as an environment variable on the ztunnel DaemonSet rather than via meshConfig.
+No `meshID`, `clusterName`, `network` needed — single-cluster ambient, no multi-cluster configuration. Each istiod generates its own self-signed root CA (the default).
 
 ---
 
 ## 4. Traffic Flows
 
+### North-South: External → Platform API
+
+```
+External Client
+  → AWS NLB (control-plane cluster)
+    → ingress gateway (control-plane)
+      → Platform API / Keycloak / AgentRegistry
+```
+
+The control-plane ingress only routes to local platform services. It does NOT route to agents in cells.
+
 ### North-South: External → Agent (Cell)
 
 ```
 External Client
-  → AWS NLB (gateway cluster)
-    → agentgateway-proxy (ingress gateway)
+  → AWS NLB (cell cluster)
+    → cell gateway (agentgateway-proxy)
       → HTTPRoute match (/a2a/{ns}/{agent}, /mcp/{ns}/{server}, etc.)
-        → [double HBONE] → Cell E-W gateway
-          → dest ztunnel → tenant waypoint (L7 policy)
-            → Agent pod
+        → ztunnel → tenant waypoint (L7 policy)
+          → Agent pod
 ```
 
-The ingress gateway is an L7 proxy originating connections to a remote network, so it creates **double HBONE**: an inner tunnel (ingress ↔ dest ztunnel identity, end-to-end) wrapped in an outer tunnel (ingress ↔ E-W gateway identity). The destination cluster's E-W gateway terminates the outer layer and forwards the inner HBONE as raw bytes to the local ztunnel, which routes through the tenant waypoint for L7 policy.
+Each cell has its own NLB and gateway. The Platform API (or DNS/routing layer) directs clients to the correct cell's endpoint based on tenant-to-cell mapping.
 
-Only the **destination cluster's** E-W gateway is in the path. The ingress gateway itself acts as the source-side tunnel endpoint — there is no separate source E-W gateway hop.
-
-### East-West: Agent (Cell) → Platform Service (Control-Plane)
+### East-West: Agent (Cell) → Control-Plane Service
 
 ```
 Agent pod (cell)
-  → source ztunnel
-    → [single HBONE] → Control-plane E-W gateway
-      → dest ztunnel
-        → Platform service (EverMemOS, OpenFGA, AgentRegistry, etc.)
+  → HTTPS request to control-plane NLB (via TGW)
+    → control-plane ingress or NLB
+      → Keycloak / OpenFGA / AgentRegistry / Langfuse
 ```
 
-Standard L4 ztunnel-to-ztunnel path. The source ztunnel connects directly to the remote E-W gateway — no source-side E-W gateway in the path. Single HBONE because ztunnel is an L4 proxy (not L7). Platform services do not have waypoints.
+Standard HTTPS over TGW private networking. No mesh involved. Agents use service URLs configured at deployment time (e.g., `https://cp.internal.agentic.io/...`).
 
-### East-West: Agent (Cell 1) → Agent (Cell 2)
-
-```
-Agent pod (Cell 1)
-  → source ztunnel
-    → [single HBONE] → Cell 2 E-W gateway
-      → dest ztunnel
-        → tenant waypoint (L7 policy)
-          → Agent pod (Cell 2)
-```
-
-Source ztunnel connects directly to the destination cell's E-W gateway. The destination ztunnel sees the tenant namespace has a waypoint and routes through it for L7 policy enforcement.
-
-### East-West: Cell → Observability (Telemetry Export)
+### East-West: Agent (Cell) → EverMemOS
 
 ```
-OTel Gateway (cell) → [single HBONE] → Obs E-W gateway → Langfuse
-vmagent (cell)      → [single HBONE] → Obs E-W gateway → VictoriaMetrics
+Agent pod (cell)
+  → ztunnel → EverMemOS pod (same cell, via ambient mesh)
 ```
 
-Telemetry export uses the same mesh routing as any other east-west call.
+Local call within the cell's ambient mesh. No cross-cluster hop.
 
-### Double HBONE — When and Why
+### Telemetry Flow
 
-Double HBONE occurs only when an **L7 proxy** (ingress gateway or waypoint) originates a connection to a remote network. L7 proxies terminate the original connection and create a new one, so they need to establish both identity layers:
+```
+Traces: Agent → OTel Agent → OTel Gateway → OTLP HTTPS → Langfuse (control-plane)
+Metrics: vmagent (per cluster) → remote-write HTTPS → VictoriaMetrics (obs)
+```
 
-| Scenario | HBONE Type | Why |
-|----------|-----------|-----|
-| Ingress → remote cell agent | Double | Ingress is L7, creates both layers |
-| ztunnel → remote service | Single | ztunnel is L4, single hop to remote E-W GW |
-| Waypoint → remote endpoint (multi-cluster LB) | Double | Waypoint is L7, selected a remote backend |
+Both flows use standard HTTPS over TGW. No mesh routing for telemetry export.
 
-Istio uses internal metadata to signal that L7 policy was already applied by a waypoint, preventing double-enforcement at the destination. (The exact mechanism — HBONE connection metadata, filter state, or headers — should be verified against Istio 1.29 source during implementation.)
+### Cross-Cell Agent-to-Agent (A2A)
 
-In our architecture, double HBONE is primarily the north-south ingress path. East-west agent traffic uses single HBONE since ztunnels are L4.
+Not supported directly in this topology. If needed later, options include:
+- Route through cell gateways (cell-1 agent → cell-1 gateway → cell-2 gateway → cell-2 agent)
+- Platform API mediates the call
+- Future: selective mesh peering between cells
 
 ---
 
-## 5. Service Discovery & Global Services
+## 5. Service Discovery
 
-In Istio multi-primary multi-network, services are discoverable cross-cluster by default via remote secrets — each istiod reads services from all remote clusters. To restrict visibility (rather than enable it), Istio provides the `ServiceScope` API.
+### Within a Cell (Istio ambient)
 
-For our architecture, we use a default-deny approach: only explicitly labeled services are global. The `ServiceScope` resource is configured to require the `istio.io/global: "true"` label for cross-cluster export.
+Standard Kubernetes service discovery + Istio ambient mesh. Services within a cell discover each other via DNS (`svc.cluster.local`). Waypoints provide L7 policy.
 
-### Global Services
+### Cross-Cluster (no mesh)
 
-**Control-plane cluster → discoverable from cells + gateway:**
-- `evermemos-app.evermemos`
-- `openfga.openfga`
-- `keycloak.keycloak`
-- `agentregistry.agentregistry`
-- `platform-api.platform-api`
+Cells discover control-plane services via configured URLs, not mesh service discovery. These URLs are injected as environment variables or ConfigMaps at deployment time:
 
-**Observability cluster → discoverable from all in-mesh clusters:**
-- `langfuse-web.langfuse` (OTLP ingest)
-- `victoriametrics.monitoring` (remote-write target)
+- `KEYCLOAK_URL=https://cp-nlb.internal:443/realms/agents`
+- `OPENFGA_URL=https://cp-nlb.internal:443/openfga`
+- `AGENTREGISTRY_URL=https://cp-nlb.internal:443/registry`
+- `LANGFUSE_OTLP_URL=https://cp-nlb.internal:443/otlp`
 
-**Cell clusters → discoverable from gateway cluster (for ingress routing):**
-- All tenant agent services
-- All tenant MCP server services
-- Global label applied at namespace creation (by agentic-operator or bootstrap script)
+The Platform API / agentic-operator provisions these URLs when creating tenant namespaces.
 
-### Cluster-Local Services (not global)
+### Tenant Agent Discovery
 
-- istiod, ztunnel — per-cluster mesh infra
-- kagent, kmcp — per-cell agent control plane
-- OTel agent/gateway, vmagent — local collection, exports out-of-cluster
-- ClickHouse — co-located with Langfuse, not directly accessed cross-cluster
-
-### Waypoint Synchronization
-
-Istio requires waypoint configurations to be uniform across clusters. Since tenants are cell-pinned (each tenant namespace exists in exactly one cell), this is naturally satisfied — no waypoint config conflicts.
+The AgentRegistry in the control-plane cluster serves as the cross-cluster catalog. Agents register themselves at startup; other agents/clients query the registry to find agent endpoints. The registry returns cell-specific gateway URLs.
 
 ---
 
@@ -286,10 +236,10 @@ Istio requires waypoint configurations to be uniform across clusters. Since tena
 
 ### Metrics: vmagent → VictoriaMetrics
 
-Each cluster runs vmagent (Deployment) that scrapes local targets and remote-writes to VictoriaMetrics in the observability cluster.
+Each cluster runs vmagent (Deployment) that scrapes local targets and remote-writes to VictoriaMetrics in the observability cluster over HTTPS via TGW.
 
 **Cluster label injection:**
-- **ztunnel metrics:** Already include `cluster` label natively (Istio 1.29 ambient). No injection needed.
+- **Cell clusters (ztunnel metrics):** Already include `cluster` label natively (Istio 1.29 ambient). No injection needed.
 - **All other metrics** (kube-state-metrics, node-exporter, app pods): Cluster label injected by vmagent via `externalLabels`:
 
 ```yaml
@@ -298,19 +248,9 @@ spec:
     cluster: "cell-1"  # set per-cluster
 ```
 
-Or via remote-write relabeling:
+**VictoriaMetrics** runs as a single-node instance in the observability cluster.
 
-```yaml
-remoteWrite:
-  - url: "http://victoriametrics.monitoring.svc:8428/api/v1/write"
-    writeRelabelConfigs:
-      - targetLabel: cluster
-        replacement: "cell-1"
-```
-
-**VictoriaMetrics** runs as a single-node instance (`victoria-metrics-single`) in the observability cluster. Single binary, single endpoint. Upgrade to cluster mode (vminsert/vmselect/vmstorage) when scale demands it.
-
-**Retention:** 15 days for metrics (sufficient for dashboards and alerting). Sizing: 50Gi PVC initial, monitor and expand as needed.
+**Retention:** 15 days for metrics. Sizing: 50Gi PVC initial.
 
 ### Traces: OTel → Langfuse
 
@@ -318,76 +258,45 @@ Per-cluster OTel pipeline (Agent + Gateway pattern):
 
 | Component | Kind | Config |
 |-----------|------|--------|
-| OTel Agent | DaemonSet | OTLP receiver (gRPC:4317), `k8sattributes` processor (pod/ns/deploy metadata), `resource` processor (sets `k8s.cluster.name`), `batch` processor, exports to in-cluster gateway |
-| OTel Gateway | Deployment (2 replicas) | OTLP receiver, `memory_limiter`, `batch`, exports OTLP HTTP to Langfuse in obs cluster |
+| OTel Agent | DaemonSet | OTLP receiver (gRPC:4317), `k8sattributes` processor, `resource` processor (sets `k8s.cluster.name`), exports to in-cluster gateway |
+| OTel Gateway | Deployment (2 replicas) | OTLP receiver, `memory_limiter`, `batch`, exports OTLP HTTPS to Langfuse in control-plane cluster |
 
-OTel collectors run in the `otel-system` namespace (separate from Langfuse lifecycle).
+OTel collectors run in the `otel-system` namespace.
 
-**Cross-cluster trace correlation** works automatically:
-- W3C `traceparent` headers propagate through HBONE tunnels (E-W gateways forward headers transparently)
-- `AMBIENT_ENABLE_BAGGAGE` adds peer metadata for ztunnel/waypoint-level telemetry
-- All OTel gateways export to the same Langfuse → spans with same trace ID reassemble
-- `k8s.cluster.name` resource attribute identifies which cluster each span originated in
+**Cross-cluster trace correlation** works automatically — W3C `traceparent` headers are forwarded by cell gateways. All OTel gateways export to the same Langfuse instance → spans with same trace ID reassemble. `k8s.cluster.name` identifies which cluster each span originated in.
 
-**Trace retention:** 30 days in ClickHouse. ClickHouse storage: 100Gi PVC initial (2 replicas + 3 Keeper nodes, same as current config).
+**Trace retention:** 30 days in ClickHouse. Storage: 100Gi PVC initial.
 
 ### Dashboards
 
-**Kiali** (observability cluster, multi-cluster mode):
-- Queries VictoriaMetrics for traffic metrics (single endpoint, cluster labels already present)
-- Remote secrets for each in-mesh cluster's API server (reads Istio config, k8s resources, workload health)
-- Kiali Operator on obs cluster (full install). On each remote cluster, create Kiali SA + RBAC via the Kiali Operator's remote-cluster-only mode or the `kiali-prepare-remote-cluster.sh` script. (Verify exact mechanism against current Kiali Operator docs during implementation.)
-- Authentication: anonymous (internal access only)
+**Kiali** (observability cluster):
+- Queries VictoriaMetrics for traffic metrics (single endpoint, cluster labels present)
+- Remote API access to each cell cluster (reads Istio config, k8s resources, workload health)
+- Shows each cell's ambient mesh topology independently (switch between cluster views)
+- Cannot show unified cross-cluster graph (no multi-cluster mesh)
 
 **Grafana** (observability cluster):
 - Datasource: VictoriaMetrics
 - Dashboards for all clusters, filterable by `cluster` label
 
-### HA Considerations
-
-For this initial deployment, all observability components run single-replica (except ClickHouse which already has 2 replicas). This is acceptable for dev/staging. For production:
-- VictoriaMetrics: upgrade to cluster mode (vminsert/vmselect/vmstorage with replication)
-- Langfuse: 2+ replicas behind a Service
-- Kiali/Grafana: stateless, easily scaled to 2+ replicas
-
 ---
 
-## 7. Certificate Management & Trust
+## 7. Certificate Management
 
-### Architecture
+### No Shared CA
 
-```
-Management Cluster (cert-manager)
-  Root CA (self-signed ClusterIssuer)
-    ├── Intermediate CA: control-plane → istiod signs SPIFFE certs
-    ├── Intermediate CA: gateway       → istiod signs SPIFFE certs
-    ├── Intermediate CA: observability  → istiod signs SPIFFE certs
-    ├── Intermediate CA: cell-1        → istiod signs SPIFFE certs
-    └── Intermediate CA: cell-2        → istiod signs SPIFFE certs
-```
+Each cluster manages its own Istio CA independently:
+- **Control-plane:** istiod in sidecar mode generates its own self-signed CA for SPIFFE certs
+- **Cell clusters:** each istiod in ambient mode generates its own self-signed CA
+- **Observability:** no mesh, no CA needed
 
-### How It Works
+Cross-cluster communication uses standard TLS (NLB/ALB termination or service-level TLS), not mesh mTLS.
 
-1. cert-manager runs in the management cluster with a self-signed `ClusterIssuer` as root CA (software-backed; migrate to ACM PCA later as a hardening step — not a one-way door)
-2. For each in-mesh cluster, cert-manager issues an intermediate CA `Certificate`
-3. Intermediate CA cert+key is distributed to each cluster's `istio-system` namespace as a `cacerts` Secret (Istio plugged-in CA)
-4. Each cluster's istiod uses its intermediate CA to sign workload SPIFFE certificates
-5. All workload certs chain to the same root → cross-cluster mTLS succeeds
+### Future Hardening
 
-### Intermediate CA Distribution
-
-The `cacerts` secret must get from the management cluster to each managed cluster. Mechanism:
-
-- **Initial bootstrap:** A deployment script runs `kubectl` against the management cluster to extract the intermediate CA cert+key, then applies the `cacerts` Secret to the target cluster's `istio-system` namespace. This runs before Istio installation.
-- **Rotation:** cert-manager auto-renews the intermediate CA Certificate. A CronJob or controller in the management cluster detects renewal and pushes the updated secret to managed clusters. (Future: external-secrets-operator or ArgoCD for fully automated sync.)
-
-### Trust Domain
-
-All clusters share `cluster.local` as the SPIFFE trust domain. Workload identity format: `spiffe://cluster.local/ns/{namespace}/sa/{service-account}`.
-
-### Rotation
-
-cert-manager handles intermediate CA rotation automatically. Workload certs are short-lived (24h default) and rotate naturally via istiod.
+If needed later:
+- cert-manager per-cluster for TLS cert management (ingress certs, etc.)
+- ACM PCA for production-grade CA backing
 
 ---
 
@@ -395,102 +304,105 @@ cert-manager handles intermediate CA rotation automatically. Workload certs are 
 
 ### Keycloak (Control-Plane Cluster)
 
-No changes to Keycloak configuration. Same realm (`agents`), same organization-based multi-tenancy, same token exchange flow. Keycloak service is marked global so all clusters can reach it for token validation.
+Same realm (`agents`), same organization-based multi-tenancy, same token exchange flow. Exposed via control-plane ingress/NLB with TLS.
 
 ### OpenFGA (Control-Plane Cluster)
 
-OpenFGA server stays in the control-plane cluster. Per-cell openfga-envoy adapters call it over the mesh. One openfga-envoy Deployment per cell cluster, in the `openfga` namespace, shared by all tenants in that cell. The ext_authz flow:
+OpenFGA server in the control-plane cluster. Per-cell openfga-envoy adapters call it over HTTPS via TGW. One openfga-envoy Deployment per cell, in the `openfga` namespace.
 
 ```
-Agent request → tenant waypoint (cell, tenant-{name} ns)
+Agent request → tenant waypoint (cell)
   → ext_authz to openfga-envoy (cell, openfga ns)
-    → OpenFGA gRPC (control-plane, via mesh) → allow/deny
+    → OpenFGA HTTPS (control-plane, via TGW) → allow/deny
 ```
 
 ### Ingress Authentication
 
-AgentgatewayPolicy on the ingress gateway (gateway cluster):
-- JWT validation via Keycloak JWKS (cross-cluster call to control-plane)
-- Required claim: `organization` (tenant gate)
-- Audience validation deferred to per-tenant waypoints
+**Control-plane ingress:** JWT validation via Keycloak JWKS.
+
+**Cell gateways:** JWT validation via Keycloak JWKS (cross-cluster HTTPS call to control-plane). Required claim: `organization` (tenant gate). Per-tenant waypoints handle audience validation.
 
 ---
 
 ## 9. Cluster Provisioning
 
-### Cluster API (Management Cluster)
+### Cluster API (Control-Plane Cluster)
 
-The management cluster runs Cluster API with the CAPA (Cluster API Provider AWS) provider for EKS cluster lifecycle management. CAPA replaces the current `eksctl`-based `00-create-cluster.sh` for cluster creation and node group management.
+CAPA runs in the control-plane cluster (not a separate management cluster). It provisions and manages cell clusters and the observability cluster.
 
-Each managed cluster is defined as a set of CAPA CRs:
-- `AWSManagedControlPlane` — EKS control plane config (k8s version, IAM, networking)
-- `MachinePool` / `AWSManagedMachinePool` — Node groups with instance types, scaling, taints
+Each managed cluster is defined as CAPA CRs:
+- `AWSManagedControlPlane` — EKS control plane config
+- `MachinePool` / `AWSManagedMachinePool` — Node groups
+
+### VPC Layout
+
+| Cluster | VPC CIDR |
+|---------|----------|
+| control-plane | 10.1.0.0/16 |
+| observability | 10.2.0.0/16 |
+| cell-1 | 10.3.0.0/16 |
+| cell-2 | 10.4.0.0/16 |
+
+Pod CIDRs can overlap — no cross-cluster pod routing.
+
+### Transit Gateway
+
+- Single TGW in us-east-1, all 4 VPCs attached
+- Security groups: TCP 443 between VPCs (HTTPS for control-plane services, kube API for CAPA/Kiali)
+- No mesh ports needed cross-cluster
 
 ### Deployment Scripts
 
-The existing numbered scripts (`00` through `07`) are repurposed for **application-level deployment** within each cluster (Helm releases, manifests, secrets). Cluster creation is handled by CAPA, not scripts.
-
-Scripts gain a `--cluster-type` parameter to deploy the right components to the right cluster:
+Scripts use a `--cluster-type` parameter:
 
 ```bash
-# CAPA creates the cluster (declarative, via management cluster)
-# Then application-level deployment:
-./scripts/03-deploy-platform.sh --cluster-type control-plane
-./scripts/03-deploy-platform.sh --cluster-type cell --cluster-name cell-1
-./scripts/03-deploy-platform.sh --cluster-type observability
+./scripts/phase2/03-deploy-platform.sh --cluster-type control-plane
+./scripts/phase2/03-deploy-platform.sh --cluster-type cell --cluster-name cell-1
 ```
-
-### Cell Assignment
-
-When a new tenant is onboarded, the Platform API (or agentic-operator — separate design) selects a cell and creates the tenant namespace there. The interface between this spec and the agentic-operator spec is:
-
-- **Input:** Platform API receives tenant creation request (org name, config)
-- **Decision:** Platform API selects a cell (initially round-robin or least-loaded)
-- **Action:** Platform API (or operator) creates namespace in the selected cell with required labels (`istio.io/global: "true"`, ambient enrollment, waypoint config)
-- **Record:** Cell assignment is stored in the Platform API's database (immutable — tenants don't move between cells)
-
-The exact orchestration mechanism (direct API call vs. CR reconciliation) is deferred to the agentic-operator design.
 
 ---
 
 ## 10. Migration from Single-Cluster
 
-This design replaces the current single-cluster deployment. Key changes:
-
 | Current (single-cluster) | New (multi-cluster) |
 |--------------------------|---------------------|
-| 1 EKS cluster, 3 node groups | 6 EKS clusters, managed by CAPA |
-| Istio 1.28.3 | Istio 1.29 with AMBIENT_ENABLE_BAGGAGE |
-| Prometheus + kube-prometheus-stack | vmagent → VictoriaMetrics (single-node) |
-| No cross-cluster metrics | vmagent remote-write with cluster labels |
-| Single OTel collector (gRPC→HTTP bridge) | Per-cluster OTel Agent + Gateway pipeline |
-| Kiali (single-cluster) | Kiali multi-cluster with remote secrets |
-| Kyverno (5 ClusterPolicies) | Removed — replaced by agentic-operator (separate design) |
+| 1 EKS cluster, 3 node groups | 4 EKS clusters (cp, obs, cell-1, cell-2) |
+| Istio 1.28.3 ambient (single mesh) | Istio 1.29: sidecar on control-plane, ambient per-cell (independent) |
+| All services co-located | Platform services in control-plane, tenant workloads in cells |
+| Single agentgateway ingress | Control-plane ingress + per-cell gateways |
+| Centralized EverMemOS | Per-cell EverMemOS |
+| Prometheus + kube-prometheus-stack | vmagent → VictoriaMetrics |
+| Single OTel collector | Per-cluster OTel Agent + Gateway |
+| Kiali (single-cluster) | Kiali per-cell visualization (obs cluster) |
+| Kyverno | Removed — replaced by agentic-operator (separate design) |
 | Sandbox router (shared) | Removed — per-tenant routing TBD (separate design) |
-| Self-signed Istio CA per cluster | cert-manager shared root CA with intermediate CAs |
-| eksctl | Cluster API (CAPA) |
-| Single VPC | 6 VPCs + Transit Gateway |
+| eksctl | CAPA (in control-plane cluster) |
+| Single VPC | 4 VPCs + Transit Gateway |
 
 ### HA Considerations
 
-For this initial deployment, all control-plane components (istiod, Keycloak, OpenFGA, Langfuse, VictoriaMetrics) run single-replica. This is acceptable for dev/staging. Production hardening (multi-replica, pod disruption budgets, cross-AZ scheduling) is a follow-up.
+All components run single-replica initially (dev/staging). Production hardening is a follow-up.
 
 ### Out of Scope (Separate Designs)
 
-- **agentic-operator** — tenant namespace provisioning, cell assignment, replaces Kyverno + onboarding scripts
+- **agentic-operator** — tenant namespace provisioning, cell assignment
 - **Per-tenant sandbox routing** — replaces shared sandbox-router
-- **ArgoCD GitOps** — future addition to management cluster
+- **ArgoCD GitOps** — future addition to control-plane cluster
 - **External DNS** — production domain setup
-- **ACM PCA integration** — hardware-backed root CA (hardening step)
+- **Cross-cell A2A routing** — if needed, separate design
 
 ---
 
 ## 11. AWS Managed Resources
 
-Shared across clusters via TGW connectivity. All reside in the **control-plane VPC** (10.1.0.0/16). Security groups allow inbound on 5432/6379 from all cluster VPC CIDRs.
+Shared across clusters via TGW. Reside in the **control-plane VPC** (10.1.0.0/16).
 
-| Resource | Type | Shared By |
-|----------|------|-----------|
-| RDS PostgreSQL 17 | db.t4g.small → db.t4g.medium | Keycloak, OpenFGA, AgentRegistry, Langfuse |
-| ElastiCache Redis | cache.t4g.small | Langfuse, EverMemOS |
+| Resource | Type | Used By |
+|----------|------|---------|
+| RDS PostgreSQL 17 | db.t4g.medium | Keycloak, OpenFGA, AgentRegistry, Langfuse |
+| ElastiCache Redis | cache.t4g.small | Langfuse |
 | S3 | agentic-platform-langfuse-dev | Langfuse |
+
+Security groups: allow inbound TCP 5432/6379 from all cluster VPC CIDRs.
+
+Note: EverMemOS is per-cell with its own in-cluster stateful storage (MongoDB, Elasticsearch, Milvus). No shared AWS resources needed for EverMemOS.
