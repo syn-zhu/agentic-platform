@@ -25,6 +25,7 @@ metadata:
   name: agentic-cp-platform
   namespace: default
 spec:
+  amiType: AL2023_x86_64_STANDARD
   instanceType: t3.large
   scaling:
     minSize: 2

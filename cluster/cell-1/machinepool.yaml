@@ -26,6 +26,7 @@ metadata:
   name: agentic-cell-1-workload
   namespace: default
 spec:
+  amiType: AL2023_x86_64_STANDARD
   instanceType: t3.large
   scaling:
     minSize: 1
@@ -79,6 +80,7 @@ metadata:
   name: agentic-cell-1-waypoint
   namespace: default
 spec:
+  amiType: AL2023_x86_64_STANDARD
   instanceType: t3.small
   scaling:
     minSize: 1
@@ -132,6 +134,7 @@ metadata:
   name: agentic-cell-1-gateway
   namespace: default
 spec:
+  amiType: AL2023_x86_64_STANDARD
   instanceType: t3.medium
   scaling:
     minSize: 1
