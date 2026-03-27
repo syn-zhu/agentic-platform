@@ -1,3 +1,53 @@
+# System pool — untainted, for CoreDNS, ebs-csi, istiod, and other infra pods
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachinePool
+metadata:
+  name: agentic-cell-2-system
+  namespace: default
+spec:
+  clusterName: agentic-cell-2
+  replicas: 2
+  template:
+    spec:
+      clusterName: agentic-cell-2
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+          kind: EKSConfigTemplate
+          name: agentic-cell-2-system
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: AWSManagedMachinePool
+        name: agentic-cell-2-system
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSManagedMachinePool
+metadata:
+  name: agentic-cell-2-system
+  namespace: default
+spec:
+  amiType: AL2023_x86_64_STANDARD
+  instanceType: t3.small
+  scaling:
+    minSize: 2
+    maxSize: 3
+  diskSize: 20
+  labels:
+    node-role: system
+  capacityType: onDemand
+  additionalTags:
+    project: agentic-platform
+    role: system
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+kind: EKSConfigTemplate
+metadata:
+  name: agentic-cell-2-system
+  namespace: default
+spec:
+  template:
+    spec: {}
+---
 # Workload pool — tenant agent pods, MCP servers, sandboxes
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachinePool
