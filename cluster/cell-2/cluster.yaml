@@ -43,11 +43,11 @@ spec:
       version: v1.13.2-eksbuild.3
       conflictResolution: overwrite
       configuration: '{"tolerations":[{"operator":"Exists"}]}'
-    - name: vpc-cni
+    - name: vpc-cni  # tolerates all taints by default; configuration kept for explicitness
       version: v1.21.1-eksbuild.1
       conflictResolution: overwrite
       configuration: '{"tolerations":[{"operator":"Exists"}]}'
-    - name: kube-proxy
+    - name: kube-proxy  # tolerates all taints by default; configuration kept for explicitness
       version: v1.35.0-eksbuild.2
       conflictResolution: overwrite
       configuration: '{"tolerations":[{"operator":"Exists"}]}'
