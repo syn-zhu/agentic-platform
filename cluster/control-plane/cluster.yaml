@@ -38,15 +38,7 @@ spec:
     vpc:
       cidrBlock: "10.1.0.0/16"
   associateOIDCProvider: true
-  addons:
-    - name: vpc-cni
-      conflictResolution: overwrite
-    - name: coredns
-      conflictResolution: overwrite
-    - name: kube-proxy
-      conflictResolution: overwrite
-    - name: aws-ebs-csi-driver
-      conflictResolution: overwrite
+  addons: []
   endpointAccess:
     public: true
     private: true
