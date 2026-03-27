@@ -1,1 +1,6 @@
 profile: ambient
+
+# Tolerate all cell node taints so CNI DaemonSet runs on every node
+cni:
+  tolerations:
+    - operator: Exists

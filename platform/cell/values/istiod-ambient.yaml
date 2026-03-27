@@ -1,2 +1,6 @@
 # Istio ambient mode — cell-local mesh, no multi-cluster
 profile: ambient
+
+# Tolerate all cell node taints so istiod can schedule on any node
+tolerations:
+  - operator: Exists
