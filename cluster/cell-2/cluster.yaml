@@ -39,14 +39,22 @@ spec:
       cidrBlock: "10.4.0.0/16"
   associateOIDCProvider: true
   addons:
-    - name: vpc-cni
-      conflictResolution: overwrite
     - name: coredns
+      version: v1.13.2-eksbuild.3
       conflictResolution: overwrite
+      configuration: '{"tolerations":[{"operator":"Exists"}]}'
+    - name: vpc-cni
+      version: v1.21.1-eksbuild.1
+      conflictResolution: overwrite
+      configuration: '{"tolerations":[{"operator":"Exists"}]}'
     - name: kube-proxy
+      version: v1.35.0-eksbuild.2
       conflictResolution: overwrite
+      configuration: '{"tolerations":[{"operator":"Exists"}]}'
     - name: aws-ebs-csi-driver
+      version: v1.57.1-eksbuild.1
       conflictResolution: overwrite
+      configuration: '{"node":{"tolerations":[{"operator":"Exists"}]}}'
   endpointAccess:
     public: true
     private: true

@@ -40,12 +40,16 @@ spec:
   associateOIDCProvider: true
   addons:
     - name: vpc-cni
+      version: v1.21.1-eksbuild.1
       conflictResolution: overwrite
     - name: coredns
+      version: v1.13.2-eksbuild.3
       conflictResolution: overwrite
     - name: kube-proxy
+      version: v1.35.0-eksbuild.2
       conflictResolution: overwrite
     - name: aws-ebs-csi-driver
+      version: v1.57.1-eksbuild.1
       conflictResolution: overwrite
   endpointAccess:
     public: true
