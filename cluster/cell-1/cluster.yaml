@@ -55,6 +55,7 @@ spec:
       version: v1.57.1-eksbuild.1
       conflictResolution: overwrite
       configuration: '{"node":{"tolerations":[{"operator":"Exists"}]}}'
+      serviceAccountRoleARN: arn:aws:iam::268558157000:role/agentic-cell-1-ebs-csi-driver
   endpointAccess:
     public: true
     private: true

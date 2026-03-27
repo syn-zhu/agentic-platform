@@ -51,6 +51,7 @@ spec:
     - name: aws-ebs-csi-driver
       version: v1.57.1-eksbuild.1
       conflictResolution: overwrite
+      serviceAccountRoleARN: arn:aws:iam::268558157000:role/agentic-obs-ebs-csi-driver
   endpointAccess:
     public: true
     private: true
