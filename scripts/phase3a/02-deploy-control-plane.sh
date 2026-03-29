@@ -95,7 +95,10 @@ restore_values() {
 # Add restore to cleanup
 trap 'restore_values; rm -rf "$TMPDIR_LOCAL"' EXIT
 
-(cd "$CP_DIR" && helmfile --kube-context agentic-cp sync)
+# Skip Istio releases (already installed in Phase 2) — only sync service releases
+(cd "$CP_DIR" && helmfile --kube-context agentic-cp \
+  -l name=keycloak -l name=openfga -l name=clickhouse -l name=langfuse \
+  sync)
 
 restore_values
 # Re-register simple cleanup
