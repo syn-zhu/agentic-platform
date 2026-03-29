@@ -85,7 +85,7 @@ KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 $KUBECTL create secret generic keycloak-admin-credentials \
   --namespace keycloak \
   --from-literal=user="admin" \
-  --from-literal=password="$KEYCLOAK_ADMIN_PASSWORD" \
+  --from-literal=admin-password="$KEYCLOAK_ADMIN_PASSWORD" \
   --dry-run=client -o yaml | $KUBECTL apply -f -
 
 # ── 6. langfuse/langfuse-clickhouse-credentials ──
