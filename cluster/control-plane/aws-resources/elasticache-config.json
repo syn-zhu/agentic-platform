@@ -1,0 +1,10 @@
+{
+  "replicationGroupId": "agentic-cp-redis",
+  "nodeType": "cache.t4g.small",
+  "numCacheClusters": 1,
+  "transitEncryptionEnabled": true,
+  "tags": {
+    "project": "agentic-platform",
+    "cluster": "agentic-cp"
+  }
+}

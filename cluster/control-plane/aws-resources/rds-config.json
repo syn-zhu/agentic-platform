@@ -1,0 +1,17 @@
+{
+  "instanceIdentifier": "agentic-cp-postgres",
+  "instanceClass": "db.t4g.medium",
+  "engine": "postgres",
+  "engineVersion": "17",
+  "allocatedStorage": 20,
+  "storageType": "gp3",
+  "masterUsername": "postgres",
+  "databases": ["langfuse", "keycloak", "openfga", "agentregistry"],
+  "backupRetentionPeriod": 1,
+  "multiAZ": false,
+  "storageEncrypted": true,
+  "tags": {
+    "project": "agentic-platform",
+    "cluster": "agentic-cp"
+  }
+}
