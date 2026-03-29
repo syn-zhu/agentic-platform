@@ -79,7 +79,16 @@ $KUBECTL create secret generic openfga-db-credentials \
   --from-literal=uri="postgres://openfga:${OPENFGA_DB_PASSWORD}@${RDS_ENDPOINT}:5432/openfga?sslmode=require" \
   --dry-run=client -o yaml | $KUBECTL apply -f -
 
-# ── 5. langfuse/langfuse-clickhouse-credentials ──
+# ── 5. keycloak/keycloak-admin-credentials ──
+echo "Creating secret: keycloak/keycloak-admin-credentials..."
+KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+$KUBECTL create secret generic keycloak-admin-credentials \
+  --namespace keycloak \
+  --from-literal=user="admin" \
+  --from-literal=password="$KEYCLOAK_ADMIN_PASSWORD" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 6. langfuse/langfuse-clickhouse-credentials ──
 echo "Creating secret: langfuse/langfuse-clickhouse-credentials..."
 CLICKHOUSE_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 $KUBECTL create secret generic langfuse-clickhouse-credentials \
