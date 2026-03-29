@@ -55,16 +55,14 @@ $KUBECTL apply -f "$MANIFESTS_DIR/namespaces.yaml"
 echo ""
 echo "── Preparing Helm values (substituting RDS/Redis endpoints) ──"
 
-# Export vars consumed by envsubst
-export PLACEHOLDER_RDS_ENDPOINT="$RDS_ENDPOINT"
-export PLACEHOLDER_REDIS_ENDPOINT="$REDIS_ENDPOINT"
-
+# Copy values to temp dir and substitute placeholders with sed
 TEMP_VALUES_DIR="$TMPDIR_LOCAL/values"
 mkdir -p "$TEMP_VALUES_DIR"
 
 for f in "$CP_DIR/values/"*.yaml; do
   fname="$(basename "$f")"
-  envsubst '${PLACEHOLDER_RDS_ENDPOINT} ${PLACEHOLDER_REDIS_ENDPOINT}' \
+  sed -e "s|PLACEHOLDER_RDS_ENDPOINT|${RDS_ENDPOINT}|g" \
+      -e "s|PLACEHOLDER_REDIS_ENDPOINT|${REDIS_ENDPOINT}|g" \
     < "$f" > "$TEMP_VALUES_DIR/$fname"
 done
 

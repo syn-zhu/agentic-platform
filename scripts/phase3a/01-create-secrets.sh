@@ -79,7 +79,15 @@ $KUBECTL create secret generic openfga-db-credentials \
   --from-literal=uri="postgres://openfga:${OPENFGA_DB_PASSWORD}@${RDS_ENDPOINT}:5432/openfga?sslmode=require" \
   --dry-run=client -o yaml | $KUBECTL apply -f -
 
-# ── 5. agentregistry/agentregistry-db-credentials ──
+# ── 5. langfuse/langfuse-clickhouse-credentials ──
+echo "Creating secret: langfuse/langfuse-clickhouse-credentials..."
+CLICKHOUSE_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+$KUBECTL create secret generic langfuse-clickhouse-credentials \
+  --namespace langfuse \
+  --from-literal=CLICKHOUSE_PASSWORD="$CLICKHOUSE_PASSWORD" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 6. agentregistry/agentregistry-db-credentials ──
 echo "Creating secret: agentregistry/agentregistry-db-credentials..."
 $KUBECTL create secret generic agentregistry-db-credentials \
   --namespace agentregistry \
