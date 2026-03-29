@@ -64,6 +64,7 @@ for f in "$CP_DIR/values/"*.yaml; do
   sed -e "s|PLACEHOLDER_RDS_ENDPOINT|${RDS_ENDPOINT}|g" \
       -e "s|PLACEHOLDER_REDIS_ENDPOINT|${REDIS_ENDPOINT}|g" \
       -e "s|PLACEHOLDER_LB_CONTROLLER_ROLE_ARN|${LB_CONTROLLER_ROLE_ARN:-}|g" \
+      -e "s|PLACEHOLDER_VPC_ID|${VPC_ID:-}|g" \
     < "$f" > "$TEMP_VALUES_DIR/$fname"
 done
 

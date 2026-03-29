@@ -7,7 +7,10 @@ serviceAccount:
   create: true
   name: aws-load-balancer-controller
   annotations:
-    eks.amazonaws.com/role-arn: PLACEHOLDER_LB_CONTROLLER_ROLE_ARN
+    eks.amazonaws.com/role-arn: arn:aws:iam::268558157000:role/agentic-cp-aws-lb-controller
+
+# VPC ID must be provided explicitly (IMDS not always accessible with Istio sidecar)
+vpcId: vpc-0633964670a3bb7ff
 
 # Only manage resources with specific ingress class to avoid conflicts with Istio
 enableServiceMutatorWebhook: false
