@@ -8,6 +8,10 @@ image:
   pullPolicy: Always
 
 # Controller image
+# Tolerate all cell node taints so controller can schedule on any node
+tolerations:
+  - operator: Exists
+
 controller:
   image:
     registry: 268558157000.dkr.ecr.us-east-1.amazonaws.com/agentic-platform
@@ -15,9 +19,6 @@ controller:
     tag: "v0.12.0-waypoint"
   replicaCount: 1
   logLevel: info
-  # Tolerate all cell node taints so controller can schedule on any node
-  tolerations:
-    - operator: Exists
 
 # Watch tenant namespaces with this label for Gateway, HTTPRoute, Backend resources
 discoveryNamespaceSelectors:
