@@ -78,8 +78,8 @@ data:
   AGENT_REGISTRY_MCP_PORT: "8090"
 
   # OIDC — Keycloak platform realm (control-plane auth)
-  AGENT_REGISTRY_OIDC_ENABLED: "true"
-  AGENT_REGISTRY_OIDC_ISSUER: "http://keycloak.keycloak.svc.cluster.local:8080/realms/platform"
+  AGENT_REGISTRY_OIDC_ENABLED: "false"
+  AGENT_REGISTRY_OIDC_ISSUER: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/platform"
   AGENT_REGISTRY_OIDC_CLIENT_ID: "agentregistry"
 
   # Permissions (all authenticated users get full access for now)
@@ -131,15 +131,26 @@ spec:
               containerPort: 8080
             - name: mcp
               containerPort: 8090
+          env:
+            - name: JWT_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentregistry-auth
+                  key: JWT_PRIVATE_KEY
+            - name: AGENT_REGISTRY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agentregistry-db-credentials
+                  key: AGENT_REGISTRY_DATABASE_URL
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentregistry-openai
+                  key: OPENAI_API_KEY
+                  optional: true
           envFrom:
             - configMapRef:
                 name: agentregistry-config
-            - secretRef:
-                name: agentregistry-db-credentials
-            - secretRef:
-                name: agentregistry-auth
-            - secretRef:
-                name: agentregistry-openai
           startupProbe:
             httpGet:
               path: /v0/health
