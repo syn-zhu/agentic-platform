@@ -47,8 +47,8 @@ fi
 echo "Creating secret: langfuse/langfuse-db-credentials..."
 $KUBECTL create secret generic langfuse-db-credentials \
   --namespace langfuse \
-  --from-literal=password="$RDS_PASSWORD" \
-  --from-literal=DATABASE_URL="postgresql://langfuse:${RDS_PASSWORD}@${RDS_ENDPOINT}:5432/langfuse?sslmode=require" \
+  --from-literal=password="$DB_PASSWORD" \
+  --from-literal=DATABASE_URL="postgresql://langfuse:${DB_PASSWORD}@${RDS_ENDPOINT}:5432/langfuse?sslmode=require" \
   --dry-run=client -o yaml | $KUBECTL apply -f -
 
 # ── 2. langfuse/langfuse-secrets ──
