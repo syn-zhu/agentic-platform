@@ -1,0 +1,17 @@
+# VirtualService that only routes traffic from tenant-a.
+# Cross-namespace traffic has no matching route — should be dropped.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: external-api
+  namespace: tenant-a
+spec:
+  hosts:
+  - external-api.example.com
+  http:
+  - match:
+    - sourceNamespaces:
+      - tenant-a
+    route:
+    - destination:
+        host: external-api.example.com

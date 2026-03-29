@@ -1,0 +1,19 @@
+# NetworkPolicy: allow HBONE (15008) only to same-namespace pods.
+# No DNS rules — testing whether ztunnel's DNS redirect bypasses this.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hbone-same-ns-only
+  namespace: tenant-b
+spec:
+  podSelector:
+    matchLabels:
+      run: client
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: 15008
+      protocol: TCP
+    to:
+    - podSelector: {}
