@@ -16,6 +16,12 @@
 #       vmagent remote-write to the obs VictoriaMetrics instance.
 
 # ═══════════════════════════════════════════════════════
+# Database Migrations (run before the main pod starts)
+# ═══════════════════════════════════════════════════════
+migrate:
+  enabled: true
+
+# ═══════════════════════════════════════════════════════
 # Replicas
 # ═══════════════════════════════════════════════════════
 replicaCount: 1

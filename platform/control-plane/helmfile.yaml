@@ -13,7 +13,7 @@ repositories:
 helmDefaults:
   createNamespace: true
   wait: true
-  timeout: 300
+  timeout: 600
 
 releases:
   - name: istio-base
