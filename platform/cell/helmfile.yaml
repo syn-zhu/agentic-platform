@@ -39,3 +39,18 @@ releases:
       - values/ztunnel.yaml
     needs:
       - istio-system/istio-cni
+
+  # AgentGateway CRDs — must install before controller
+  - name: agentgateway-crds
+    namespace: agentgateway-system
+    chart: ../../vendor/agentgateway/controller/install/helm/agentgateway-crds
+
+  # AgentGateway controller — manages cell gateway + per-tenant waypoints
+  - name: agentgateway
+    namespace: agentgateway-system
+    chart: ../../vendor/agentgateway/controller/install/helm/agentgateway
+    values:
+      - values/agentgateway.yaml
+    needs:
+      - agentgateway-system/agentgateway-crds
+      - istio-system/ztunnel
