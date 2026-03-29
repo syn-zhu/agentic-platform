@@ -46,7 +46,7 @@ spec:
     - name: vpc-cni  # tolerates all taints by default; configuration kept for explicitness
       version: v1.21.1-eksbuild.1
       conflictResolution: overwrite
-      configuration: '{"tolerations":[{"operator":"Exists"}]}'
+      configuration: '{"tolerations":[{"operator":"Exists"}],"enableNetworkPolicy":"true"}'
     - name: kube-proxy  # tolerates all taints by default; configuration kept for explicitness
       version: v1.35.0-eksbuild.2
       conflictResolution: overwrite
