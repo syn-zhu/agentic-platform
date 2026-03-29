@@ -43,6 +43,26 @@ if [[ -z "${SALT:-}" ]]; then
   echo "SALT=$SALT" >> "$ENV_FILE"
 fi
 
+if [[ -z "${ADMIN_PASSWORD:-}" ]]; then
+  ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+  echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$ENV_FILE"
+fi
+
+if [[ -z "${LANGFUSE_PUBLIC_KEY:-}" ]]; then
+  LANGFUSE_PUBLIC_KEY="pk-lf-$(openssl rand -hex 16)"
+  echo "LANGFUSE_PUBLIC_KEY=$LANGFUSE_PUBLIC_KEY" >> "$ENV_FILE"
+fi
+
+if [[ -z "${LANGFUSE_SECRET_KEY:-}" ]]; then
+  LANGFUSE_SECRET_KEY="sk-lf-$(openssl rand -hex 16)"
+  echo "LANGFUSE_SECRET_KEY=$LANGFUSE_SECRET_KEY" >> "$ENV_FILE"
+fi
+
+if [[ -z "${AGENTREGISTRY_JWT_PRIVATE_KEY:-}" ]]; then
+  AGENTREGISTRY_JWT_PRIVATE_KEY=$(openssl rand -hex 32)
+  echo "AGENTREGISTRY_JWT_PRIVATE_KEY=$AGENTREGISTRY_JWT_PRIVATE_KEY" >> "$ENV_FILE"
+fi
+
 # ── 1. langfuse/langfuse-db-credentials ──
 echo "Creating secret: langfuse/langfuse-db-credentials..."
 $KUBECTL create secret generic langfuse-db-credentials \
@@ -96,11 +116,58 @@ $KUBECTL create secret generic langfuse-clickhouse-credentials \
   --from-literal=CLICKHOUSE_PASSWORD="$CLICKHOUSE_PASSWORD" \
   --dry-run=client -o yaml | $KUBECTL apply -f -
 
-# ── 6. agentregistry/agentregistry-db-credentials ──
+# ── 7. agentregistry/agentregistry-db-credentials ──
 echo "Creating secret: agentregistry/agentregistry-db-credentials..."
 $KUBECTL create secret generic agentregistry-db-credentials \
   --namespace agentregistry \
   --from-literal=AGENT_REGISTRY_DATABASE_URL="postgresql://agentregistry:${AGENTREGISTRY_DB_PASSWORD}@${RDS_ENDPOINT}:5432/agentregistry?sslmode=require" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 8. langfuse/langfuse-auth-secrets ──
+echo "Creating secret: langfuse/langfuse-auth-secrets..."
+$KUBECTL create secret generic langfuse-auth-secrets \
+  --namespace langfuse \
+  --from-literal=SALT="$SALT" \
+  --from-literal=ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  --from-literal=NEXTAUTH_SECRET="$NEXTAUTH_SECRET" \
+  --from-literal=ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 9. langfuse/langfuse-redis-credentials ──
+echo "Creating secret: langfuse/langfuse-redis-credentials..."
+$KUBECTL create secret generic langfuse-redis-credentials \
+  --namespace langfuse \
+  --from-literal=REDIS_AUTH="$REDIS_PASSWORD" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 10. langfuse/langfuse-api-keys ──
+echo "Creating secret: langfuse/langfuse-api-keys..."
+$KUBECTL create secret generic langfuse-api-keys \
+  --namespace langfuse \
+  --from-literal=PUBLIC_KEY="$LANGFUSE_PUBLIC_KEY" \
+  --from-literal=SECRET_KEY="$LANGFUSE_SECRET_KEY" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 11. otel-system/otel-collector-auth ──
+echo "Creating secret: otel-system/otel-collector-auth..."
+OTEL_AUTH_HEADER="Basic $(printf '%s:%s' "$LANGFUSE_PUBLIC_KEY" "$LANGFUSE_SECRET_KEY" | base64 | tr -d '\n')"
+$KUBECTL create secret generic otel-collector-auth \
+  --namespace otel-system \
+  --from-literal=AUTH_HEADER="$OTEL_AUTH_HEADER" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 12. agentregistry/agentregistry-auth ──
+echo "Creating secret: agentregistry/agentregistry-auth..."
+$KUBECTL create secret generic agentregistry-auth \
+  --namespace agentregistry \
+  --from-literal=JWT_PRIVATE_KEY="$AGENTREGISTRY_JWT_PRIVATE_KEY" \
+  --dry-run=client -o yaml | $KUBECTL apply -f -
+
+# ── 13. agentregistry/agentregistry-openai ──
+echo "Creating secret: agentregistry/agentregistry-openai..."
+$KUBECTL create secret generic agentregistry-openai \
+  --namespace agentregistry \
+  --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
   --dry-run=client -o yaml | $KUBECTL apply -f -
 
 echo ""

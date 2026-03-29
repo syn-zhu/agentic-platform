@@ -46,6 +46,7 @@ REDIS_PASSWORD="${REDIS_PASSWORD:-$(openssl rand -base64 24 | tr -d '/+=' | head
 KEYCLOAK_DB_PASSWORD="${KEYCLOAK_DB_PASSWORD:-$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)}"
 OPENFGA_DB_PASSWORD="${OPENFGA_DB_PASSWORD:-$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)}"
 AGENTREGISTRY_DB_PASSWORD="${AGENTREGISTRY_DB_PASSWORD:-$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)}"
+LANGFUSE_DB_PASSWORD="${LANGFUSE_DB_PASSWORD:-$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)}"
 
 # ── Discover VPC and subnet info from EKS cluster (agentic-cp) ──
 echo "Discovering VPC configuration from EKS cluster '$CLUSTER_NAME'..."
@@ -261,7 +262,52 @@ run_psql psql-ar-schema "$AGENTREGISTRY_DB_PASSWORD" \
   -c "ALTER SCHEMA public OWNER TO agentregistry;"
 echo "  agentregistry database and user ready."
 
-# ── 5. Save outputs to .env.cp ──
+# ── langfuse ──
+echo ""
+echo "  Setting up langfuse database user..."
+run_psql psql-lf-user "$DB_PASSWORD" \
+  "postgresql://${DB_MASTER_USERNAME}:${DB_PASSWORD}@${RDS_ENDPOINT}:5432/langfuse" \
+  -c "CREATE ROLE langfuse WITH LOGIN PASSWORD '${LANGFUSE_DB_PASSWORD}';" \
+  -c "GRANT ALL PRIVILEGES ON DATABASE langfuse TO langfuse;" \
+  -c "ALTER DATABASE langfuse OWNER TO langfuse;"
+echo "  langfuse database user ready."
+
+# ── 5. Create IRSA role for Langfuse S3 ──
+echo ""
+echo "Creating IRSA role for Langfuse S3 (agentic-cp-langfuse-s3)..."
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+OIDC_PROVIDER=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" \
+  --query 'cluster.identity.oidc.issuer' --output text | sed 's|https://||')
+
+TRUST_POLICY=$(ACCOUNT_ID="$ACCOUNT_ID" OIDC_PROVIDER="$OIDC_PROVIDER" \
+  envsubst '$ACCOUNT_ID $OIDC_PROVIDER' < "$CONFIG_DIR/langfuse-s3-trust-policy.json")
+
+LANGFUSE_S3_ROLE_ARN=$(aws iam create-role \
+  --role-name "agentic-cp-langfuse-s3" \
+  --assume-role-policy-document "$TRUST_POLICY" \
+  --query 'Role.Arn' --output text 2>/dev/null || \
+  aws iam get-role --role-name "agentic-cp-langfuse-s3" \
+    --query 'Role.Arn' --output text)
+echo "  IRSA Role: $LANGFUSE_S3_ROLE_ARN"
+
+# Attach inline S3 policy
+aws iam put-role-policy \
+  --role-name "agentic-cp-langfuse-s3" \
+  --policy-name "agentic-cp-langfuse-s3-access" \
+  --policy-document "$(cat "$CONFIG_DIR/langfuse-s3-policy.json")"
+echo "  S3 inline policy attached."
+
+# Create langfuse namespace and langfuse-web ServiceAccount with IRSA annotation
+kubectl --context agentic-cp create namespace langfuse 2>/dev/null || true
+kubectl --context agentic-cp create serviceaccount langfuse-web \
+  --namespace langfuse 2>/dev/null || true
+kubectl --context agentic-cp annotate serviceaccount langfuse-web \
+  --namespace langfuse \
+  eks.amazonaws.com/role-arn="$LANGFUSE_S3_ROLE_ARN" \
+  --overwrite
+echo "  ServiceAccount langfuse/langfuse-web annotated with IRSA role."
+
+# ── 7. Save outputs to .env.cp ──
 echo ""
 echo "=== AWS Resources Created ==="
 ENV_FILE="$ROOT_DIR/.env.cp"
@@ -282,6 +328,8 @@ OPENFGA_DB_PASSWORD=${OPENFGA_DB_PASSWORD}
 OPENFGA_DATABASE_URL=postgresql://openfga:${OPENFGA_DB_PASSWORD}@${RDS_ENDPOINT}:5432/openfga
 AGENTREGISTRY_DB_PASSWORD=${AGENTREGISTRY_DB_PASSWORD}
 AGENTREGISTRY_DATABASE_URL=postgresql://agentregistry:${AGENTREGISTRY_DB_PASSWORD}@${RDS_ENDPOINT}:5432/agentregistry
+LANGFUSE_DB_PASSWORD=${LANGFUSE_DB_PASSWORD}
+LANGFUSE_DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@${RDS_ENDPOINT}:5432/langfuse
 
 # ── ElastiCache ──
 REDIS_ENDPOINT=${REDIS_ENDPOINT}
@@ -291,6 +339,7 @@ REDIS_URL=rediss://:${REDIS_PASSWORD}@${REDIS_ENDPOINT}:6379
 # ── S3 ──
 S3_BUCKET=${S3_BUCKET}
 S3_REGION=${REGION}
+LANGFUSE_S3_ROLE_ARN=${LANGFUSE_S3_ROLE_ARN}
 EOF
 
 echo "AWS outputs written to $ENV_FILE"
