@@ -63,6 +63,7 @@ for f in "$CP_DIR/values/"*.yaml; do
   fname="$(basename "$f")"
   sed -e "s|PLACEHOLDER_RDS_ENDPOINT|${RDS_ENDPOINT}|g" \
       -e "s|PLACEHOLDER_REDIS_ENDPOINT|${REDIS_ENDPOINT}|g" \
+      -e "s|PLACEHOLDER_LB_CONTROLLER_ROLE_ARN|${LB_CONTROLLER_ROLE_ARN:-}|g" \
     < "$f" > "$TEMP_VALUES_DIR/$fname"
 done
 
@@ -95,7 +96,7 @@ trap 'restore_values; rm -rf "$TMPDIR_LOCAL"' EXIT
 
 # Skip Istio releases (already installed in Phase 2) — only sync service releases
 (cd "$CP_DIR" && helmfile --kube-context agentic-cp \
-  -l name=keycloak -l name=openfga -l name=clickhouse -l name=langfuse \
+  -l name=aws-load-balancer-controller -l name=keycloak -l name=openfga -l name=clickhouse -l name=langfuse \
   sync)
 
 restore_values

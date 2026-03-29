@@ -1,0 +1,13 @@
+# AWS Load Balancer Controller — provisions NLB/ALB for LoadBalancer Services and Ingress
+# Required for the Istio ingress gateway internal NLB
+clusterName: agentic-cp
+region: us-east-1
+
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+  annotations:
+    eks.amazonaws.com/role-arn: PLACEHOLDER_LB_CONTROLLER_ROLE_ARN
+
+# Only manage resources with specific ingress class to avoid conflicts with Istio
+enableServiceMutatorWebhook: false

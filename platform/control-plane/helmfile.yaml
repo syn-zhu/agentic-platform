@@ -9,6 +9,8 @@ repositories:
     url: https://charts.bitnami.com/bitnami
   - name: langfuse
     url: https://langfuse.github.io/langfuse-k8s
+  - name: eks-charts
+    url: https://aws.github.io/eks-charts
 
 helmDefaults:
   createNamespace: true
@@ -29,6 +31,14 @@ releases:
       - values/istiod-sidecar.yaml
     needs:
       - istio-system/istio-base
+
+  - name: aws-load-balancer-controller
+    namespace: kube-system
+    chart: eks-charts/aws-load-balancer-controller
+    values:
+      - values/aws-lb-controller.yaml
+    needs:
+      - istio-system/istiod
 
   - name: keycloak
     namespace: keycloak
