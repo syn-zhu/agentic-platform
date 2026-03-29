@@ -62,7 +62,7 @@ trap 'kill $PF_PID 2>/dev/null || true' EXIT
 # Wait for port-forward to be ready
 echo "  Waiting for port-forward to be ready..."
 for i in $(seq 1 20); do
-  if curl -s -o /dev/null "${KEYCLOAK_URL}/realms/master" 2>/dev/null; then
+  if curl -s -o /dev/null "${KEYCLOAK_URL}/auth/realms/master" 2>/dev/null; then
     break
   fi
   sleep 1
@@ -72,7 +72,7 @@ done
 echo "Authenticating to Keycloak admin API..."
 
 ADMIN_TOKEN=$(curl -s -X POST \
-  "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  "${KEYCLOAK_URL}/auth/realms/master/protocol/openid-connect/token" \
   -d "client_id=admin-cli" \
   -d "username=${ADMIN_USER}" \
   -d "password=${ADMIN_PASS}" \
@@ -123,7 +123,7 @@ if [[ "$REALM_EXISTS" == "200" ]]; then
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
     -H "Content-Type: application/json" \
     -d @"$REALM_FILE" \
-    "${KEYCLOAK_URL}/admin/realms/platform/partialImport")
+    "${KEYCLOAK_URL}/auth/admin/realms/platform/partialImport")
   echo "  Partial import result: $(echo "$IMPORT_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'added={d.get(\"added\",0)}, skipped={d.get(\"skipped\",0)}, overwritten={d.get(\"overwritten\",0)}')" 2>/dev/null || echo "$IMPORT_RESPONSE")"
 else
   echo "  Creating new 'platform' realm..."
@@ -131,7 +131,7 @@ else
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
     -H "Content-Type: application/json" \
     -d @"$REALM_FILE" \
-    "${KEYCLOAK_URL}/admin/realms")
+    "${KEYCLOAK_URL}/auth/admin/realms")
   if [[ "$HTTP_CODE" == "201" ]]; then
     echo "  Realm 'platform' created."
   else
@@ -185,7 +185,7 @@ if [[ -z "$ORG_SCOPE_ID" ]]; then
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$ORG_SCOPE_JSON" \
-    "${KEYCLOAK_URL}/admin/realms/platform/client-scopes")
+    "${KEYCLOAK_URL}/auth/admin/realms/platform/client-scopes")
   echo "  Create scope HTTP status: $SC_CODE"
 
   # Re-fetch ID
@@ -201,7 +201,7 @@ if [[ -n "$ORG_SCOPE_ID" ]]; then
   echo "  Adding 'organization' to default client scopes..."
   curl -s -o /dev/null -X PUT \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/platform/default-default-client-scopes/${ORG_SCOPE_ID}" || true
+    "${KEYCLOAK_URL}/auth/admin/realms/platform/default-default-client-scopes/${ORG_SCOPE_ID}" || true
   echo "  Done."
 fi
 
@@ -268,7 +268,7 @@ else
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$ORG_JSON" \
-    "${KEYCLOAK_URL}/admin/realms/platform/organizations")
+    "${KEYCLOAK_URL}/auth/admin/realms/platform/organizations")
   if [[ "$ORG_CODE" == "201" ]]; then
     echo "  Org 'acme' created."
   else
@@ -303,10 +303,10 @@ fi
 echo ""
 echo "── Verifying OIDC discovery endpoint ──"
 OIDC_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-  "${KEYCLOAK_URL}/realms/platform/.well-known/openid-configuration" || echo "000")
+  "${KEYCLOAK_URL}/auth/realms/platform/.well-known/openid-configuration" || echo "000")
 
 if [[ "$OIDC_STATUS" == "200" ]]; then
-  echo "  OK — OIDC discovery at ${KEYCLOAK_URL}/realms/platform/.well-known/openid-configuration"
+  echo "  OK — OIDC discovery at ${KEYCLOAK_URL}/auth/realms/platform/.well-known/openid-configuration"
 else
   echo "  FAIL — OIDC discovery returned HTTP ${OIDC_STATUS}"
 fi
@@ -327,7 +327,7 @@ fi
 echo ""
 echo "=== Keycloak configuration complete ==="
 echo ""
-echo "OIDC Issuer (via port-forward):  ${KEYCLOAK_URL}/realms/platform"
+echo "OIDC Issuer (via port-forward):  ${KEYCLOAK_URL}/auth/realms/platform"
 echo "OIDC Issuer (in-cluster):        http://keycloak.keycloak.svc.cluster.local:8080/realms/platform"
 echo "Clients:                         agent-gateway, agentregistry"
 echo "K8s OIDC IdP:                    ${K8S_OIDC_ISSUER:-not configured}"
