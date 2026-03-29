@@ -1,0 +1,113 @@
+# Istio ingress gateway for control-plane platform APIs
+#
+# Exposes platform services (Keycloak, OpenFGA, AgentRegistry, Langfuse)
+# through a single internal NLB so that cell clusters can reach them
+# via Transit Gateway without a public endpoint.
+#
+# Routing:
+#   /auth/*      → keycloak.keycloak.svc.cluster.local:8080
+#   /registry/*  → agentregistry.agentregistry.svc.cluster.local:8080
+#   /langfuse/*  → langfuse-web.langfuse.svc.cluster.local:3000
+#   /openfga/*   → openfga.openfga.svc.cluster.local:8080
+
+---
+# Gateway — internal NLB so cell clusters can reach it via TGW
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: platform-gateway
+  namespace: istio-system
+  annotations:
+    # Internal NLB for TGW access from other clusters
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+spec:
+  gatewayClassName: istio
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+
+---
+# HTTPRoute: /auth/* → Keycloak
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: keycloak-route
+  namespace: keycloak
+spec:
+  parentRefs:
+    - name: platform-gateway
+      namespace: istio-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /auth
+      backendRefs:
+        - name: keycloak
+          port: 8080
+
+---
+# HTTPRoute: /registry/* → AgentRegistry
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentregistry-route
+  namespace: agentregistry
+spec:
+  parentRefs:
+    - name: platform-gateway
+      namespace: istio-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /registry
+      backendRefs:
+        - name: agentregistry
+          port: 8080
+
+---
+# HTTPRoute: /langfuse/* → Langfuse web (UI + OTLP ingest)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: langfuse-route
+  namespace: langfuse
+spec:
+  parentRefs:
+    - name: platform-gateway
+      namespace: istio-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /langfuse
+      backendRefs:
+        - name: langfuse-web
+          port: 3000
+
+---
+# HTTPRoute: /openfga/* → OpenFGA
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openfga-route
+  namespace: openfga
+spec:
+  parentRefs:
+    - name: platform-gateway
+      namespace: istio-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /openfga
+      backendRefs:
+        - name: openfga
+          port: 8080
