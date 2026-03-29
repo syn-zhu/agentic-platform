@@ -227,7 +227,8 @@ New releases: keycloak, openfga, clickhouse, langfuse
 Copy `platform/values/keycloak.yaml` to `platform/control-plane/values/keycloak.yaml`. Update:
 - RDS endpoint placeholder (will be substituted by deploy script from `.env.cp`)
 - Remove scheduling to platform node group (cp has untainted nodes)
-- Keep all Keycloak config (realm, orgs, token exchange, etc.)
+- Rename realm from `agents` to `platform` (control-plane auth for org/user management)
+- Keep all Keycloak config (orgs, token exchange, etc.)
 
 - [ ] **Step 3: Adapt OpenFGA values**
 
@@ -376,10 +377,12 @@ git commit -m "feat(cp): add control-plane deployment script"
 - [ ] **Step 1: Write Keycloak config script**
 
 Adapted from existing `scripts/06-configure-keycloak.sh`:
-- Imports the `agents` realm from `platform/manifests/keycloak-agents-realm.json` (or creates it)
+- Creates the `platform` realm (renamed from `agents` — this is control-plane auth for org/user management)
+- Imports realm config from `platform/control-plane-manifests/keycloak-platform-realm.json`
 - Enables Organizations
 - Creates the `organization` client scope
 - Creates initial org (e.g., `acme` for testing)
+- Note: data-plane auth (tenant apps invoking agents) is a separate concern, handled later via cell gateway JWT validation
 
 Keycloak is accessed via `kubectl port-forward` to the keycloak pod on `agentic-cp`.
 
