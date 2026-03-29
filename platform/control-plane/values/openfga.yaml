@@ -1,0 +1,91 @@
+# OpenFGA -- Platform Authorization Store (Control-Plane)
+# Chart: openfga/openfga v0.2.55 (OpenFGA v1.11.6)
+#
+# Integration:
+#   - External PostgreSQL (shared RDS with Langfuse/Keycloak, separate 'openfga' database)
+#   - Multi-tenant: one store per tenant/example, shared server
+#   - openfga-envoy (ext_authz adapter) deployed separately via manifests
+#   - OTEL traces -> otel-collector -> Langfuse (local otel-system collector)
+#
+# NOTE: RDS connection URI is stored in the openfga-db-credentials secret.
+#       That secret is created by 01-create-secrets.sh with PLACEHOLDER_RDS_ENDPOINT
+#       substituted at secret-creation time.
+#
+# NOTE: ServiceMonitor is disabled — Prometheus lives in the obs cluster (Phase 3b).
+#       Metrics scraping from the control-plane will be wired up in Phase 3b via
+#       vmagent remote-write to the obs VictoriaMetrics instance.
+
+# ═══════════════════════════════════════════════════════
+# Replicas
+# ═══════════════════════════════════════════════════════
+replicaCount: 1
+
+# ═══════════════════════════════════════════════════════
+# Datastore (external PostgreSQL on shared RDS)
+# ═══════════════════════════════════════════════════════
+datastore:
+  engine: postgres
+  uriSecret: openfga-db-credentials
+  # Migration runs as a Helm post-install hook (Job). The default init container
+  # (waitForMigrations) tries to find the Job to verify it succeeded, but the
+  # hook delete policy cleans it up. Disable the wait -- migration still runs.
+  waitForMigrations: false
+
+# ═══════════════════════════════════════════════════════
+# Ports
+# ═══════════════════════════════════════════════════════
+# HTTP API: 8080 (store/model/tuple CRUD, health checks)
+# gRPC API: 8081 (used by openfga-envoy for Check calls)
+# Playground: 3000
+grpc:
+  addr: "0.0.0.0:8081"
+
+http:
+  enabled: true
+  addr: "0.0.0.0:8080"
+
+playground:
+  enabled: true
+  port: 3000
+
+# ═══════════════════════════════════════════════════════
+# Observability
+# ═══════════════════════════════════════════════════════
+# Metrics: ServiceMonitor disabled (Prometheus is in obs cluster, Phase 3b)
+# Traces: OTLP -> local otel-collector -> Langfuse
+telemetry:
+  metrics:
+    enabled: true
+    addr: "0.0.0.0:2112"
+    serviceMonitor:
+      enabled: false
+  trace:
+    enabled: true
+    otlp:
+      endpoint: "otel-collector.otel-system.svc.cluster.local:4317"
+      tls:
+        enabled: false
+    sampleRatio: 1
+
+# ═══════════════════════════════════════════════════════
+# Resources
+# ═══════════════════════════════════════════════════════
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# ═══════════════════════════════════════════════════════
+# Service
+# ═══════════════════════════════════════════════════════
+service:
+  type: ClusterIP
+
+# ═══════════════════════════════════════════════════════
+# Disable bundled PostgreSQL subchart (we use external RDS)
+# ═══════════════════════════════════════════════════════
+postgresql:
+  enabled: false

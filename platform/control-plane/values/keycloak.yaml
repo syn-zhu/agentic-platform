@@ -1,0 +1,86 @@
+# Keycloak — Platform Identity Provider (Control-Plane)
+# Chart: codecentric/keycloakx v7.1.8 (Keycloak 26.5.3)
+#
+# Integration:
+#   - External PostgreSQL (shared RDS with Langfuse, separate 'keycloak' database)
+#   - AgentGateway JWT validation via AgentgatewayPolicy
+#   - Single "platform" realm with Keycloak Organizations for multi-tenancy
+#   - Standard Token Exchange (RFC 8693) for agent-to-service audience scoping
+#   - Federated Client Authentication (K8s SA tokens as client assertions)
+#
+# NOTE: RDS endpoint is substituted by 02-deploy-control-plane.sh via envsubst.
+#       The literal string PLACEHOLDER_RDS_ENDPOINT must not appear in the
+#       deployed cluster; the deploy script replaces it before helmfile sync.
+
+# ═══════════════════════════════════════════════════════
+# Image
+# ═══════════════════════════════════════════════════════
+image:
+  repository: quay.io/keycloak/keycloak
+  tag: "26.5.3"
+  pullPolicy: IfNotPresent
+
+# ═══════════════════════════════════════════════════════
+# Start command with feature flags
+# ═══════════════════════════════════════════════════════
+# - start-dev: HTTP mode, no hostname check (POC). For production use "start".
+# - client-auth-federated: allows K8s SA tokens as client assertions (preview)
+# - token-exchange-standard is enabled by default in 26.2+
+command:
+  - "/opt/keycloak/bin/kc.sh"
+  - "start-dev"
+  - "--http-port=8080"
+  - "--hostname-strict=false"
+  - "--features=client-auth-federated"
+
+# ═══════════════════════════════════════════════════════
+# Admin credentials (via env vars — keycloakx pattern)
+# ═══════════════════════════════════════════════════════
+extraEnv: |
+  - name: KEYCLOAK_ADMIN
+    value: admin
+  - name: KEYCLOAK_ADMIN_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-admin-credentials
+        key: admin-password
+
+# ═══════════════════════════════════════════════════════
+# External PostgreSQL (shared RDS instance)
+# ═══════════════════════════════════════════════════════
+dbchecker:
+  enabled: true
+
+database:
+  vendor: postgres
+  hostname: "PLACEHOLDER_RDS_ENDPOINT"
+  port: 5432
+  username: keycloak
+  database: keycloak
+  existingSecret: keycloak-db-credentials
+
+# ═══════════════════════════════════════════════════════
+# Replicas and resources
+# ═══════════════════════════════════════════════════════
+replicas: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ═══════════════════════════════════════════════════════
+# Service
+# ═══════════════════════════════════════════════════════
+service:
+  type: ClusterIP
+  httpPort: 8080
+
+# ═══════════════════════════════════════════════════════
+# Health checks
+# ═══════════════════════════════════════════════════════
+health:
+  enabled: true
