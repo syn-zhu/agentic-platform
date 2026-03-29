@@ -4,3 +4,9 @@ profile: ambient
 # Tolerate all cell node taints so istiod can schedule on any node
 tolerations:
   - operator: Exists
+
+# Waypoint proxy defaults — applied to all auto-generated waypoint Deployments
+global:
+  waypoint:
+    tolerations:
+      - operator: Exists
