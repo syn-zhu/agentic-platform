@@ -307,6 +307,41 @@ kubectl --context agentic-cp annotate serviceaccount langfuse-web \
   --overwrite
 echo "  ServiceAccount langfuse/langfuse-web annotated with IRSA role."
 
+# ── 6. Create IRSA role for AWS Load Balancer Controller ──
+echo ""
+echo "── Creating AWS LB Controller IRSA role ──"
+
+LB_ROLE_NAME="agentic-cp-aws-lb-controller"
+LB_TRUST_POLICY=$(mktemp)
+envsubst '$ACCOUNT_ID $OIDC_PROVIDER' \
+  < "$ROOT_DIR/cluster/control-plane/aws-resources/aws-lb-controller-trust-policy.json" \
+  > "$LB_TRUST_POLICY"
+
+LB_CONTROLLER_ROLE_ARN=$(aws iam create-role \
+  --role-name "$LB_ROLE_NAME" \
+  --assume-role-policy-document "file://$LB_TRUST_POLICY" \
+  --tags "Key=project,Value=agentic-platform" "Key=cluster,Value=agentic-cp" \
+  --query 'Role.Arn' --output text 2>/dev/null || \
+  echo "arn:aws:iam::${ACCOUNT_ID}:role/${LB_ROLE_NAME}")
+rm -f "$LB_TRUST_POLICY"
+
+# Create and attach the LB controller IAM policy
+LB_POLICY_ARN=$(aws iam create-policy \
+  --policy-name agentic-cp-aws-lb-controller \
+  --policy-document "file://$ROOT_DIR/cluster/control-plane/aws-resources/aws-lb-controller-iam-policy.json" \
+  --query 'Policy.Arn' --output text 2>/dev/null || \
+  echo "arn:aws:iam::${ACCOUNT_ID}:policy/agentic-cp-aws-lb-controller")
+
+aws iam attach-role-policy --role-name "$LB_ROLE_NAME" \
+  --policy-arn "$LB_POLICY_ARN" 2>/dev/null || true
+
+echo "  LB Controller IRSA Role: $LB_CONTROLLER_ROLE_ARN"
+
+# Get VPC ID for the LB controller config
+VPC_ID=$(aws eks describe-cluster --name "agentic-cp" --region "$REGION" \
+  --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+echo "  VPC ID: $VPC_ID"
+
 # ── 7. Save outputs to .env.cp ──
 echo ""
 echo "=== AWS Resources Created ==="
@@ -340,6 +375,10 @@ REDIS_URL=rediss://:${REDIS_PASSWORD}@${REDIS_ENDPOINT}:6379
 S3_BUCKET=${S3_BUCKET}
 S3_REGION=${REGION}
 LANGFUSE_S3_ROLE_ARN=${LANGFUSE_S3_ROLE_ARN}
+
+# ── LB Controller ──
+LB_CONTROLLER_ROLE_ARN=${LB_CONTROLLER_ROLE_ARN}
+VPC_ID=${VPC_ID}
 EOF
 
 echo "AWS outputs written to $ENV_FILE"
