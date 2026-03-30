@@ -1,21 +1,20 @@
-# Phase 3b: Observability — CAAPH, VictoriaMetrics, Grafana, Kiali, vmagent
+# Phase 3b: Observability — CAAPH, VictoriaMetrics Operator, VMAuth, Grafana, Kiali, vmagent
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Install CAAPH on the management cluster, then use it to declaratively deploy VictoriaMetrics + Grafana + Kiali to the observability cluster and vmagent to all clusters — so that metrics from every cluster flow into a single VictoriaMetrics instance with proper cluster labels.
+**Goal:** Install CAAPH on the management cluster, deploy the VictoriaMetrics Operator + VMAuth + Grafana + Kiali to the observability cluster, and deploy vmagent to all clusters — establishing a single-pane-of-glass metrics pipeline with proper cluster labels and TLS-secured cross-cluster ingestion.
 
-**Architecture:** CAAPH (Cluster API Addon Provider for Helm) is installed on the management cluster alongside CAPA. `HelmChartProxy` CRs on the management cluster declare which Helm charts to install on which clusters (matched by labels). CAAPH uses CAPI-generated kubeconfig secrets to install charts into workload clusters. VictoriaMetrics and Grafana go to the obs cluster; vmagent goes to all clusters with per-cluster `externalLabels` via Go template. Kiali is deployed to the obs cluster with remote secrets for cell cluster API access.
+**Architecture:** CAAPH auto-installs Helm charts onto clusters matched by labels. The obs cluster gets the VictoriaMetrics Operator (which manages VMSingle, VMAuth, VMAgent CRDs), Grafana, and Kiali. VMAuth sits behind an internal NLB as the TLS-terminating auth proxy for cross-cluster metric ingestion. Each cluster runs vmagent that remote-writes to the NLB endpoint with a per-cluster bearer token. Kiali gets remote secrets for cell cluster API access.
 
-**Tech Stack:** CAAPH (Helm), VictoriaMetrics, Grafana, Kiali, vmagent
+**Tech Stack:** CAAPH, VictoriaMetrics Operator (VMSingle, VMAuth, VMAgent, VMUser CRDs), Grafana, Kiali, AWS NLB, cert-manager (obs cluster, for VMAuth TLS)
 
 **Spec:** `docs/superpowers/specs/2026-03-25-multi-cluster-architecture-design.md`
-**Phase 3 scope:** Memory: `project_phase3_scope.md`
 
 **Pre-requisites:**
-- Phase 2 complete (5 clusters running)
+- Phase 2 complete (5 clusters running, Gateway API CRDs on all)
 - Phase 3a substantially complete (control-plane services running)
 - Management cluster has CAPI Operator + CAPA
-- `AWS_PROFILE=mms-test`, kubectl contexts for all clusters
+- AWS LB Controller on obs cluster (needs installing — same pattern as cp)
 
 ---
 
@@ -24,26 +23,28 @@
 ```
 platform/
   management-manifests/
-    caaph-provider.yaml                  # AddonProvider CR for CAAPH
+    caaph-provider.yaml                    # AddonProvider CR for CAAPH
   caaph/
-    helmchartproxy-vmagent.yaml          # vmagent on ALL clusters
-    helmchartproxy-victoriametrics.yaml  # VictoriaMetrics on obs cluster
-    helmchartproxy-grafana.yaml          # Grafana on obs cluster
-    helmchartproxy-kiali.yaml            # Kiali on obs cluster
-    values/
-      vmagent.yaml                       # vmagent values template (Go template for cluster name)
-      victoriametrics.yaml               # VM single-node values
-      grafana.yaml                       # Grafana values (datasource: VM)
-      kiali.yaml                         # Kiali values (multi-cluster)
+    helmchartproxy-vm-operator.yaml        # VictoriaMetrics Operator on obs cluster
+    helmchartproxy-grafana.yaml            # Grafana on obs cluster
+    helmchartproxy-kiali.yaml              # Kiali Operator on obs cluster
+    helmchartproxy-vmagent.yaml            # vmagent on ALL clusters
+    helmchartproxy-cert-manager.yaml       # cert-manager on obs cluster (for VMAuth TLS)
+    helmchartproxy-aws-lb-controller.yaml  # AWS LB controller on obs cluster (for NLB)
   observability-manifests/
-    namespaces.yaml                      # obs cluster namespaces
-    kiali-remote-secrets.yaml            # Template for Kiali remote cluster access
+    namespaces.yaml                        # obs cluster namespaces
+    vmsingle.yaml                          # VMSingle CR (VictoriaMetrics instance)
+    vmauth.yaml                            # VMAuth CR (TLS proxy + bearer token auth)
+    vmauth-service-nlb.yaml               # Internal NLB Service for VMAuth
+    vmuser-per-cluster.yaml               # VMUser CRs (one per cluster, bearer tokens)
+    kiali-remote-sa.yaml                   # Kiali remote SA template for cell clusters
 scripts/phase3b/
-  00-install-caaph.sh                    # Install CAAPH on management cluster
-  01-label-clusters.sh                   # Add labels to Cluster CRs for CAAPH matching
-  02-apply-helmchartproxies.sh           # Apply HelmChartProxy CRs
-  03-configure-kiali-remotes.sh          # Create Kiali remote secrets on obs cluster
-  04-verify.sh                           # Smoke tests
+  00-install-caaph.sh                      # Install CAAPH on management cluster
+  01-label-clusters.sh                     # Add labels for CAAPH matching
+  02-apply-helmchartproxies.sh             # Apply HelmChartProxy CRs (CAAPH installs charts)
+  03-apply-obs-manifests.sh                # Apply VM Operator CRs + NLB on obs cluster
+  04-configure-kiali-remotes.sh            # Create Kiali remote secrets
+  05-verify.sh                             # Smoke tests
   README.md
 ```
 
@@ -57,11 +58,7 @@ scripts/phase3b/
 
 - [ ] **Step 1: Create CAAPH AddonProvider manifest**
 
-`platform/management-manifests/caaph-provider.yaml`:
 ```yaml
-# CAAPH — Cluster API Addon Provider for Helm
-# Installed via the CAPI Operator. Watches HelmChartProxy CRs and installs
-# Helm charts into workload clusters matched by label selectors.
 apiVersion: operator.cluster.x-k8s.io/v1alpha2
 kind: AddonProvider
 metadata:
@@ -73,278 +70,297 @@ spec:
 
 - [ ] **Step 2: Create install script**
 
-`scripts/phase3b/00-install-caaph.sh` (chmod +x):
-- Creates `caaph-system` namespace
-- Applies the AddonProvider CR from the committed manifest
-- Waits for the CAAPH controller to be ready
-- Verifies HelmChartProxy CRD is available
+Creates `caaph-system` namespace, applies the AddonProvider CR, waits for controller, verifies HelmChartProxy CRD exists.
 
 - [ ] **Step 3: Commit**
 
-```bash
-git add platform/management-manifests/caaph-provider.yaml scripts/phase3b/00-install-caaph.sh
-git commit -m "feat(mgmt): add CAAPH addon provider manifest and install script"
-```
-
 ---
 
-### Task 2: Label Cluster CRs for CAAPH matching
+### Task 2: Label clusters + create obs namespaces
 
 **Files:**
 - Create: `scripts/phase3b/01-label-clusters.sh`
+- Create: `platform/observability-manifests/namespaces.yaml`
 
-- [ ] **Step 1: Create label script**
-
-The script adds labels to the Cluster CRs on the management cluster so HelmChartProxy selectors can match them:
+- [ ] **Step 1: Label clusters for CAAPH matching**
 
 ```bash
 # All clusters get vmagent
-kubectl --context agentic-mgmt label cluster agentic-cp  -n default monitoring=vmagent --overwrite
-kubectl --context agentic-mgmt label cluster agentic-obs  -n default monitoring=vmagent --overwrite
-kubectl --context agentic-mgmt label cluster agentic-cell-1 -n default monitoring=vmagent --overwrite
-kubectl --context agentic-mgmt label cluster agentic-cell-2 -n default monitoring=vmagent --overwrite
+kubectl label cluster agentic-cp agentic-obs agentic-cell-1 agentic-cell-2 \
+  -n default monitoring=vmagent --overwrite
 
-# Only obs cluster gets the observability stack
-kubectl --context agentic-mgmt label cluster agentic-obs -n default observability=true --overwrite
+# Obs cluster gets the full stack
+kubectl label cluster agentic-obs -n default observability=true --overwrite
 
-# Cell clusters get kiali-remote label (for Kiali SA creation)
-kubectl --context agentic-mgmt label cluster agentic-cell-1 -n default kiali-remote=true --overwrite
-kubectl --context agentic-mgmt label cluster agentic-cell-2 -n default kiali-remote=true --overwrite
+# Cell clusters get kiali-remote
+kubectl label cluster agentic-cell-1 agentic-cell-2 -n default kiali-remote=true --overwrite
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Create obs namespaces**
 
-```bash
-git add scripts/phase3b/01-label-clusters.sh
-git commit -m "feat(mgmt): add cluster labeling script for CAAPH matching"
-```
-
----
-
-### Task 3: Create vmagent HelmChartProxy (all clusters)
-
-**Files:**
-- Create: `platform/caaph/helmchartproxy-vmagent.yaml`
-- Create: `platform/caaph/values/vmagent.yaml`
-
-- [ ] **Step 1: Create HelmChartProxy for vmagent**
-
-`platform/caaph/helmchartproxy-vmagent.yaml`:
 ```yaml
-apiVersion: addons.cluster.x-k8s.io/v1alpha1
-kind: HelmChartProxy
+apiVersion: v1
+kind: Namespace
 metadata:
-  name: vmagent
-  namespace: default
-spec:
-  clusterSelector:
-    matchLabels:
-      monitoring: vmagent
-  repoURL: https://victoriametrics.github.io/helm-charts
-  chartName: victoria-metrics-agent
-  releaseName: vmagent
-  releaseNamespace: monitoring
-  valuesTemplate: |
-    # Per-cluster external labels — cluster name injected via Go template
-    config:
-      global:
-        external_labels:
-          cluster: "{{ .Cluster.metadata.name }}"
-    remoteWriteUrls:
-      - http://victoriametrics.monitoring.svc.cluster.local:8428/api/v1/write
-```
-
-Note: The `remoteWriteUrls` points to `victoriametrics.monitoring.svc.cluster.local` — this only resolves on the obs cluster. For other clusters, vmagent will need a cross-cluster URL. Since there's no cross-cluster DNS, we'll need to use the obs cluster's NLB or a known endpoint. This is a detail to work out during implementation — for now, vmagent on the obs cluster itself will work, and other clusters will need the TGW-routable endpoint.
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add platform/caaph/
-git commit -m "feat(obs): add vmagent HelmChartProxy for all clusters via CAAPH"
-```
-
+  name: monitoring
 ---
-
-### Task 4: Create VictoriaMetrics HelmChartProxy (obs cluster)
-
-**Files:**
-- Create: `platform/caaph/helmchartproxy-victoriametrics.yaml`
-
-- [ ] **Step 1: Create HelmChartProxy**
-
-```yaml
-apiVersion: addons.cluster.x-k8s.io/v1alpha1
-kind: HelmChartProxy
-metadata:
-  name: victoriametrics
-  namespace: default
-spec:
-  clusterSelector:
-    matchLabels:
-      observability: "true"
-  repoURL: https://victoriametrics.github.io/helm-charts
-  chartName: victoria-metrics-single
-  releaseName: victoriametrics
-  releaseNamespace: monitoring
-  valuesTemplate: |
-    server:
-      retentionPeriod: 15d
-      persistentVolume:
-        enabled: true
-        size: 50Gi
-        storageClass: gp3
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add platform/caaph/helmchartproxy-victoriametrics.yaml
-git commit -m "feat(obs): add VictoriaMetrics HelmChartProxy for obs cluster"
-```
-
----
-
-### Task 5: Create Grafana HelmChartProxy (obs cluster)
-
-**Files:**
-- Create: `platform/caaph/helmchartproxy-grafana.yaml`
-
-- [ ] **Step 1: Create HelmChartProxy**
-
-```yaml
-apiVersion: addons.cluster.x-k8s.io/v1alpha1
-kind: HelmChartProxy
-metadata:
-  name: grafana
-  namespace: default
-spec:
-  clusterSelector:
-    matchLabels:
-      observability: "true"
-  repoURL: https://grafana.github.io/helm-charts
-  chartName: grafana
-  releaseName: grafana
-  releaseNamespace: monitoring
-  valuesTemplate: |
-    adminPassword: "admin"  # Change in production
-    datasources:
-      datasources.yaml:
-        apiVersion: 1
-        datasources:
-          - name: VictoriaMetrics
-            type: prometheus
-            url: http://victoriametrics-victoria-metrics-single-server.monitoring.svc:8428
-            access: proxy
-            isDefault: true
-    persistence:
-      enabled: true
-      size: 5Gi
-      storageClass: gp3
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add platform/caaph/helmchartproxy-grafana.yaml
-git commit -m "feat(obs): add Grafana HelmChartProxy for obs cluster"
-```
-
----
-
-### Task 6: Create Kiali HelmChartProxy (obs cluster) + remote secrets
-
-**Files:**
-- Create: `platform/caaph/helmchartproxy-kiali.yaml`
-- Create: `scripts/phase3b/03-configure-kiali-remotes.sh`
-
-- [ ] **Step 1: Create Kiali HelmChartProxy**
-
-Kiali needs the operator + CR. The HelmChartProxy installs the Kiali Operator, then we apply a Kiali CR separately.
-
-```yaml
-apiVersion: addons.cluster.x-k8s.io/v1alpha1
-kind: HelmChartProxy
+apiVersion: v1
+kind: Namespace
 metadata:
   name: kiali-operator
-  namespace: default
-spec:
-  clusterSelector:
-    matchLabels:
-      observability: "true"
-  repoURL: https://kiali.org/helm-charts
-  chartName: kiali-operator
-  releaseName: kiali-operator
-  releaseNamespace: kiali-operator
-  valuesTemplate: |
-    cr:
-      create: true
-      namespace: kiali-operator
-      spec:
-        auth:
-          strategy: anonymous
-        external_services:
-          prometheus:
-            url: http://victoriametrics-victoria-metrics-single-server.monitoring.svc:8428
-          grafana:
-            enabled: true
-            in_cluster_url: http://grafana.monitoring.svc:3000
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
 ```
-
-- [ ] **Step 2: Create Kiali remote secrets script**
-
-`scripts/phase3b/03-configure-kiali-remotes.sh` (chmod +x):
-For each cell cluster, creates a ServiceAccount + ClusterRoleBinding on the cell, extracts the SA token, and creates a Kiali remote secret on the obs cluster.
-
-This follows the Kiali multi-cluster pattern:
-1. On each cell: create SA `kiali-remote` with read permissions
-2. On obs cluster: create secret labeled `kiali.io/multiCluster: "true"` containing the cell's kubeconfig
 
 - [ ] **Step 3: Commit**
 
-```bash
-git add platform/caaph/helmchartproxy-kiali.yaml scripts/phase3b/03-configure-kiali-remotes.sh
-git commit -m "feat(obs): add Kiali HelmChartProxy and remote secrets script"
-```
-
 ---
 
-### Task 7: Create apply script, verification, and README
+### Task 3: Create HelmChartProxies for obs cluster infrastructure
 
 **Files:**
-- Create: `scripts/phase3b/02-apply-helmchartproxies.sh`
-- Create: `scripts/phase3b/04-verify.sh`
-- Create: `scripts/phase3b/README.md`
+- Create: `platform/caaph/helmchartproxy-cert-manager.yaml` (cert-manager on obs for VMAuth TLS)
+- Create: `platform/caaph/helmchartproxy-aws-lb-controller.yaml` (AWS LB controller on obs for NLB)
+- Create: `platform/caaph/helmchartproxy-vm-operator.yaml` (VictoriaMetrics Operator)
 
-- [ ] **Step 1: Create apply script**
+These are infrastructure prerequisites that must be installed before the VM CRs can be applied.
 
-Applies all HelmChartProxy CRs to the management cluster and waits for HelmReleaseProxy resources to be created.
+- [ ] **Step 1: cert-manager HelmChartProxy**
 
-```bash
-kubectl --context agentic-mgmt apply -f platform/caaph/
-# Wait for CAAPH to reconcile
+```yaml
+apiVersion: addons.cluster.x-k8s.io/v1alpha1
+kind: HelmChartProxy
+metadata:
+  name: cert-manager
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      observability: "true"
+  repoURL: https://charts.jetstack.io
+  chartName: cert-manager
+  version: v1.17.1
+  releaseName: cert-manager
+  releaseNamespace: cert-manager
+  valuesTemplate: |
+    crds:
+      enabled: true
 ```
 
-- [ ] **Step 2: Create verification script**
+- [ ] **Step 2: AWS LB Controller HelmChartProxy**
 
-Checks:
-- CAAPH controller running on management cluster
-- HelmReleaseProxy resources created for each cluster
-- VictoriaMetrics running on obs cluster
-- Grafana running on obs cluster
-- Kiali running on obs cluster
-- vmagent running on all clusters
-- Metrics flowing: query VictoriaMetrics for `up{}` grouped by cluster label
+Needs IRSA role for the obs cluster (same pattern as control-plane). The role ARN is injected via valuesTemplate from cluster annotations or hardcoded for now.
 
-- [ ] **Step 3: Create README**
+- [ ] **Step 3: VictoriaMetrics Operator HelmChartProxy**
 
-Run order, prerequisites, what gets created.
+```yaml
+apiVersion: addons.cluster.x-k8s.io/v1alpha1
+kind: HelmChartProxy
+metadata:
+  name: vm-operator
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      observability: "true"
+  repoURL: https://victoriametrics.github.io/helm-charts
+  chartName: victoria-metrics-operator
+  releaseName: vm-operator
+  releaseNamespace: monitoring
+  valuesTemplate: |
+    operator:
+      disable_prometheus_converter: false
+```
 
 - [ ] **Step 4: Commit**
 
-```bash
-git add scripts/phase3b/
-git commit -m "feat(obs): add Phase 3b apply, verify, and README"
+---
+
+### Task 4: Create HelmChartProxies for Grafana + Kiali
+
+**Files:**
+- Create: `platform/caaph/helmchartproxy-grafana.yaml`
+- Create: `platform/caaph/helmchartproxy-kiali.yaml`
+
+- [ ] **Step 1: Grafana HelmChartProxy**
+
+Datasource points to VictoriaMetrics at `http://vmsingle-vm.monitoring.svc:8429`.
+
+- [ ] **Step 2: Kiali Operator HelmChartProxy**
+
+Kiali CR configured for anonymous auth, VictoriaMetrics as prometheus endpoint.
+
+- [ ] **Step 3: Commit**
+
+---
+
+### Task 5: Create HelmChartProxy for vmagent (all clusters)
+
+**Files:**
+- Create: `platform/caaph/helmchartproxy-vmagent.yaml`
+
+- [ ] **Step 1: Create vmagent HelmChartProxy**
+
+Uses `valuesTemplate` with `{{ .Cluster.metadata.name }}` for per-cluster `externalLabels`. Remote-write URL points to the VMAuth NLB DNS name (set after NLB is provisioned — initially a placeholder, updated in the apply script).
+
+Bearer token per cluster is stored as a Secret in each cluster's `monitoring` namespace, referenced by vmagent config.
+
+- [ ] **Step 2: Commit**
+
+---
+
+### Task 6: Create VictoriaMetrics Operator CRs for obs cluster
+
+**Files:**
+- Create: `platform/observability-manifests/vmsingle.yaml` (VMSingle — the VictoriaMetrics instance)
+- Create: `platform/observability-manifests/vmauth.yaml` (VMAuth — TLS proxy with per-cluster bearer tokens)
+- Create: `platform/observability-manifests/vmauth-service-nlb.yaml` (Internal NLB Service for VMAuth)
+- Create: `platform/observability-manifests/vmuser-per-cluster.yaml` (VMUser CRs — one per cluster)
+
+- [ ] **Step 1: VMSingle CR**
+
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMSingle
+metadata:
+  name: vm
+  namespace: monitoring
+spec:
+  retentionPeriod: "15d"
+  storage:
+    volumeClaimTemplate:
+      spec:
+        resources:
+          requests:
+            storage: 50Gi
+        storageClassName: gp3
 ```
+
+- [ ] **Step 2: VMAuth CR**
+
+VMAuth terminates TLS (cert from cert-manager) and validates per-cluster bearer tokens.
+
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMAuth
+metadata:
+  name: vmauth
+  namespace: monitoring
+spec:
+  selectAllByDefault: true
+  extraArgs:
+    tls: "true"
+    tlsCertFile: /etc/vmauth-tls/tls.crt
+    tlsKeyFile: /etc/vmauth-tls/tls.key
+  extraVolumes:
+    - name: tls
+      secret:
+        secretName: vmauth-tls-cert
+  extraVolumeMounts:
+    - name: tls
+      mountPath: /etc/vmauth-tls
+      readOnly: true
+```
+
+- [ ] **Step 3: VMAuth NLB Service**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmauth-external
+  namespace: monitoring
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: vmauth
+    app.kubernetes.io/instance: vmauth
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8427
+```
+
+- [ ] **Step 4: VMUser CRs (one per cluster)**
+
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMUser
+metadata:
+  name: cluster-agentic-cp
+  namespace: monitoring
+spec:
+  generatePassword: true
+  targetRefs:
+    - static:
+        url: http://vmsingle-vm.monitoring.svc:8429
+      paths: ["/api/v1/write", "/insert/.*"]
+---
+# Repeat for agentic-obs, agentic-cell-1, agentic-cell-2
+```
+
+- [ ] **Step 5: cert-manager Certificate for VMAuth TLS**
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vmauth-tls-cert
+  namespace: monitoring
+spec:
+  secretName: vmauth-tls-cert
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+  dnsNames:
+    - vmauth.monitoring.svc
+    - vmauth-external.monitoring.svc
+    - "*.elb.us-east-1.amazonaws.com"
+```
+
+- [ ] **Step 6: Commit**
+
+---
+
+### Task 7: Create deployment scripts + verification
+
+**Files:**
+- Create: `scripts/phase3b/02-apply-helmchartproxies.sh`
+- Create: `scripts/phase3b/03-apply-obs-manifests.sh`
+- Create: `scripts/phase3b/04-configure-kiali-remotes.sh`
+- Create: `scripts/phase3b/05-verify.sh`
+- Create: `scripts/phase3b/README.md`
+
+- [ ] **Step 1: Apply HelmChartProxies script**
+
+Applies all HelmChartProxy CRs to management cluster. CAAPH auto-installs charts. Script waits for HelmReleaseProxy resources to appear.
+
+- [ ] **Step 2: Apply obs manifests script**
+
+After CAAPH installs the VM Operator, this script applies the VMSingle, VMAuth, VMUser, NLB Service, and cert-manager Certificate CRs to the obs cluster.
+
+Also extracts the VMUser generated passwords and distributes them as Secrets to each cluster's `monitoring` namespace (for vmagent to use as bearer tokens).
+
+Also extracts the VMAuth NLB DNS name and updates vmagent config with the actual endpoint.
+
+- [ ] **Step 3: Configure Kiali remotes script**
+
+Creates Kiali remote SA + ClusterRoleBinding on each cell cluster, extracts tokens, creates Kiali remote secrets on obs cluster.
+
+- [ ] **Step 4: Verification script**
+
+Checks: CAAPH running, VictoriaMetrics running, Grafana running, Kiali running, vmagent running on all clusters, metrics flowing (query VM for `up{}` grouped by cluster).
+
+- [ ] **Step 5: README**
+
+- [ ] **Step 6: Commit**
 
 ---
 
@@ -352,7 +368,8 @@ git commit -m "feat(obs): add Phase 3b apply, verify, and README"
 
 - [ ] **Step 1:** `./scripts/phase3b/00-install-caaph.sh` (~2 min)
 - [ ] **Step 2:** `./scripts/phase3b/01-label-clusters.sh` (~30 sec)
-- [ ] **Step 3:** `./scripts/phase3b/02-apply-helmchartproxies.sh` (~5-10 min for CAAPH to reconcile)
-- [ ] **Step 4:** `./scripts/phase3b/03-configure-kiali-remotes.sh` (~1 min)
-- [ ] **Step 5:** `./scripts/phase3b/04-verify.sh`
-- [ ] **Step 6:** Commit: `git commit -m "feat(obs): Phase 3b observability stack deployed via CAAPH"`
+- [ ] **Step 3:** `./scripts/phase3b/02-apply-helmchartproxies.sh` (~10 min for CAAPH to reconcile all charts)
+- [ ] **Step 4:** `./scripts/phase3b/03-apply-obs-manifests.sh` (~5 min — VM CRs, NLB, token distribution)
+- [ ] **Step 5:** `./scripts/phase3b/04-configure-kiali-remotes.sh` (~1 min)
+- [ ] **Step 6:** `./scripts/phase3b/05-verify.sh`
+- [ ] **Step 7:** Commit
