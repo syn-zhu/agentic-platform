@@ -1,0 +1,47 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMUser
+metadata:
+  name: cluster-agentic-cp
+  namespace: monitoring
+spec:
+  generatePassword: true
+  targetRefs:
+    - static:
+        url: http://vmsingle-vm.monitoring.svc:8429
+      paths: ["/api/v1/write", "/insert/.*"]
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMUser
+metadata:
+  name: cluster-agentic-obs
+  namespace: monitoring
+spec:
+  generatePassword: true
+  targetRefs:
+    - static:
+        url: http://vmsingle-vm.monitoring.svc:8429
+      paths: ["/api/v1/write", "/insert/.*"]
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMUser
+metadata:
+  name: cluster-agentic-cell-1
+  namespace: monitoring
+spec:
+  generatePassword: true
+  targetRefs:
+    - static:
+        url: http://vmsingle-vm.monitoring.svc:8429
+      paths: ["/api/v1/write", "/insert/.*"]
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMUser
+metadata:
+  name: cluster-agentic-cell-2
+  namespace: monitoring
+spec:
+  generatePassword: true
+  targetRefs:
+    - static:
+        url: http://vmsingle-vm.monitoring.svc:8429
+      paths: ["/api/v1/write", "/insert/.*"]

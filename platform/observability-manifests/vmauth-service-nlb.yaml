@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmauth-external
+  namespace: monitoring
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: vmauth
+    app.kubernetes.io/instance: vmauth
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8427

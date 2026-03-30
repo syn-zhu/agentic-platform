@@ -1,0 +1,19 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMAuth
+metadata:
+  name: vmauth
+  namespace: monitoring
+spec:
+  selectAllByDefault: true
+  extraArgs:
+    tls: "true"
+    tlsCertFile: /etc/vmauth-tls/tls.crt
+    tlsKeyFile: /etc/vmauth-tls/tls.key
+  extraVolumes:
+    - name: tls
+      secret:
+        secretName: vmauth-tls-cert
+  extraVolumeMounts:
+    - name: tls
+      mountPath: /etc/vmauth-tls
+      readOnly: true

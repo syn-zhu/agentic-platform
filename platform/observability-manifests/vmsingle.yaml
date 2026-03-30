@@ -1,0 +1,14 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMSingle
+metadata:
+  name: vm
+  namespace: monitoring
+spec:
+  retentionPeriod: "15d"
+  storage:
+    volumeClaimTemplate:
+      spec:
+        resources:
+          requests:
+            storage: 50Gi
+        storageClassName: gp3
