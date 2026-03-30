@@ -13,7 +13,7 @@ spec:
   repoURL: https://grafana.github.io/helm-charts
   chartName: grafana
   releaseName: grafana
-  releaseNamespace: monitoring
+  namespace: monitoring
   valuesTemplate: |
     adminPassword: admin
 

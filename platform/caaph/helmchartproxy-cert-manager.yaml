@@ -13,7 +13,7 @@ spec:
   chartName: cert-manager
   version: v1.17.1
   releaseName: cert-manager
-  releaseNamespace: cert-manager
+  namespace: cert-manager
   valuesTemplate: |
     crds:
       enabled: true

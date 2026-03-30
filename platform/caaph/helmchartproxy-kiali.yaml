@@ -15,7 +15,7 @@ spec:
   repoURL: https://kiali.org/helm-charts
   chartName: kiali-operator
   releaseName: kiali-operator
-  releaseNamespace: kiali-operator
+  namespace: kiali-operator
   valuesTemplate: |
     cr:
       create: true

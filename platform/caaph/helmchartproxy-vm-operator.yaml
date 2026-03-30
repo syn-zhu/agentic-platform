@@ -14,7 +14,7 @@ spec:
   repoURL: https://victoriametrics.github.io/helm-charts
   chartName: victoria-metrics-operator
   releaseName: vm-operator
-  releaseNamespace: monitoring
+  namespace: monitoring
   valuesTemplate: |
     operator:
       disable_prometheus_converter: false

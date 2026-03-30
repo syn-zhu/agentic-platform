@@ -13,7 +13,7 @@ spec:
   repoURL: https://aws.github.io/eks-charts
   chartName: aws-load-balancer-controller
   releaseName: aws-load-balancer-controller
-  releaseNamespace: kube-system
+  namespace: kube-system
   valuesTemplate: |
     clusterName: agentic-obs
     region: us-east-1
