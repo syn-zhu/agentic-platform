@@ -1,0 +1,11 @@
+# CAAPH — Cluster API Addon Provider for Helm
+# Installed via the CAPI Operator. Watches HelmChartProxy CRs and installs
+# Helm charts into workload clusters matched by label selectors.
+# Uses CAPI-generated kubeconfig secrets for workload cluster access.
+apiVersion: operator.cluster.x-k8s.io/v1alpha2
+kind: AddonProvider
+metadata:
+  name: helm
+  namespace: caaph-system
+spec:
+  version: v0.3.2
