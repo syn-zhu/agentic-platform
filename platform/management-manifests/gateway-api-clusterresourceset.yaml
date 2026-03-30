@@ -1,0 +1,24 @@
+# ClusterResourceSet — auto-applies Gateway API v1.4.0 experimental CRDs
+# to all CAPA-managed clusters that have the label gateway-api=v1.4.0.
+#
+# The CRD manifests are stored as ConfigMaps (split into 2 parts to stay
+# under the 1MB etcd object limit). When a new cluster is created with
+# the matching label, CAPI automatically applies these CRDs to it.
+#
+# To update Gateway API version: download new CRDs, split, update ConfigMaps,
+# update the ClusterResourceSet label selector.
+apiVersion: addons.cluster.x-k8s.io/v1beta1
+kind: ClusterResourceSet
+metadata:
+  name: gateway-api-crds
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      gateway-api: "v1.4.0"
+  resources:
+    - name: gateway-api-crds-part-0
+      kind: ConfigMap
+    - name: gateway-api-crds-part-1
+      kind: ConfigMap
+  strategy: ApplyOnce
