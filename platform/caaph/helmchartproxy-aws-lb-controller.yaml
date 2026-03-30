@@ -1,0 +1,33 @@
+# AWS Load Balancer Controller — installed on the obs cluster to provision the VMAuth internal NLB.
+# Requires IRSA setup for the obs cluster before applying.
+# TODO: create IRSA role for obs cluster (same pattern as agentic-cp) and replace placeholders below.
+apiVersion: addons.cluster.x-k8s.io/v1alpha1
+kind: HelmChartProxy
+metadata:
+  name: aws-load-balancer-controller
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      observability: "true"
+  repoURL: https://aws.github.io/eks-charts
+  chartName: aws-load-balancer-controller
+  releaseName: aws-load-balancer-controller
+  releaseNamespace: kube-system
+  valuesTemplate: |
+    clusterName: agentic-obs
+    region: us-east-1
+
+    serviceAccount:
+      create: true
+      name: aws-load-balancer-controller
+      annotations:
+        # TODO: replace with IRSA role ARN once obs cluster IRSA is set up
+        eks.amazonaws.com/role-arn: PLACEHOLDER_LB_CONTROLLER_ROLE_ARN_OBS
+
+    # VPC ID for the obs cluster (10.2.0.0/16 VPC, EKS name: agentic-obs)
+    # TODO: replace with actual VPC ID from AWS console or `aws eks describe-cluster`
+    vpcId: PLACEHOLDER_VPC_ID_OBS
+
+    # Avoid conflicts with Istio webhook
+    enableServiceMutatorWebhook: false

@@ -1,0 +1,46 @@
+# vmagent — installed on ALL clusters (matched by monitoring=vmagent label).
+# Scrapes cluster metrics and remote-writes to the VMAuth NLB endpoint on the obs cluster.
+# externalLabels injects the cluster name via the CAAPH Go template variable
+# {{ .Cluster.metadata.name }}, so each cluster's metrics are tagged with cluster="<name>".
+#
+# remoteWrite.url is a placeholder — update to the actual NLB DNS name after
+# running scripts/phase3b/03-apply-obs-manifests.sh provisions the NLB.
+#
+# Per-cluster bearer tokens are stored as Secrets in each cluster's monitoring namespace
+# (distributed by 03-apply-obs-manifests.sh) and referenced via remoteWrite.bearerTokenSecret.
+apiVersion: addons.cluster.x-k8s.io/v1alpha1
+kind: HelmChartProxy
+metadata:
+  name: vmagent
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      monitoring: vmagent
+  repoURL: https://victoriametrics.github.io/helm-charts
+  chartName: victoria-metrics-agent
+  releaseName: vmagent
+  releaseNamespace: monitoring
+  valuesTemplate: |
+    deployment:
+      enabled: true
+
+    externalLabels:
+      cluster: "{{ .Cluster.metadata.name }}"
+
+    remoteWriteUrls:
+      - https://PLACEHOLDER_VMAUTH_ENDPOINT/api/v1/write
+
+    remoteWrite:
+      - url: https://PLACEHOLDER_VMAUTH_ENDPOINT/api/v1/write
+        bearerTokenSecret:
+          name: vmagent-remote-write-token
+          key: token
+        tlsConfig:
+          # VMAuth uses a self-signed cert from cert-manager; skip verify until
+          # a proper cert (ACM or Let's Encrypt) is provisioned.
+          insecureSkipVerify: true
+
+    config:
+      global:
+        scrape_interval: 30s

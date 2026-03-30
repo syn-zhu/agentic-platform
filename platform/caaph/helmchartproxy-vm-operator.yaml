@@ -1,0 +1,20 @@
+# VictoriaMetrics Operator — installed on the obs cluster.
+# Manages VMSingle, VMAuth, VMAgent, and VMUser CRs.
+# disable_prometheus_converter: false keeps Prometheus CRD compatibility (converts
+# ServiceMonitor/PodMonitor to VMServiceScrape/VMPodScrape automatically).
+apiVersion: addons.cluster.x-k8s.io/v1alpha1
+kind: HelmChartProxy
+metadata:
+  name: vm-operator
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      observability: "true"
+  repoURL: https://victoriametrics.github.io/helm-charts
+  chartName: victoria-metrics-operator
+  releaseName: vm-operator
+  releaseNamespace: monitoring
+  valuesTemplate: |
+    operator:
+      disable_prometheus_converter: false

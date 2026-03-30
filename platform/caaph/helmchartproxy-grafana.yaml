@@ -1,0 +1,33 @@
+# Grafana — installed on the obs cluster as the metrics visualization layer.
+# Datasource points to VictoriaMetrics VMSingle at http://vmsingle-vm.monitoring.svc:8429.
+# Persistence uses a 5Gi gp3 PVC to survive pod restarts.
+apiVersion: addons.cluster.x-k8s.io/v1alpha1
+kind: HelmChartProxy
+metadata:
+  name: grafana
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      observability: "true"
+  repoURL: https://grafana.github.io/helm-charts
+  chartName: grafana
+  releaseName: grafana
+  releaseNamespace: monitoring
+  valuesTemplate: |
+    adminPassword: admin
+
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: VictoriaMetrics
+            type: prometheus
+            url: http://vmsingle-vm.monitoring.svc:8429
+            access: proxy
+            isDefault: true
+
+    persistence:
+      enabled: true
+      storageClassName: gp3
+      size: 5Gi
