@@ -1,0 +1,52 @@
+# ClickHouse for Langfuse analytics (bitnami/clickhouse)
+# Runs in-cluster because no AWS managed ClickHouse equivalent exists.
+# 1 shard × 2 replicas for data redundancy, 3 keeper pods for quorum.
+#
+# NOTE: Istio HBONE NetworkPolicy extra rules (port 15008) are NOT needed here.
+#       The control-plane cluster uses Istio sidecar mode, not ambient/ztunnel.
+#       Traffic between pods is intercepted by sidecars on standard app ports.
+
+global:
+  security:
+    allowInsecureImages: true
+
+replicaCount: 2
+shards: 1
+
+image:
+  registry: public.ecr.aws
+  repository: bitnami/clickhouse
+
+keeper:
+  replicaCount: 3
+  image:
+    registry: public.ecr.aws
+    repository: bitnami/clickhouse-keeper
+  persistence:
+    storageClass: gp3
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 512Mi
+
+auth:
+  username: default
+  existingSecret: langfuse-clickhouse-credentials
+  existingSecretKey: CLICKHOUSE_PASSWORD
+
+persistence:
+  enabled: true
+  storageClass: gp3
+  size: 10Gi
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1
+    memory: 2Gi

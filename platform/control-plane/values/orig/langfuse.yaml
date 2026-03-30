@@ -5,8 +5,8 @@
 # Backing: AWS RDS (PostgreSQL), AWS ElastiCache (Redis), AWS S3, in-cluster ClickHouse.
 #
 # NOTE: RDS and Redis endpoints are substituted by 02-deploy-control-plane.sh via
-#       envsubst. The literal strings agentic-cp-postgres.c8wxny7wgs2y.us-east-1.rds.amazonaws.com and
-#       master.agentic-cp-redis.oay4mu.use1.cache.amazonaws.com must not appear in the deployed cluster.
+#       envsubst. The literal strings PLACEHOLDER_RDS_ENDPOINT and
+#       PLACEHOLDER_REDIS_ENDPOINT must not appear in the deployed cluster.
 
 # ═══════════════════════════════════════════════════════
 # Disable built-in subcharts (using external services)
@@ -14,7 +14,7 @@
 
 postgresql:
   deploy: false
-  host: "agentic-cp-postgres.c8wxny7wgs2y.us-east-1.rds.amazonaws.com"
+  host: "PLACEHOLDER_RDS_ENDPOINT"
   port: 5432
   auth:
     username: langfuse
@@ -25,7 +25,7 @@ postgresql:
 
 redis:
   deploy: false
-  host: "master.agentic-cp-redis.oay4mu.use1.cache.amazonaws.com"
+  host: "PLACEHOLDER_REDIS_ENDPOINT"
   port: 6379
   tls:
     enabled: true

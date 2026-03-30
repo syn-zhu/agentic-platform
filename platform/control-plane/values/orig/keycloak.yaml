@@ -9,7 +9,7 @@
 #   - Federated Client Authentication (K8s SA tokens as client assertions)
 #
 # NOTE: RDS endpoint is substituted by 02-deploy-control-plane.sh via envsubst.
-#       The literal string agentic-cp-postgres.c8wxny7wgs2y.us-east-1.rds.amazonaws.com must not appear in the
+#       The literal string PLACEHOLDER_RDS_ENDPOINT must not appear in the
 #       deployed cluster; the deploy script replaces it before helmfile sync.
 
 # ═══════════════════════════════════════════════════════
@@ -53,7 +53,7 @@ dbchecker:
 
 database:
   vendor: postgres
-  hostname: "agentic-cp-postgres.c8wxny7wgs2y.us-east-1.rds.amazonaws.com"
+  hostname: "PLACEHOLDER_RDS_ENDPOINT"
   port: 5432
   username: keycloak
   database: keycloak

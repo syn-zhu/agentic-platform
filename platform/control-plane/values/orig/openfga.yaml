@@ -8,7 +8,7 @@
 #   - OTEL traces -> otel-collector -> Langfuse (local otel-system collector)
 #
 # NOTE: RDS connection URI is stored in the openfga-db-credentials secret.
-#       That secret is created by 01-create-secrets.sh with agentic-cp-postgres.c8wxny7wgs2y.us-east-1.rds.amazonaws.com
+#       That secret is created by 01-create-secrets.sh with PLACEHOLDER_RDS_ENDPOINT
 #       substituted at secret-creation time.
 #
 # NOTE: ServiceMonitor is disabled — Prometheus lives in the obs cluster (Phase 3b).

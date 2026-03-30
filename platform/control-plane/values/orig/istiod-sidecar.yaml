@@ -1,0 +1,2 @@
+# Istio sidecar mode — internal control-plane service mesh only
+# No profile needed for sidecar mode — istiod defaults to sidecar injection
