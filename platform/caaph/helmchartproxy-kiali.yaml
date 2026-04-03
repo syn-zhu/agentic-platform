@@ -1,5 +1,5 @@
 # Kiali Operator — installed on the obs cluster.
-# Operator creates a Kiali CR (cr.create: true) in istio-system.
+# Operator creates a Kiali CR (cr.create: true) in monitoring namespace.
 # Auth strategy is anonymous (internal obs cluster, no external exposure initially).
 # Prometheus endpoint points to VictoriaMetrics VMSingle (Prometheus-compatible API).
 # Grafana in_cluster_url points to the grafana Service in the monitoring namespace.
@@ -19,7 +19,7 @@ spec:
   valuesTemplate: |
     cr:
       create: true
-      namespace: istio-system
+      namespace: monitoring
       spec:
         auth:
           strategy: anonymous

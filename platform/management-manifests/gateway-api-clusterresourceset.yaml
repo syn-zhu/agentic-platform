@@ -5,7 +5,7 @@
 # under the 1MB etcd object limit). When a new cluster is created with
 # the matching label, CAPI automatically applies these CRDs to it.
 #
-# To update Gateway API version: download new CRDs, split, update ConfigMaps,
+# To update Gateway API version: download new CRDs, split, update ConfigMap,
 # update the ClusterResourceSet label selector.
 apiVersion: addons.cluster.x-k8s.io/v1beta1
 kind: ClusterResourceSet
@@ -15,10 +15,8 @@ metadata:
 spec:
   clusterSelector:
     matchLabels:
-      gateway-api: "v1.4.0"
+      gateway-api: "v1.5.1"
   resources:
-    - name: gateway-api-crds-part-0
-      kind: ConfigMap
-    - name: gateway-api-crds-part-1
+    - name: gateway-api-crds
       kind: ConfigMap
   strategy: ApplyOnce

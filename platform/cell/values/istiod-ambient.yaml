@@ -6,6 +6,12 @@ tolerations:
   - operator: Exists
 
 # Waypoint proxy defaults — applied to all auto-generated waypoint Deployments
+pilot:
+  env:
+    # Required for DYNAMIC_DNS ServiceEntries with protocol: TLS to
+    # generate waypoint VIP clusters (used for Atlas wildcard SEs)
+    ENABLE_WILDCARD_HOST_SERVICE_ENTRIES_FOR_TLS: "true"
+
 global:
   waypoint:
     tolerations:
