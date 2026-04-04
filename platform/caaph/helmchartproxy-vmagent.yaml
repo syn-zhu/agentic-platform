@@ -3,11 +3,10 @@
 # externalLabels injects the cluster name via the CAAPH Go template variable
 # {{ .Cluster.metadata.name }}, so each cluster's metrics are tagged with cluster="<name>".
 #
-# remoteWrite.url is a placeholder — update to the actual NLB DNS name after
-# running scripts/phase3b/03-apply-obs-manifests.sh provisions the NLB.
+# remoteWrite.url points to the VMAuth internal NLB on the obs cluster.
 #
 # Per-cluster bearer tokens are stored as Secrets in each cluster's monitoring namespace
-# (distributed by 03-apply-obs-manifests.sh) and referenced via remoteWrite.bearerTokenSecret.
+# (distributed by 03-apply-obs-manifests.sh) and mounted as a file for vmagent.
 apiVersion: addons.cluster.x-k8s.io/v1alpha1
 kind: HelmChartProxy
 metadata:
@@ -25,21 +24,30 @@ spec:
     deployment:
       enabled: true
 
+    # Tolerate all taints so vmagent can schedule on cell cluster nodes
+    tolerations:
+      - operator: Exists
+
     externalLabels:
       cluster: "{{ .Cluster.metadata.name }}"
 
-    remoteWriteUrls:
-      - https://PLACEHOLDER_VMAUTH_ENDPOINT/api/v1/write
-
     remoteWrite:
-      - url: https://PLACEHOLDER_VMAUTH_ENDPOINT/api/v1/write
-        bearerTokenSecret:
-          name: vmagent-remote-write-token
-          key: token
-        tlsConfig:
-          # VMAuth uses a self-signed cert from cert-manager; skip verify until
-          # a proper cert (ACM or Let's Encrypt) is provisioned.
-          insecureSkipVerify: true
+      - url: https://k8s-monitori-vmauthex-cffc274934-d3f976225245203f.elb.us-east-1.amazonaws.com/api/v1/write
+
+    extraArgs:
+      remoteWrite.bearerTokenFile: /etc/vmagent-token/token
+      remoteWrite.tlsInsecureSkipVerify: "true"
+      remoteWrite.label: "cluster={{ .Cluster.metadata.name }}"
+
+    extraVolumes:
+      - name: bearer-token
+        secret:
+          secretName: vmagent-remote-write-token
+
+    extraVolumeMounts:
+      - name: bearer-token
+        mountPath: /etc/vmagent-token
+        readOnly: true
 
     config:
       global:

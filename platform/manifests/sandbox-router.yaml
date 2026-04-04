@@ -10,6 +10,7 @@
 # the need for per-sandbox routes.
 #
 # Source: https://github.com/kubernetes-sigs/agent-sandbox/tree/main/clients/python/agentic-sandbox-client/sandbox-router
+# TODO: replace with ghcr.io/devigned/sandbox-router:latest
 
 ---
 apiVersion: v1

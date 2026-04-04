@@ -9,11 +9,11 @@ spec:
     tls: "true"
     tlsCertFile: /etc/vmauth-tls/tls.crt
     tlsKeyFile: /etc/vmauth-tls/tls.key
-  extraVolumes:
+  volumes:
     - name: tls
       secret:
         secretName: vmauth-tls-cert
-  extraVolumeMounts:
+  volumeMounts:
     - name: tls
       mountPath: /etc/vmauth-tls
       readOnly: true

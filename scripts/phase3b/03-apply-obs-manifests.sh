@@ -13,9 +13,9 @@ echo ""
 echo "Waiting for VictoriaMetrics Operator CRDs on $OBS_CTX (up to 10 min)..."
 DEADLINE=$((SECONDS + 600))
 VM_CRDS=(
-  "vmsingle.operator.victoriametrics.com"
-  "vmauth.operator.victoriametrics.com"
-  "vmuser.operator.victoriametrics.com"
+  "vmsingles.operator.victoriametrics.com"
+  "vmauths.operator.victoriametrics.com"
+  "vmusers.operator.victoriametrics.com"
 )
 while true; do
   MISSING=0
