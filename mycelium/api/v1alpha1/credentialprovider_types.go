@@ -98,10 +98,6 @@ type CredentialProviderSpec struct {
 
 // CredentialProviderStatus defines the observed state of CredentialProvider.
 type CredentialProviderStatus struct {
-	// CallbackURL is the generated OAuth callback URL (only set for OAuth providers).
-	// +optional
-	// +kubebuilder:validation:MaxLength=2048
-	CallbackURL string `json:"callbackUrl,omitempty"`
 	// Conditions represent the latest observations.
 	// Known condition types: "Ready"
 	// +optional
