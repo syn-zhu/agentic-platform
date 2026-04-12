@@ -14,6 +14,14 @@ Items to revisit during implementation. Check off when resolved.
 - [x] ~~`callbackUrl` in status~~ — **Resolved:** callback URL is deterministic (`{tenant-gateway-base}/oauth2/callback/{credentialprovider-name}`), no CRD field needed. Returned in the API response when creating an OAuth CredentialProvider.
 - [ ] Deletion protection via finalizer — controller should add a finalizer to CredentialProviders that are referenced by Tools, and block deletion while dependents exist. Implement in the controller reconciliation loop.
 
+## MongoDB Architecture (per-cell platform MongoDB)
+- [ ] **Per-tenant database isolation:** Each tenant gets their own database (`tenant-{name}`) in the cell's platform MongoDB. Contains: `encryption.__keyVault` (tenant's DEKs only), `oauth_tokens`, `api_keys` (both CSFLE-encrypted). No shared key vault collection — complete database-level isolation.
+- [ ] **Per-tenant credentials:** Controller provisions a scoped MongoDB user at tenant onboarding with `readWrite` on `tenant-{name}` database only. Credential stored as K8s Secret in tenant namespace, mounted by the engine sidecar.
+- [ ] **KMS configuration:** Each tenant can bring their own KMS (AWS KMS, Azure Key Vault, GCP KMS). Need to decide where KMS config lives — TenantConfig? Separate CRD? Operator flag?
+- [ ] **DEK provisioning:** Controller creates the tenant's DEK (encrypted with their CMK) during onboarding. Stored in `tenant-{name}.encryption.__keyVault`.
+- [ ] **Collection design:** Decide on `oauth_tokens` + `api_keys` (separate collections) vs single `credentials` collection with type discriminator. Separate collections lean cleaner (different schemas, different lifecycle).
+- [ ] **Platform MongoDB deployment:** How is the per-cell MongoDB itself deployed? Atlas? Self-managed? Operator-managed? Out of scope for Mycelium but need to document the prerequisite.
+
 ## Pod-to-Session Mapping (OQ-2)
 - [ ] Resolve who owns the mapping (engine informer cache vs sandbox operator vs optimistic FQDN approach). See detailed notes in spec under OQ-2.
 - [ ] Investigate whether agent-sandbox's SandboxClaim → Service lifecycle gives us safe-by-construction outbound routing via deterministic Service FQDNs.
