@@ -57,9 +57,12 @@ spec:
                     description: Audiences are the allowed JWT audiences.
                     items:
                       type: string
+                    minItems: 1
                     type: array
                   issuer:
                     description: Issuer is the OIDC issuer URL.
+                    format: uri
+                    minLength: 1
                     type: string
                 required:
                 - audiences
@@ -68,6 +71,8 @@ spec:
               userVerifierUrl:
                 description: UserVerifierURL is the developer-managed endpoint for
                   session binding.
+                format: uri
+                minLength: 1
                 type: string
             required:
             - identityProvider
@@ -77,8 +82,9 @@ spec:
             description: TenantConfigStatus defines the observed state of TenantConfig.
             properties:
               conditions:
-                description: Conditions represent the latest observations of the TenantConfig's
-                  state.
+                description: |-
+                  Conditions represent the latest observations of the TenantConfig's state.
+                  Known condition types: "Ready"
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

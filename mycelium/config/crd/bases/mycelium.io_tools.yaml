@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: toolconfigs.mycelium.io
+  name: tools.mycelium.io
 spec:
   group: mycelium.io
   names:
-    kind: ToolConfig
-    listKind: ToolConfigList
-    plural: toolconfigs
-    singular: toolconfig
+    kind: Tool
+    listKind: ToolList
+    plural: tools
+    singular: tool
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ToolConfig is the Schema for the toolconfigs API.
+        description: Tool is the Schema for the tools API.
         properties:
           apiVersion:
             description: |-
@@ -37,70 +37,114 @@ spec:
           metadata:
             type: object
           spec:
-            description: ToolConfigSpec defines the desired state of ToolConfig.
+            description: ToolSpec defines the desired state of Tool.
             properties:
               container:
                 description: Container defines the tool executor container.
                 properties:
                   image:
                     description: Image is the container image for the tool executor.
+                    minLength: 1
                     type: string
                 required:
                 - image
                 type: object
+              credentials:
+                description: Credentials defines the credential providers required
+                  by this tool.
+                properties:
+                  apiKeys:
+                    description: |-
+                      APIKeys are optional API key credential bindings. Multiple allowed,
+                      since API keys don't require user authorization.
+                    items:
+                      description: APIKeyCredentialRef binds a tool to an API key
+                        CredentialProvider.
+                      properties:
+                        providerRef:
+                          description: ProviderRef references an API key CredentialProvider
+                            in the same namespace.
+                          properties:
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - providerRef
+                      type: object
+                    type: array
+                  oauth:
+                    description: |-
+                      OAuth is the optional OAuth credential binding. At most one per tool,
+                      since each requires a user authorization flow.
+                    properties:
+                      providerRef:
+                        description: ProviderRef references an OAuth CredentialProvider
+                          in the same namespace.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      scopes:
+                        description: Scopes are the OAuth scopes required by this
+                          tool.
+                        items:
+                          type: string
+                        minItems: 1
+                        type: array
+                    required:
+                    - providerRef
+                    - scopes
+                    type: object
+                type: object
               description:
                 description: Description is the human-readable tool description.
+                minLength: 1
                 type: string
               inputSchema:
                 description: InputSchema is the MCP-compatible JSON Schema for the
                   tool's input.
                 x-kubernetes-preserve-unknown-fields: true
-              resource:
-                description: Resource is the optional OAuth resource binding.
-                properties:
-                  ref:
-                    description: Ref is a typed reference to the OAuthResource.
-                    properties:
-                      group:
-                        description: Group is the API group of the referenced resource.
-                        type: string
-                      kind:
-                        description: Kind is the kind of the referenced resource.
-                        type: string
-                      name:
-                        description: Name is the name of the referenced resource.
-                        type: string
-                    required:
-                    - group
-                    - kind
-                    - name
-                    type: object
-                  scopes:
-                    description: Scopes are the OAuth scopes required by this tool.
-                    items:
-                      type: string
-                    type: array
-                required:
-                - ref
-                - scopes
-                type: object
               scaling:
-                description: Scaling defines optional scaling overrides.
+                description: Scaling defines optional scaling overrides for the Knative
+                  Service.
                 properties:
                   maxScale:
                     default: 10
                     description: MaxScale is the maximum number of replicas.
                     format: int32
+                    minimum: 1
                     type: integer
                   minScale:
                     default: 0
                     description: MinScale is the minimum number of replicas (0 for
                       scale-to-zero).
                     format: int32
+                    minimum: 0
                     type: integer
                 type: object
               toolName:
-                description: ToolName is the MCP tool name exposed to agents.
+                description: |-
+                  ToolName is the MCP tool name exposed to agents. Must be a valid
+                  MCP tool identifier (lowercase alphanumeric and underscores).
+                maxLength: 253
+                minLength: 1
+                pattern: ^[a-z][a-z0-9_]*$
                 type: string
             required:
             - container
@@ -108,10 +152,12 @@ spec:
             - toolName
             type: object
           status:
-            description: ToolConfigStatus defines the observed state of ToolConfig.
+            description: ToolStatus defines the observed state of Tool.
             properties:
               conditions:
-                description: Conditions represent the latest observations.
+                description: |-
+                  Conditions represent the latest observations of the Tool's state.
+                  Known condition types: "Ready", "KnativeServiceReady", "CredentialsValid"
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -167,10 +213,23 @@ spec:
                   - type
                   type: object
                 type: array
-              knativeServiceUrl:
-                description: KnativeServiceURL is the internal URL of the generated
-                  Knative Service.
-                type: string
+              knativeServiceRef:
+                description: |-
+                  KnativeServiceRef references the generated Knative Service for this tool.
+                  The controller sets an ownerReference on the Knative Service pointing back
+                  to this Tool, so deleting the Tool cascade-deletes the Service.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
             type: object
         type: object
     served: true
