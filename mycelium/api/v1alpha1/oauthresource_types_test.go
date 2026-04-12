@@ -5,6 +5,7 @@ import (
 
 	"github.com/mongodb/mycelium/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -18,9 +19,11 @@ func TestOAuthResource_HasExpectedFields(t *testing.T) {
 			AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
 			TokenEndpoint:         "https://github.com/login/oauth/access_token",
 			ClientID:              "Iv1.abc123",
-			ClientSecretRef: v1alpha1.SecretKeyRef{
-				Name: "github-oauth-secret",
-				Key:  "client-secret",
+			ClientSecretRef: corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: "github-oauth-secret",
+				},
+				Key: "client-secret",
 			},
 		},
 	}

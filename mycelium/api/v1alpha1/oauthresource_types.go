@@ -1,16 +1,9 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// SecretKeyRef is a reference to a key in a Kubernetes Secret.
-type SecretKeyRef struct {
-	// Name is the name of the Secret.
-	Name string `json:"name"`
-	// Key is the key within the Secret.
-	Key string `json:"key"`
-}
 
 // OAuthResourceSpec defines the desired state of OAuthResource.
 type OAuthResourceSpec struct {
@@ -20,8 +13,8 @@ type OAuthResourceSpec struct {
 	TokenEndpoint string `json:"tokenEndpoint"`
 	// ClientID is the OAuth client ID.
 	ClientID string `json:"clientId"`
-	// ClientSecretRef references the Kubernetes Secret containing the client secret.
-	ClientSecretRef SecretKeyRef `json:"clientSecretRef"`
+	// ClientSecretRef references a key in a Kubernetes Secret containing the client secret.
+	ClientSecretRef corev1.SecretKeySelector `json:"clientSecretRef"`
 	// DiscoveryURL is the optional OIDC discovery endpoint. If set, endpoints
 	// are auto-discovered and AuthorizationEndpoint/TokenEndpoint are ignored.
 	// +optional
