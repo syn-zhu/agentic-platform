@@ -12,7 +12,10 @@ type OAuthCredentialRef struct {
 	// +kubebuilder:validation:Required
 	ProviderRef corev1.LocalObjectReference `json:"providerRef"`
 	// Scopes are the OAuth scopes required by this tool.
+	// +required
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:XValidation:rule="self.all(s, size(s) >= 1 && size(s) <= 256)",message="each scope must be 1-256 characters"
 	Scopes []string `json:"scopes"`
 }
 
@@ -32,6 +35,7 @@ type ToolCredentials struct {
 	// APIKeys are optional API key credential bindings. Multiple allowed,
 	// since API keys don't require user authorization.
 	// +optional
+	// +kubebuilder:validation:MaxItems=8
 	APIKeys []APIKeyCredentialRef `json:"apiKeys,omitempty"`
 }
 
@@ -40,18 +44,22 @@ type ToolContainer struct {
 	// Image is the container image for the tool executor.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
 	Image string `json:"image"`
 }
 
 // ToolScaling defines scaling parameters for the tool executor.
+// +kubebuilder:validation:XValidation:rule="!has(self.minScale) || !has(self.maxScale) || self.minScale <= self.maxScale",message="minScale must be less than or equal to maxScale"
 type ToolScaling struct {
 	// MinScale is the minimum number of replicas (0 for scale-to-zero).
 	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
 	// +kubebuilder:default=0
 	// +optional
 	MinScale *int32 `json:"minScale,omitempty"`
 	// MaxScale is the maximum number of replicas.
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
 	// +kubebuilder:default=10
 	// +optional
 	MaxScale *int32 `json:"maxScale,omitempty"`
@@ -63,12 +71,13 @@ type ToolSpec struct {
 	// MCP tool identifier (lowercase alphanumeric and underscores).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]*$`
 	ToolName string `json:"toolName"`
 	// Description is the human-readable tool description.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
 	Description string `json:"description"`
 	// Credentials defines the credential providers required by this tool.
 	// +optional
@@ -94,19 +103,26 @@ type ToolStatus struct {
 	// Conditions represent the latest observations of the Tool's state.
 	// Known condition types: "Ready", "KnativeServiceReady", "CredentialsValid"
 	// +optional
+	// +listType=map
+	// +listMapKey=type
+	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:resource:scope=Namespaced,shortName=tl,categories=mycelium
+// +kubebuilder:printcolumn:name="Tool",type=string,JSONPath=".spec.toolName",description="MCP tool name"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`,description="Whether the tool is ready"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // Tool is the Schema for the tools API.
 type Tool struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ToolSpec   `json:"spec,omitempty"`
+	// +required
+	Spec   ToolSpec   `json:"spec"`
 	Status ToolStatus `json:"status,omitempty"`
 }
 

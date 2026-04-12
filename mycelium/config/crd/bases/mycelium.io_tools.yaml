@@ -8,13 +8,29 @@ metadata:
 spec:
   group: mycelium.io
   names:
+    categories:
+    - mycelium
     kind: Tool
     listKind: ToolList
     plural: tools
+    shortNames:
+    - tl
     singular: tool
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: MCP tool name
+      jsonPath: .spec.toolName
+      name: Tool
+      type: string
+    - description: Whether the tool is ready
+      jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: Tool is the Schema for the tools API.
@@ -44,6 +60,7 @@ spec:
                 properties:
                   image:
                     description: Image is the container image for the tool executor.
+                    maxLength: 1024
                     minLength: 1
                     type: string
                 required:
@@ -79,6 +96,7 @@ spec:
                       required:
                       - providerRef
                       type: object
+                    maxItems: 8
                     type: array
                   oauth:
                     description: |-
@@ -105,8 +123,12 @@ spec:
                           tool.
                         items:
                           type: string
+                        maxItems: 32
                         minItems: 1
                         type: array
+                        x-kubernetes-validations:
+                        - message: each scope must be 1-256 characters
+                          rule: self.all(s, size(s) >= 1 && size(s) <= 256)
                     required:
                     - providerRef
                     - scopes
@@ -114,6 +136,7 @@ spec:
                 type: object
               description:
                 description: Description is the human-readable tool description.
+                maxLength: 1024
                 minLength: 1
                 type: string
               inputSchema:
@@ -128,6 +151,7 @@ spec:
                     default: 10
                     description: MaxScale is the maximum number of replicas.
                     format: int32
+                    maximum: 100
                     minimum: 1
                     type: integer
                   minScale:
@@ -135,14 +159,19 @@ spec:
                     description: MinScale is the minimum number of replicas (0 for
                       scale-to-zero).
                     format: int32
+                    maximum: 100
                     minimum: 0
                     type: integer
                 type: object
+                x-kubernetes-validations:
+                - message: minScale must be less than or equal to maxScale
+                  rule: '!has(self.minScale) || !has(self.maxScale) || self.minScale
+                    <= self.maxScale'
               toolName:
                 description: |-
                   ToolName is the MCP tool name exposed to agents. Must be a valid
                   MCP tool identifier (lowercase alphanumeric and underscores).
-                maxLength: 253
+                maxLength: 64
                 minLength: 1
                 pattern: ^[a-z][a-z0-9_]*$
                 type: string
@@ -212,7 +241,11 @@ spec:
                   - status
                   - type
                   type: object
+                maxItems: 8
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               knativeServiceRef:
                 description: |-
                   KnativeServiceRef references the generated Knative Service for this tool.
@@ -231,6 +264,8 @@ spec:
                 type: object
                 x-kubernetes-map-type: atomic
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

@@ -8,13 +8,25 @@ metadata:
 spec:
   group: mycelium.io
   names:
+    categories:
+    - mycelium
     kind: TenantConfig
     listKind: TenantConfigList
     plural: tenantconfigs
+    shortNames:
+    - tc
     singular: tenantconfig
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: Whether the TenantConfig is ready
+      jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: TenantConfig is the Schema for the tenantconfigs API.
@@ -47,21 +59,34 @@ spec:
                     description: AllowedClients are the allowed OAuth client IDs.
                     items:
                       type: string
+                    maxItems: 64
                     type: array
+                    x-kubernetes-validations:
+                    - message: each client ID must be 1-256 characters
+                      rule: self.all(c, size(c) >= 1 && size(c) <= 256)
                   allowedScopes:
                     description: AllowedScopes are the allowed OAuth scopes.
                     items:
                       type: string
+                    maxItems: 64
                     type: array
+                    x-kubernetes-validations:
+                    - message: each scope must be 1-256 characters
+                      rule: self.all(s, size(s) >= 1 && size(s) <= 256)
                   audiences:
                     description: Audiences are the allowed JWT audiences.
                     items:
                       type: string
+                    maxItems: 16
                     minItems: 1
                     type: array
+                    x-kubernetes-validations:
+                    - message: each audience must be 1-256 characters
+                      rule: self.all(a, size(a) >= 1 && size(a) <= 256)
                   issuer:
                     description: Issuer is the OIDC issuer URL.
                     format: uri
+                    maxLength: 2048
                     minLength: 1
                     type: string
                 required:
@@ -72,6 +97,7 @@ spec:
                 description: UserVerifierURL is the developer-managed endpoint for
                   session binding.
                 format: uri
+                maxLength: 2048
                 minLength: 1
                 type: string
             required:
@@ -139,8 +165,14 @@ spec:
                   - status
                   - type
                   type: object
+                maxItems: 8
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

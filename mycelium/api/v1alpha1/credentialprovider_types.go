@@ -11,6 +11,8 @@ import (
 type OAuthDiscovery struct {
 	// DiscoveryURL is the OIDC discovery endpoint.
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Format=uri
 	// +kubebuilder:validation:Pattern=`.+/\.well-known/openid-configuration`
 	DiscoveryURL string `json:"discoveryUrl,omitempty"`
 	// AuthorizationServerMetadata provides explicit OAuth2 server endpoints.
@@ -24,20 +26,25 @@ type OAuthAuthorizationServerMetadata struct {
 	// Issuer is the issuer URL for the OAuth2 authorization server.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:Format=uri
 	Issuer string `json:"issuer"`
 	// AuthorizationEndpoint is the authorization endpoint URL.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:Format=uri
 	AuthorizationEndpoint string `json:"authorizationEndpoint"`
 	// TokenEndpoint is the token endpoint URL.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:Format=uri
 	TokenEndpoint string `json:"tokenEndpoint"`
 	// ResponseTypes are the supported response types.
 	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:XValidation:rule="self.all(r, size(r) >= 1 && size(r) <= 64)",message="each response type must be 1-64 characters"
 	ResponseTypes []string `json:"responseTypes,omitempty"`
 	// TokenEndpointAuthMethods are the authentication methods supported by the token endpoint.
 	// +optional
@@ -59,6 +66,7 @@ type OAuthProviderSpec struct {
 	// ClientID is the OAuth client ID.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
 	ClientID string `json:"clientId"`
 	// ClientSecretRef references a key in a Kubernetes Secret containing the client secret.
 	// +kubebuilder:validation:Required
@@ -92,16 +100,22 @@ type CredentialProviderSpec struct {
 type CredentialProviderStatus struct {
 	// CallbackURL is the generated OAuth callback URL (only set for OAuth providers).
 	// +optional
+	// +kubebuilder:validation:MaxLength=2048
 	CallbackURL string `json:"callbackUrl,omitempty"`
 	// Conditions represent the latest observations.
 	// Known condition types: "Ready"
 	// +optional
+	// +listType=map
+	// +listMapKey=type
+	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:resource:scope=Namespaced,shortName=cp,categories=mycelium
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`,description="Whether the provider is ready"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // CredentialProvider is the Schema for the credentialproviders API.
 // It represents either an OAuth 2.0 provider or an API key provider.
@@ -109,7 +123,8 @@ type CredentialProvider struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   CredentialProviderSpec   `json:"spec,omitempty"`
+	// +required
+	Spec   CredentialProviderSpec   `json:"spec"`
 	Status CredentialProviderStatus `json:"status,omitempty"`
 }
 
