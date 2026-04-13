@@ -8,6 +8,18 @@ Items to revisit during implementation. Check off when resolved.
 - [ ] **Chainsaw e2e tests** (deployment pipeline, real cluster) — declarative YAML-based tests. Apply Mycelium CRDs → assert generated AGW/Knative resources exist with correct spec. Run against test cluster. Add when reconcilers are functional. See ~/chainsaw for framework, /Users/siyanzhu/agentic-platform/tests/e2e/waypoint-egress/ for example.
 - [ ] **Deployer-style golden tests** (optional, CI) — input CRD YAML → full reconciliation → compare multi-resource output against golden YAML. Useful for catching unintended output drift. Consider adding alongside envtest. Follow AGW pattern: `REFRESH_GOLDEN=true` to regenerate.
 
+## AgentGateway Deployment
+- [ ] **Project reconciler must create the per-namespace AgentGateway deployment.** Currently we generate AGW policies, routes, and backends, but there's no actual Gateway resource being created for them to attach to. The reconciler needs to generate a `Gateway` resource (with the `agentgateway` GatewayClass) in the project's namespace, including the external (443 HTTPS) and internal (8080 HTTP) listeners. Without this, all the generated policies have nowhere to point. This is also where the Mycelium Engine sidecar gets deployed alongside the AGW proxy.
+
+## Status Conditions
+Review and clean up the Status Conditions for every CRD
+- [ ] **Project**: `AGWResourcesReady` — set after all 5 AGW resources are successfully applied via SSA. Currently only `Ready` and `NamespaceReady` are set.
+- [ ] **Tool**: `ServiceReady` — set when the generated Knative Service is available and healthy. Currently documented but not set by the reconciler.
+- [ ] **Tool**: `CredentialsValid` — set when the referenced CredentialProvider(s) exist and are Ready. Currently documented but not set by the reconciler.
+- [ ] **CredentialProvider**: `SecretValid` — validate that the referenced K8s Secret (clientSecretRef / apiKeySecretRef) actually exists. Currently not checked.
+- [ ] **Agent**: `ServiceAccountReady` — set when the per-agent K8s ServiceAccount is created. Depends on agent-sandbox integration.
+- [ ] **Agent**: `SandboxReady` — set when the SandboxTemplate + WarmPool are generated and healthy. Depends on agent-sandbox integration.
+
 ## CRD Validation
 - [ ] Deep review of all CRD validations — cover every edge case with envtest (empty strings, max-length strings, boundary values for scaling, invalid patterns, etc.)
 - [ ] Test that `ExactlyOneOf` rejects invalid combinations at admission time (envtest)

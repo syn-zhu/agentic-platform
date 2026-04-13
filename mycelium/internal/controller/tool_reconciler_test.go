@@ -58,7 +58,7 @@ func TestToolReconciler_CreatesKnativeService(t *testing.T) {
 	assert.Equal(t, "tenant-a/tool-list-repos:latest", svc.Spec.Template.Spec.Containers[0].Image)
 }
 
-func TestToolReconciler_SetsStatusKnativeServiceRef(t *testing.T) {
+func TestToolReconciler_SetsStatusServiceRef(t *testing.T) {
 	scheme := newScheme(t)
 	tool := newTool()
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool).
@@ -73,8 +73,8 @@ func TestToolReconciler_SetsStatusKnativeServiceRef(t *testing.T) {
 	var updated v1alpha1.Tool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
-	require.NotNil(t, updated.Status.KnativeServiceRef)
-	assert.Equal(t, "tool-list-repos", updated.Status.KnativeServiceRef.Name)
+	require.NotNil(t, updated.Status.ServiceRef)
+	assert.Equal(t, "tool-list-repos", updated.Status.ServiceRef.Name)
 }
 
 func TestToolReconciler_AddsFinalizer(t *testing.T) {

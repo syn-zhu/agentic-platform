@@ -68,10 +68,11 @@ type AgentSpec struct {
 
 // AgentStatus defines the observed state of Agent.
 type AgentStatus struct {
-	// ServiceAccount is the K8s service account name derived from this agent.
-	// Used in tool-access policy CEL expressions for identity resolution.
+	// ServiceAccountRef references the K8s ServiceAccount for this agent.
+	// Created by the controller, used in tool-access policy CEL expressions
+	// for identity resolution.
 	// +optional
-	ServiceAccount string `json:"serviceAccount,omitempty"`
+	ServiceAccountRef *corev1.LocalObjectReference `json:"serviceAccountRef,omitempty"`
 	// WarmPoolRef references the generated SandboxWarmPool for this agent.
 	// +optional
 	WarmPoolRef *corev1.LocalObjectReference `json:"warmPoolRef,omitempty"`

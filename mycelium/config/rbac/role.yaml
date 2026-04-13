@@ -44,6 +44,7 @@ rules:
 - apiGroups:
   - mycelium.io
   resources:
+  - agents
   - credentialproviders
   - projects
   - tools
@@ -56,6 +57,7 @@ rules:
 - apiGroups:
   - mycelium.io
   resources:
+  - agents/finalizers
   - credentialproviders/finalizers
   - projects/finalizers
   - tools/finalizers
@@ -64,6 +66,7 @@ rules:
 - apiGroups:
   - mycelium.io
   resources:
+  - agents/status
   - credentialproviders/status
   - projects/status
   - tools/status

@@ -19,8 +19,8 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - description: MCP tool name
-      jsonPath: .spec.toolName
+    - description: Tool resource name (MCP name = hyphens→underscores)
+      jsonPath: .metadata.name
       name: Tool
       type: string
     - description: Whether the tool is ready
@@ -53,7 +53,12 @@ spec:
           metadata:
             type: object
           spec:
-            description: ToolSpec defines the desired state of Tool.
+            description: |-
+              ToolSpec defines the desired state of Tool.
+              The MCP tool name is derived from the resource's metadata.name by converting
+              hyphens to underscores (e.g., metadata.name "list-repos" → MCP name "list_repos").
+              The Mycelium API layer performs the reverse conversion when creating resources
+              from user-provided tool names.
             properties:
               container:
                 description: Container defines the tool executor container.
@@ -167,18 +172,9 @@ spec:
                 - message: minScale must be less than or equal to maxScale
                   rule: '!has(self.minScale) || !has(self.maxScale) || self.minScale
                     <= self.maxScale'
-              toolName:
-                description: |-
-                  ToolName is the MCP tool name exposed to agents. Must be a valid
-                  MCP tool identifier (lowercase alphanumeric and underscores).
-                maxLength: 64
-                minLength: 1
-                pattern: ^[a-z][a-z0-9_]*$
-                type: string
             required:
             - container
             - description
-            - toolName
             type: object
           status:
             description: ToolStatus defines the observed state of Tool.
@@ -246,9 +242,9 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              knativeServiceRef:
+              serviceRef:
                 description: |-
-                  KnativeServiceRef references the generated Knative Service for this tool.
+                  ServiceRef references the generated Knative Service for this tool.
                   The controller sets an ownerReference on the Knative Service pointing back
                   to this Tool, so deleting the Tool cascade-deletes the Service.
                 properties:

@@ -61,13 +61,13 @@ func TestAgent_ToolsRequired(t *testing.T) {
 func TestAgent_StatusConditions(t *testing.T) {
 	agent := &v1alpha1.Agent{
 		Status: v1alpha1.AgentStatus{
-			ServiceAccount: "github-assistant",
+			ServiceAccountRef: &corev1.LocalObjectReference{Name: "github-assistant"},
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled"},
 				{Type: "ToolsValid", Status: metav1.ConditionTrue, Reason: "AllToolsExist"},
 			},
 		},
 	}
-	assert.Equal(t, "github-assistant", agent.Status.ServiceAccount)
+	assert.Equal(t, "github-assistant", agent.Status.ServiceAccountRef.Name)
 	assert.Len(t, agent.Status.Conditions, 2)
 }

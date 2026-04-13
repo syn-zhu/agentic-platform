@@ -70,7 +70,7 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	// Update status with Knative Service ref
-	tool.Status.KnativeServiceRef = &corev1.LocalObjectReference{
+	tool.Status.ServiceRef = &corev1.LocalObjectReference{
 		Name: knSvc.Name,
 	}
 

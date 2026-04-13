@@ -85,21 +85,21 @@ func TestTool_ScalingOverrides(t *testing.T) {
 	assert.Equal(t, int32(50), *tool.Spec.Scaling.MaxScale)
 }
 
-func TestTool_StatusKnativeServiceRef(t *testing.T) {
+func TestTool_StatusServiceRef(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		Status: v1alpha1.ToolStatus{
-			KnativeServiceRef: &corev1.LocalObjectReference{
+			ServiceRef: &corev1.LocalObjectReference{
 				Name: "tool-list-repos",
 			},
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled"},
-				{Type: "KnativeServiceReady", Status: metav1.ConditionTrue, Reason: "ServiceAvailable"},
+				{Type: "ServiceReady", Status: metav1.ConditionTrue, Reason: "ServiceAvailable"},
 				{Type: "CredentialsValid", Status: metav1.ConditionTrue, Reason: "ProvidersResolved"},
 			},
 		},
 	}
 
-	assert.Equal(t, "tool-list-repos", tool.Status.KnativeServiceRef.Name)
+	assert.Equal(t, "tool-list-repos", tool.Status.ServiceRef.Name)
 	assert.Len(t, tool.Status.Conditions, 3)
 	assert.Equal(t, "CredentialsValid", tool.Status.Conditions[2].Type)
 }

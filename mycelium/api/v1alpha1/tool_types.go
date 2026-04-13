@@ -92,13 +92,13 @@ type ToolSpec struct {
 
 // ToolStatus defines the observed state of Tool.
 type ToolStatus struct {
-	// KnativeServiceRef references the generated Knative Service for this tool.
+	// ServiceRef references the generated Knative Service for this tool.
 	// The controller sets an ownerReference on the Knative Service pointing back
 	// to this Tool, so deleting the Tool cascade-deletes the Service.
 	// +optional
-	KnativeServiceRef *corev1.LocalObjectReference `json:"knativeServiceRef,omitempty"`
+	ServiceRef *corev1.LocalObjectReference `json:"serviceRef,omitempty"`
 	// Conditions represent the latest observations of the Tool's state.
-	// Known condition types: "Ready", "KnativeServiceReady", "CredentialsValid"
+	// Known condition types: "Ready", "ServiceReady", "CredentialsValid"
 	// +optional
 	// +listType=map
 	// +listMapKey=type

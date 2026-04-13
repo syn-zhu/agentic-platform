@@ -202,3 +202,27 @@ func TestToolAccessPolicy_NoTools_DenyAll(t *testing.T) {
 	policy := generate.ToolAccessPolicy(proj, agents, nil)
 	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
 }
+
+func TestToolAccessPolicy_AgentsWithNoToolRefs_DenyAll(t *testing.T) {
+	proj := testProject()
+	agents := []v1alpha1.Agent{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "empty-agent", Namespace: "acme"},
+			Spec: v1alpha1.AgentSpec{
+				Description: "Agent with no tools",
+				Container:   v1alpha1.AgentContainer{Image: "i"},
+				Tools:       []v1alpha1.ToolRef{}, // no tool refs
+			},
+		},
+	}
+	tools := []v1alpha1.Tool{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
+			Spec:       v1alpha1.ToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
+		},
+	}
+
+	policy := generate.ToolAccessPolicy(proj, agents, tools)
+	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
+	assert.Equal(t, shared.CELExpression("true"), policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0])
+}
