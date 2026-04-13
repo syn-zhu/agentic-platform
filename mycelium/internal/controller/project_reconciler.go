@@ -12,10 +12,15 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -79,8 +84,8 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	})
 	proj.Status.NamespaceRef = &corev1.LocalObjectReference{Name: proj.Name}
 
-	// Generate and apply AGW resources via SSA into the project's namespace
-	if err := r.applyGeneratedResources(ctx, &proj); err != nil {
+	// Generate and apply all AGW resources via SSA into the project's namespace
+	if err := r.syncAGWResources(ctx, &proj); err != nil {
 		meta.SetStatusCondition(&proj.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionFalse,
@@ -119,12 +124,23 @@ func (r *ProjectReconciler) ensureNamespace(ctx context.Context, proj *v1alpha1.
 	return nil
 }
 
-func (r *ProjectReconciler) applyGeneratedResources(ctx context.Context, proj *v1alpha1.Project) error {
+func (r *ProjectReconciler) syncAGWResources(ctx context.Context, proj *v1alpha1.Project) error {
+	// List agents and tools for tool-access policy generation
+	var agents v1alpha1.AgentList
+	if err := r.List(ctx, &agents, client.InNamespace(proj.Name)); err != nil {
+		return fmt.Errorf("listing agents: %w", err)
+	}
+	var tools v1alpha1.ToolList
+	if err := r.List(ctx, &tools, client.InNamespace(proj.Name)); err != nil {
+		return fmt.Errorf("listing tools: %w", err)
+	}
+
 	resources := []client.Object{
 		generate.MCPBackend(proj),
 		generate.MCPRoute(proj),
 		generate.JWTPolicy(proj),
 		generate.SourceContextPolicy(proj),
+		generate.ToolAccessPolicy(proj, agents.Items, tools.Items),
 	}
 
 	for _, obj := range resources {
@@ -142,34 +158,17 @@ func (r *ProjectReconciler) reconcileDelete(ctx context.Context, proj *v1alpha1.
 	logger := log.FromContext(ctx)
 	logger.Info("Cleaning up Project", "name", proj.Name)
 
-	// Check for dependent resources in the namespace
-	var tools v1alpha1.ToolList
-	if err := r.List(ctx, &tools, client.InNamespace(proj.Name)); err != nil && !errors.IsNotFound(err) {
-		return ctrl.Result{}, err
-	}
-	if len(tools.Items) > 0 {
-		logger.Info("Project has dependent Tools, blocking deletion", "count", len(tools.Items))
-		return ctrl.Result{RequeueAfter: 10 * 1e9}, nil // 10 seconds
-	}
-
-	var cps v1alpha1.CredentialProviderList
-	if err := r.List(ctx, &cps, client.InNamespace(proj.Name)); err != nil && !errors.IsNotFound(err) {
-		return ctrl.Result{}, err
-	}
-	if len(cps.Items) > 0 {
-		logger.Info("Project has dependent CredentialProviders, blocking deletion", "count", len(cps.Items))
-		return ctrl.Result{RequeueAfter: 10 * 1e9}, nil
-	}
+	// Dependency checks are handled by the ValidatingWebhook at admission time.
+	// If we reached here, the webhook already confirmed no dependents exist.
 
 	// TODO(mycelium): Clean up MongoDB project database here
 
-	// Delete the namespace
+	// Delete the namespace (owned AGW resources cascade via ownerReferences)
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: proj.Name}}
 	if err := r.Delete(ctx, ns); err != nil && !errors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
 
-	// Remove finalizer
 	controllerutil.RemoveFinalizer(proj, ProjectFinalizer)
 	if err := r.Update(ctx, proj); err != nil {
 		return ctrl.Result{}, err
@@ -177,8 +176,18 @@ func (r *ProjectReconciler) reconcileDelete(ctx context.Context, proj *v1alpha1.
 	return ctrl.Result{}, nil
 }
 
+// mapToProject maps a namespace-scoped resource to its owning Project reconcile request.
+// By convention, the namespace name equals the Project name.
+func (r *ProjectReconciler) mapToProject(ctx context.Context, obj client.Object) []reconcile.Request {
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Name: obj.GetNamespace()},
+	}}
+}
+
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.Project{}).
+		For(&v1alpha1.Project{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&v1alpha1.Agent{}, handler.EnqueueRequestsFromMapFunc(r.mapToProject)).
+		Watches(&v1alpha1.Tool{}, handler.EnqueueRequestsFromMapFunc(r.mapToProject)).
 		Complete(r)
 }

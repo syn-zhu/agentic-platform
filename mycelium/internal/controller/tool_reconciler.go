@@ -50,7 +50,7 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	}
 
-	logger.Info("Reconciling Tool", "tool", tool.Spec.ToolName)
+	logger.Info("Reconciling Tool", "tool", tool.Name)
 
 	// Generate and apply Knative Service via SSA
 	knSvc := generate.KnativeService(&tool)
@@ -94,7 +94,7 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 func (r *ToolReconciler) reconcileDelete(ctx context.Context, tool *v1alpha1.Tool) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Cleaning up Tool", "tool", tool.Spec.ToolName)
+	logger.Info("Cleaning up Tool", "tool", tool.Name)
 
 	// TODO(mycelium): Remove this tool's entry from the mcp-tool-access policy
 	// CEL expressions when agent definition CRD is integrated.

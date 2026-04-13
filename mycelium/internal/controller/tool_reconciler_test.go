@@ -21,7 +21,6 @@ func newTool() *v1alpha1.Tool {
 	return &v1alpha1.Tool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
 		Spec: v1alpha1.ToolSpec{
-			ToolName:    "list_repos",
 			Description: "List GitHub repos for an org.",
 			Container:   v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
 			Credentials: &v1alpha1.ToolCredentials{

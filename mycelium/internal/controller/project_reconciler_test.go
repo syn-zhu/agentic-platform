@@ -8,6 +8,7 @@ import (
 	"github.com/mongodb/mycelium/internal/controller"
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
+	"github.com/agentgateway/agentgateway/controller/api/v1alpha1/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -151,6 +152,84 @@ func TestProjectReconciler_AddsFinalizer(t *testing.T) {
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updated)
 	require.NoError(t, err)
 	assert.Contains(t, updated.Finalizers, controller.ProjectFinalizer)
+}
+
+func TestProjectReconciler_SyncsToolAccessPolicy(t *testing.T) {
+	scheme := newScheme(t)
+	proj := newProject()
+
+	agent := &v1alpha1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
+		Spec: v1alpha1.AgentSpec{
+			Description: "GitHub agent",
+			Tools: []v1alpha1.ToolRef{
+				{Ref: corev1.LocalObjectReference{Name: "list-repos"}},
+				{Ref: corev1.LocalObjectReference{Name: "create-issue"}},
+			},
+			Container: v1alpha1.AgentContainer{Image: "acme/gh:latest"},
+		},
+	}
+
+	tool1 := &v1alpha1.Tool{
+		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
+		Spec: v1alpha1.ToolSpec{
+			Container: v1alpha1.ToolContainer{Image: "tools/lr:latest"},
+		},
+	}
+	tool2 := &v1alpha1.Tool{
+		ObjectMeta: metav1.ObjectMeta{Name: "create-issue", Namespace: "acme"},
+		Spec: v1alpha1.ToolSpec{
+			Container: v1alpha1.ToolContainer{Image: "tools/ci:latest"},
+		},
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(proj, agent, tool1, tool2).
+		WithStatusSubresource(proj).Build()
+
+	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "acme"},
+	})
+	require.NoError(t, err)
+
+	var policy agwv1alpha1.AgentgatewayPolicy
+	err = cl.Get(context.Background(), types.NamespacedName{
+		Name: "mcp-tool-access", Namespace: "acme",
+	}, &policy)
+	require.NoError(t, err)
+	require.NotNil(t, policy.Spec.Backend)
+	require.NotNil(t, policy.Spec.Backend.MCP)
+	require.NotNil(t, policy.Spec.Backend.MCP.Authorization)
+	assert.Len(t, policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions, 1)
+	assert.Contains(t, string(policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0]), "github-assistant")
+}
+
+func TestProjectReconciler_NoAgents_DenyAllPolicy(t *testing.T) {
+	scheme := newScheme(t)
+	proj := newProject()
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(proj).
+		WithStatusSubresource(proj).Build()
+
+	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "acme"},
+	})
+	require.NoError(t, err)
+
+	// No agents → deny-all policy
+	var policy agwv1alpha1.AgentgatewayPolicy
+	err = cl.Get(context.Background(), types.NamespacedName{
+		Name: "mcp-tool-access", Namespace: "acme",
+	}, &policy)
+	require.NoError(t, err)
+	require.NotNil(t, policy.Spec.Backend)
+	require.NotNil(t, policy.Spec.Backend.MCP)
+	require.NotNil(t, policy.Spec.Backend.MCP.Authorization)
+	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
+	assert.Equal(t, shared.CELExpression("true"), policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0])
 }
 
 func TestProjectReconciler_NotFound(t *testing.T) {

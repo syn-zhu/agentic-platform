@@ -15,7 +15,6 @@ func TestKnativeService_Defaults(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
 		Spec: v1alpha1.ToolSpec{
-			ToolName:  "list_repos",
 			Container: v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
 		},
 	}
@@ -48,7 +47,6 @@ func TestKnativeService_CustomScaling(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		ObjectMeta: metav1.ObjectMeta{Name: "heavy-tool", Namespace: "tenant-a"},
 		Spec: v1alpha1.ToolSpec{
-			ToolName:  "heavy_tool",
 			Container: v1alpha1.ToolContainer{Image: "tools/heavy:latest"},
 			Scaling: &v1alpha1.ToolScaling{
 				MinScale: ptr.To[int32](2),
@@ -66,7 +64,6 @@ func TestKnativeService_NilScaling(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		ObjectMeta: metav1.ObjectMeta{Name: "simple", Namespace: "tenant-b"},
 		Spec: v1alpha1.ToolSpec{
-			ToolName:  "simple",
 			Container: v1alpha1.ToolContainer{Image: "tools/simple:v1"},
 		},
 	}

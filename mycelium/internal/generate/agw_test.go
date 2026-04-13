@@ -8,6 +8,7 @@ import (
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
 	"github.com/agentgateway/agentgateway/controller/api/v1alpha1/shared"
+	corev1 "k8s.io/api/core/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -109,13 +110,41 @@ func TestSourceContextPolicy(t *testing.T) {
 	assert.Equal(t, agwv1alpha1.HeaderName("X-Source-Service-Account"), policy.Spec.Traffic.Transformation.Request.Set[1].Name)
 }
 
-func TestToolAccessPolicy(t *testing.T) {
-	celExprs := []string{
-		`source.workload.unverified.serviceAccount == "github-assistant" && mcp.tool.name in ["create_issue", "list_repos"]`,
-		`source.workload.unverified.serviceAccount == "multi-tool-agent" && mcp.tool.name == "list_repos"`,
+func TestToolAccessPolicy_WithAgentsAndTools(t *testing.T) {
+	proj := testProject()
+	agents := []v1alpha1.Agent{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
+			Spec: v1alpha1.AgentSpec{
+				Description: "GH agent",
+				Tools: []v1alpha1.ToolRef{
+					{Ref: corev1.LocalObjectReference{Name: "list-repos"}},
+					{Ref: corev1.LocalObjectReference{Name: "create-issue"}},
+				},
+				Container: v1alpha1.AgentContainer{Image: "img"},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "multi-tool-agent", Namespace: "acme"},
+			Spec: v1alpha1.AgentSpec{
+				Description: "Multi agent",
+				Tools: []v1alpha1.ToolRef{
+					{Ref: corev1.LocalObjectReference{Name: "list-repos"}},
+				},
+				Container: v1alpha1.AgentContainer{Image: "img"},
+			},
+		},
+	}
+	tools := []v1alpha1.Tool{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "create-issue", Namespace: "acme"},
+		},
 	}
 
-	policy := generate.ToolAccessPolicy("acme", celExprs)
+	policy := generate.ToolAccessPolicy(proj, agents, tools)
 
 	assert.Equal(t, "mcp-tool-access", policy.Name)
 	assert.Equal(t, "acme", policy.Namespace)
@@ -129,7 +158,47 @@ func TestToolAccessPolicy(t *testing.T) {
 	require.NotNil(t, policy.Spec.Backend.MCP)
 	require.NotNil(t, policy.Spec.Backend.MCP.Authorization)
 	assert.Equal(t, shared.AuthorizationPolicyActionAllow, policy.Spec.Backend.MCP.Authorization.Action)
-	require.Len(t, policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions, 2)
-	assert.Contains(t, string(policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0]), "github-assistant")
-	assert.Contains(t, string(policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[1]), "multi-tool-agent")
+
+	exprs := policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions
+	require.Len(t, exprs, 2)
+
+	// Agents sorted alphabetically: github-assistant before multi-tool-agent
+	// github-assistant has list_repos + create_issue (sorted: create_issue, list_repos)
+	assert.Equal(t, shared.CELExpression(
+		`source.workload.unverified.serviceAccount == "github-assistant" && mcp.tool.name in ["create_issue", "list_repos"]`,
+	), exprs[0])
+
+	// multi-tool-agent has only list_repos
+	assert.Equal(t, shared.CELExpression(
+		`source.workload.unverified.serviceAccount == "multi-tool-agent" && mcp.tool.name == "list_repos"`,
+	), exprs[1])
+}
+
+func TestToolAccessPolicy_NoAgents_DenyAll(t *testing.T) {
+	proj := testProject()
+	tools := []v1alpha1.Tool{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
+		},
+	}
+
+	policy := generate.ToolAccessPolicy(proj, nil, tools)
+	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
+	assert.Equal(t, shared.CELExpression("true"), policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0])
+}
+
+func TestToolAccessPolicy_NoTools_DenyAll(t *testing.T) {
+	proj := testProject()
+	agents := []v1alpha1.Agent{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: "acme"},
+			Spec: v1alpha1.AgentSpec{
+				Description: "a", Container: v1alpha1.AgentContainer{Image: "i"},
+				Tools: []v1alpha1.ToolRef{{Ref: corev1.LocalObjectReference{Name: "t"}}},
+			},
+		},
+	}
+
+	policy := generate.ToolAccessPolicy(proj, agents, nil)
+	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
 }

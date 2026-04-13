@@ -1,6 +1,10 @@
 package generate
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
@@ -165,11 +169,30 @@ func SourceContextPolicy(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayPolicy {
 }
 
 // ToolAccessPolicy generates an AgentgatewayPolicy with backend.mcp.authorization
-// for tool-level access control based on agent identity.
-func ToolAccessPolicy(namespace string, celExpressions []string) *agwv1alpha1.AgentgatewayPolicy {
-	exprs := make([]shared.CELExpression, len(celExpressions))
-	for i, e := range celExpressions {
-		exprs[i] = shared.CELExpression(e)
+// for tool-level access control based on agent identity. It computes CEL expressions
+// from the agent→tool mapping. If there are no agents or no tools, it generates a
+// deny-all policy (Deny action with a catch-all expression).
+func ToolAccessPolicy(p *v1alpha1.Project, agents []v1alpha1.Agent, tools []v1alpha1.Tool) *agwv1alpha1.AgentgatewayPolicy {
+	namespace := ProjectNamespace(p)
+
+	var authz *shared.Authorization
+
+	exprs := toolAccessCEL(agents, tools)
+	if len(exprs) == 0 {
+		// Deny all — no agents, no tools, or no valid mappings means no access
+		authz = &shared.Authorization{
+			Action: shared.AuthorizationPolicyActionDeny,
+			Policy: shared.AuthorizationPolicy{
+				MatchExpressions: []shared.CELExpression{"true"},
+			},
+		}
+	} else {
+		authz = &shared.Authorization{
+			Action: shared.AuthorizationPolicyActionAllow,
+			Policy: shared.AuthorizationPolicy{
+				MatchExpressions: exprs,
+			},
+		}
 	}
 
 	return &agwv1alpha1.AgentgatewayPolicy{
@@ -192,16 +215,55 @@ func ToolAccessPolicy(namespace string, celExpressions []string) *agwv1alpha1.Ag
 			}},
 			Backend: &agwv1alpha1.BackendFull{
 				MCP: &agwv1alpha1.BackendMCP{
-					Authorization: &shared.Authorization{
-						Action: shared.AuthorizationPolicyActionAllow,
-						Policy: shared.AuthorizationPolicy{
-							MatchExpressions: exprs,
-						},
-					},
+					Authorization: authz,
 				},
 			},
 		},
 	}
+}
+
+// toolAccessCEL generates CEL match expressions from agents and tools.
+// Returns one expression per agent, sorted by agent name for deterministic output.
+// Returns nil if there are no agents, no tools, or no valid agent→tool mappings.
+func toolAccessCEL(agents []v1alpha1.Agent, tools []v1alpha1.Tool) []shared.CELExpression {
+	if len(agents) == 0 || len(tools) == 0 {
+		return nil
+	}
+
+	// Build one CEL expression per agent.
+	// We don't validate that tool refs point to existing Tools here — that's
+	// enforced by the ValidatingWebhook on Agent create/update (tool refs must
+	// exist) and on Tool delete (rejected if Agents reference it).
+	var exprs []shared.CELExpression
+	for _, agent := range agents {
+		if len(agent.Spec.Tools) == 0 {
+			continue
+		}
+
+		var toolExpr string
+		if len(agent.Spec.Tools) == 1 {
+			toolExpr = fmt.Sprintf(`mcp.tool.name == "%s"`, MCPToolName(agent.Spec.Tools[0].Ref.Name))
+		} else {
+			var toolNames []string
+			for _, ref := range agent.Spec.Tools {
+				toolNames = append(toolNames, MCPToolName(ref.Ref.Name))
+			}
+			sort.Strings(toolNames)
+			quoted := make([]string, len(toolNames))
+			for i, t := range toolNames {
+				quoted[i] = fmt.Sprintf(`"%s"`, t)
+			}
+			toolExpr = fmt.Sprintf(`mcp.tool.name in [%s]`, strings.Join(quoted, ", "))
+		}
+
+		exprs = append(exprs, shared.CELExpression(fmt.Sprintf(
+			`source.workload.unverified.serviceAccount == "%s" && %s`, agent.Name, toolExpr,
+		)))
+	}
+
+	// Sort for deterministic output
+	sort.Slice(exprs, func(i, j int) bool { return exprs[i] < exprs[j] })
+	return exprs
 }
 
 func toShortStrings(ss []string) []agwv1alpha1.ShortString {

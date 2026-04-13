@@ -76,48 +76,9 @@ func TestCredentialProviderReconciler_AddsFinalizer(t *testing.T) {
 	assert.Contains(t, updated.Finalizers, controller.CredentialProviderFinalizer)
 }
 
-func TestCredentialProviderReconciler_BlocksDeletionWithDependentTools(t *testing.T) {
-	scheme := newScheme(t)
-	cp := newOAuthCredentialProvider()
-	// Simulate finalizer already added + deletion in progress
-	cp.Finalizers = []string{controller.CredentialProviderFinalizer}
-	now := metav1.Now()
-	cp.DeletionTimestamp = &now
-
-	// A Tool that references this CredentialProvider
-	tool := &v1alpha1.Tool{
-		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
-		Spec: v1alpha1.ToolSpec{
-			ToolName:    "list_repos",
-			Description: "List repos",
-			Container:   v1alpha1.ToolContainer{Image: "tools/list-repos:latest"},
-			Credentials: &v1alpha1.ToolCredentials{
-				OAuth: &v1alpha1.OAuthCredentialRef{
-					ProviderRef: corev1.LocalObjectReference{Name: "github"},
-					Scopes:      []string{"repo"},
-				},
-			},
-		},
-	}
-
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp, tool).
-		WithStatusSubresource(cp).Build()
-
-	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
-	result, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "github", Namespace: "tenant-a"},
-	})
-	require.NoError(t, err)
-	// Should requeue — finalizer NOT removed because dependent tool exists
-	assert.True(t, result.RequeueAfter > 0)
-
-	var updated v1alpha1.CredentialProvider
-	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
-	require.NoError(t, err)
-	assert.Contains(t, updated.Finalizers, controller.CredentialProviderFinalizer)
-}
-
-func TestCredentialProviderReconciler_AllowsDeletionWithNoDependents(t *testing.T) {
+// Dependency check on deletion is handled by the ValidatingWebhook.
+// The reconciler just removes the finalizer.
+func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	cp := newOAuthCredentialProvider()
 	cp.Finalizers = []string{controller.CredentialProviderFinalizer}

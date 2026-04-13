@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 
@@ -68,62 +67,16 @@ func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 func (r *CredentialProviderReconciler) reconcileDelete(ctx context.Context, cp *v1alpha1.CredentialProvider) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-
-	// Check for dependent Tools before allowing deletion
-	dependents, err := r.findDependentTools(ctx, cp)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if len(dependents) > 0 {
-		logger.Info("CredentialProvider has dependent Tools, blocking deletion",
-			"name", cp.Name, "dependents", dependents)
-		meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
-			Status:             metav1.ConditionFalse,
-			Reason:             "DeletionBlocked",
-			Message:            fmt.Sprintf("Cannot delete: referenced by Tools: %v", dependents),
-			LastTransitionTime: metav1.Now(),
-		})
-		_ = r.Status().Update(ctx, cp)
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-	}
-
 	logger.Info("Cleaning up CredentialProvider", "name", cp.Name)
+
+	// Dependency checks are handled by the ValidatingWebhook at admission time.
+	// If we reached here, the webhook already confirmed no dependents exist.
 
 	controllerutil.RemoveFinalizer(cp, CredentialProviderFinalizer)
 	if err := r.Update(ctx, cp); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
-}
-
-// findDependentTools lists all Tools in the same namespace that reference this CredentialProvider.
-func (r *CredentialProviderReconciler) findDependentTools(ctx context.Context, cp *v1alpha1.CredentialProvider) ([]string, error) {
-	var toolList v1alpha1.ToolList
-	if err := r.List(ctx, &toolList, client.InNamespace(cp.Namespace)); err != nil {
-		return nil, err
-	}
-
-	var dependents []string
-	for _, tool := range toolList.Items {
-		if tool.Spec.Credentials == nil {
-			continue
-		}
-		// Check OAuth credential ref
-		if tool.Spec.Credentials.OAuth != nil && tool.Spec.Credentials.OAuth.ProviderRef.Name == cp.Name {
-			dependents = append(dependents, tool.Name)
-			continue
-		}
-		// Check API key credential refs
-		for _, apiKey := range tool.Spec.Credentials.APIKeys {
-			if apiKey.ProviderRef.Name == cp.Name {
-				dependents = append(dependents, tool.Name)
-				break
-			}
-		}
-	}
-	return dependents, nil
 }
 
 func (r *CredentialProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {

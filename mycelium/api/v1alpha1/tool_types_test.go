@@ -17,7 +17,6 @@ func TestTool_WithOAuthAndAPIKeys(t *testing.T) {
 			Namespace: "tenant-a",
 		},
 		Spec: v1alpha1.ToolSpec{
-			ToolName:    "list_repos",
 			Description: "List GitHub repos for an org.",
 			Credentials: &v1alpha1.ToolCredentials{
 				OAuth: &v1alpha1.OAuthCredentialRef{
@@ -36,7 +35,7 @@ func TestTool_WithOAuthAndAPIKeys(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, "list_repos", tool.Spec.ToolName)
+	assert.Equal(t, "list-repos", tool.Name)
 	assert.Equal(t, "github", tool.Spec.Credentials.OAuth.ProviderRef.Name)
 	assert.Equal(t, []string{"repo"}, tool.Spec.Credentials.OAuth.Scopes)
 	assert.Len(t, tool.Spec.Credentials.APIKeys, 2)
@@ -47,7 +46,6 @@ func TestTool_WithOAuthAndAPIKeys(t *testing.T) {
 func TestTool_OAuthOnly(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		Spec: v1alpha1.ToolSpec{
-			ToolName:    "create_issue",
 			Description: "Create a GitHub issue.",
 			Credentials: &v1alpha1.ToolCredentials{
 				OAuth: &v1alpha1.OAuthCredentialRef{
@@ -66,7 +64,6 @@ func TestTool_OAuthOnly(t *testing.T) {
 func TestTool_NoCredentials(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		Spec: v1alpha1.ToolSpec{
-			ToolName:    "echo",
 			Description: "Echoes input.",
 			Container:   v1alpha1.ToolContainer{Image: "tools/echo:latest"},
 		},
@@ -77,7 +74,6 @@ func TestTool_NoCredentials(t *testing.T) {
 func TestTool_ScalingOverrides(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		Spec: v1alpha1.ToolSpec{
-			ToolName:  "test",
 			Container: v1alpha1.ToolContainer{Image: "test:latest"},
 			Scaling: &v1alpha1.ToolScaling{
 				MinScale: ptrInt32(2),

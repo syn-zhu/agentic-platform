@@ -66,14 +66,11 @@ type ToolScaling struct {
 }
 
 // ToolSpec defines the desired state of Tool.
+// The MCP tool name is derived from the resource's metadata.name by converting
+// hyphens to underscores (e.g., metadata.name "list-repos" → MCP name "list_repos").
+// The Mycelium API layer performs the reverse conversion when creating resources
+// from user-provided tool names.
 type ToolSpec struct {
-	// ToolName is the MCP tool name exposed to agents. Must be a valid
-	// MCP tool identifier (lowercase alphanumeric and underscores).
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=64
-	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]*$`
-	ToolName string `json:"toolName"`
 	// Description is the human-readable tool description.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -112,7 +109,7 @@ type ToolStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=tl,categories=mycelium
-// +kubebuilder:printcolumn:name="Tool",type=string,JSONPath=".spec.toolName",description="MCP tool name"
+// +kubebuilder:printcolumn:name="Tool",type=string,JSONPath=".metadata.name",description="Tool resource name (MCP name = hyphens→underscores)"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`,description="Whether the tool is ready"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
