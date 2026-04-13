@@ -2,9 +2,15 @@
 
 Items to revisit during implementation. Check off when resolved.
 
+## Testing Layers
+- [ ] **Unit tests** (local, fast) — pure function tests with assertions in code. Run during development. Currently: CRD type tests + generator tests. No golden files — assertions inline.
+- [ ] **envtest integration tests** (CI, optionally local) — real API server + etcd, no kubelet. Tests CRD validation markers (ExactlyOneOf, CEL rules, patterns), controller reconciliation loops with real server-side apply semantics. Add when building reconcilers (Phase 3).
+- [ ] **Chainsaw e2e tests** (deployment pipeline, real cluster) — declarative YAML-based tests. Apply Mycelium CRDs → assert generated AGW/Knative resources exist with correct spec. Run against test cluster. Add when reconcilers are functional. See ~/chainsaw for framework, /Users/siyanzhu/agentic-platform/tests/e2e/waypoint-egress/ for example.
+- [ ] **Deployer-style golden tests** (optional, CI) — input CRD YAML → full reconciliation → compare multi-resource output against golden YAML. Useful for catching unintended output drift. Consider adding alongside envtest. Follow AGW pattern: `REFRESH_GOLDEN=true` to regenerate.
+
 ## CRD Validation
-- [ ] Deep review of all CRD validations — cover every edge case with tests (empty strings, max-length strings, boundary values for scaling, invalid patterns, etc.)
-- [ ] Test that `ExactlyOneOf` rejects invalid combinations at admission time (requires envtest or real API server)
+- [ ] Deep review of all CRD validations — cover every edge case with envtest (empty strings, max-length strings, boundary values for scaling, invalid patterns, etc.)
+- [ ] Test that `ExactlyOneOf` rejects invalid combinations at admission time (envtest)
 - [ ] Test `minScale <= maxScale` XValidation with envtest
 - [ ] Test item-level XValidation CEL rules (audience length, scope length, etc.)
 - [ ] Evaluate whether `InputSchema` needs a size bound (CEL `size(string(self)) <= 32768` or similar)
