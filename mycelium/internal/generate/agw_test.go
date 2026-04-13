@@ -135,16 +135,7 @@ func TestToolAccessPolicy_WithAgentsAndTools(t *testing.T) {
 			},
 		},
 	}
-	tools := []v1alpha1.Tool{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-		},
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "create-issue", Namespace: "acme"},
-		},
-	}
-
-	policy := generate.ToolAccessPolicy(proj, agents, tools)
+	policy := generate.ToolAccessPolicy(proj, agents)
 
 	assert.Equal(t, "mcp-tool-access", policy.Name)
 	assert.Equal(t, "acme", policy.Namespace)
@@ -176,31 +167,10 @@ func TestToolAccessPolicy_WithAgentsAndTools(t *testing.T) {
 
 func TestToolAccessPolicy_NoAgents_DenyAll(t *testing.T) {
 	proj := testProject()
-	tools := []v1alpha1.Tool{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-		},
-	}
 
-	policy := generate.ToolAccessPolicy(proj, nil, tools)
+	policy := generate.ToolAccessPolicy(proj, nil)
 	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
 	assert.Equal(t, shared.CELExpression("true"), policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0])
-}
-
-func TestToolAccessPolicy_NoTools_DenyAll(t *testing.T) {
-	proj := testProject()
-	agents := []v1alpha1.Agent{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: "acme"},
-			Spec: v1alpha1.AgentSpec{
-				Description: "a", Container: v1alpha1.AgentContainer{Image: "i"},
-				Tools: []v1alpha1.ToolRef{{Ref: corev1.LocalObjectReference{Name: "t"}}},
-			},
-		},
-	}
-
-	policy := generate.ToolAccessPolicy(proj, agents, nil)
-	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
 }
 
 func TestToolAccessPolicy_AgentsWithNoToolRefs_DenyAll(t *testing.T) {
@@ -215,14 +185,7 @@ func TestToolAccessPolicy_AgentsWithNoToolRefs_DenyAll(t *testing.T) {
 			},
 		},
 	}
-	tools := []v1alpha1.Tool{
-		{
-			ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-			Spec:       v1alpha1.ToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
-		},
-	}
-
-	policy := generate.ToolAccessPolicy(proj, agents, tools)
+	policy := generate.ToolAccessPolicy(proj, agents)
 	assert.Equal(t, shared.AuthorizationPolicyActionDeny, policy.Spec.Backend.MCP.Authorization.Action)
 	assert.Equal(t, shared.CELExpression("true"), policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0])
 }

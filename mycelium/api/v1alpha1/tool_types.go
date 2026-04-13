@@ -52,15 +52,15 @@ type ToolContainer struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.minScale) || !has(self.maxScale) || self.minScale <= self.maxScale",message="minScale must be less than or equal to maxScale"
 type ToolScaling struct {
 	// MinScale is the minimum number of replicas (0 for scale-to-zero).
+	// If not set, Knative's default is used.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=100
-	// +kubebuilder:default=0
 	// +optional
 	MinScale *int32 `json:"minScale,omitempty"`
 	// MaxScale is the maximum number of replicas.
+	// If not set, Knative's default is used.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=100
-	// +kubebuilder:default=10
 	// +optional
 	MaxScale *int32 `json:"maxScale,omitempty"`
 }

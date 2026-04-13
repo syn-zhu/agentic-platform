@@ -53,9 +53,9 @@ func TestCredentialProviderReconciler_SetsReadyCondition(t *testing.T) {
 	var updated v1alpha1.CredentialProvider
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
-	require.NotEmpty(t, updated.Status.Conditions)
-	assert.Equal(t, "Ready", updated.Status.Conditions[0].Type)
-	assert.Equal(t, metav1.ConditionTrue, updated.Status.Conditions[0].Status)
+	ready := findCondition(updated.Status.Conditions, "Ready")
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionTrue, ready.Status)
 }
 
 func TestCredentialProviderReconciler_AddsFinalizer(t *testing.T) {
@@ -86,8 +86,7 @@ func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	cp.DeletionTimestamp = &now
 
 	// No tools referencing this provider
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp).
-		WithStatusSubresource(cp).Build()
+	cl := newClientWithIndexes(t, scheme, cp)
 
 	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
@@ -99,6 +98,43 @@ func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	var updated v1alpha1.CredentialProvider
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
 	assert.True(t, err != nil, "expected object to be deleted after finalizer removal")
+}
+
+func TestCredentialProviderReconciler_DeletionRequeuesWithDependentTools(t *testing.T) {
+	scheme := newScheme(t)
+	cp := newOAuthCredentialProvider()
+	cp.Finalizers = []string{controller.CredentialProviderFinalizer}
+	now := metav1.Now()
+	cp.DeletionTimestamp = &now
+
+	tool := &v1alpha1.Tool{
+		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
+		Spec: v1alpha1.ToolSpec{
+			Description: "d",
+			Container:   v1alpha1.ToolContainer{Image: "i"},
+			Credentials: &v1alpha1.ToolCredentials{
+				OAuth: &v1alpha1.OAuthCredentialRef{
+					ProviderRef: corev1.LocalObjectReference{Name: "github"},
+					Scopes:      []string{"repo"},
+				},
+			},
+		},
+	}
+
+	cl := newClientWithIndexes(t, scheme, cp, tool)
+
+	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "github", Namespace: "tenant-a"},
+	})
+	require.NoError(t, err)
+	assert.NotZero(t, result.RequeueAfter, "expected requeue when dependent tools exist")
+
+	// CP should still have its finalizer
+	var updated v1alpha1.CredentialProvider
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
+	require.NoError(t, err)
+	assert.Contains(t, updated.Finalizers, controller.CredentialProviderFinalizer)
 }
 
 func TestCredentialProviderReconciler_NotFound(t *testing.T) {

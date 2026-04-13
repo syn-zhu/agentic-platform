@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 
@@ -57,7 +58,7 @@ func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Reconciled",
-		Message:            fmt.Sprintf("CredentialProvider %s/%s reconciled", cp.Namespace, cp.Name),
+		Message:            fmt.Sprintf("CredentialProvider %s reconciled", cp.Name),
 		LastTransitionTime: metav1.Now(),
 	})
 	if err := r.Status().Update(ctx, &cp); err != nil {
@@ -71,8 +72,19 @@ func (r *CredentialProviderReconciler) reconcileDelete(ctx context.Context, cp *
 	logger := log.FromContext(ctx)
 	logger.Info("Cleaning up CredentialProvider", "name", cp.Name)
 
-	// Dependency checks are handled by the ValidatingWebhook at admission time.
-	// If we reached here, the webhook already confirmed no dependents exist.
+	// Wait for dependent Tools to be removed before finalizing.
+	// The ValidatingWebhook provides a UX fast path (immediate rejection), and
+	// once DeletionTimestamp is set, CREATE webhooks block new dependents.
+	var tools v1alpha1.ToolList
+	if err := r.List(ctx, &tools, client.InNamespace(cp.Namespace),
+		client.MatchingFields{IndexToolCredentialProviderRefs: cp.Name}); err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(tools.Items) > 0 {
+		logger.Info("CredentialProvider still has dependent Tools, requeuing",
+			"tools", len(tools.Items))
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
 
 	controllerutil.RemoveFinalizer(cp, CredentialProviderFinalizer)
 	if err := r.Update(ctx, cp); err != nil {

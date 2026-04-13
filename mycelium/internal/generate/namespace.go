@@ -8,17 +8,15 @@ import (
 
 // Namespace generates the namespace owned by a Project.
 func Namespace(p *v1alpha1.Project) *corev1.Namespace {
-	labels := ManagedLabels()
-	labels["mycelium.io/project"] = p.Name
-
 	return &corev1.Namespace{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "v1",
 			Kind:       "Namespace",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   ProjectNamespace(p),
-			Labels: labels,
+			Name:        p.Name,
+			Labels:      ManagedLabels(),
+			Annotations: ProjectAnnotations(p.Name),
 		},
 	}
 }

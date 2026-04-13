@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
+	"github.com/mongodb/mycelium/internal/generate"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -65,6 +66,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 	agent.Status.ServiceAccountRef = &corev1.LocalObjectReference{Name: agent.Name}
+	meta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
+		Type:               "ServiceAccountReady",
+		Status:             metav1.ConditionTrue,
+		Reason:             "Created",
+		Message:            fmt.Sprintf("ServiceAccount %s created", agent.Name),
+		LastTransitionTime: metav1.Now(),
+	})
 
 	// TODO(mycelium): Generate SandboxTemplate + WarmPool from agent.Spec.Sandbox
 	// when agent-sandbox integration is implemented.
@@ -85,24 +93,11 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 }
 
 func (r *AgentReconciler) ensureServiceAccount(ctx context.Context, agent *v1alpha1.Agent) error {
-	sa := &corev1.ServiceAccount{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "ServiceAccount",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      agent.Name,
-			Namespace: agent.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "mycelium-controller",
-				"mycelium.io/agent":            agent.Name,
-			},
-		},
-	}
+	sa := generate.ServiceAccount(agent)
 	if err := controllerutil.SetControllerReference(agent, sa, r.Scheme); err != nil {
 		return fmt.Errorf("setting owner reference on ServiceAccount: %w", err)
 	}
-	if err := r.Patch(ctx, sa, client.Apply, client.FieldOwner("mycelium-controller"), client.ForceOwnership); err != nil {
+	if err := r.Patch(ctx, sa, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
 		return fmt.Errorf("applying ServiceAccount %s: %w", agent.Name, err)
 	}
 	return nil
@@ -114,8 +109,7 @@ func (r *AgentReconciler) reconcileDelete(ctx context.Context, agent *v1alpha1.A
 
 	// Dependency checks (tool refs) are handled by the ValidatingWebhook.
 	// Sandbox resources are cleaned up via ownerReference GC.
-	// Tool-access policy recomputation is triggered by the ProjectReconciler
-	// watching Agent events.
+	// Tool-access policy is recomputed by the ProjectReconciler watching Agent events.
 
 	controllerutil.RemoveFinalizer(agent, AgentFinalizer)
 	if err := r.Update(ctx, agent); err != nil {

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 	"github.com/mongodb/mycelium/internal/generate"
@@ -59,7 +60,7 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err := controllerutil.SetControllerReference(&tool, knSvc, r.Scheme); err != nil {
 		return ctrl.Result{}, fmt.Errorf("setting owner reference on Knative Service: %w", err)
 	}
-	if err := r.Patch(ctx, knSvc, client.Apply, client.FieldOwner(fieldManager), client.ForceOwnership); err != nil {
+	if err := r.Patch(ctx, knSvc, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
 		meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionFalse,
@@ -76,9 +77,8 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		Name: knSvc.Name,
 	}
 
-	// TODO(mycelium): Recompute tool-access AgentgatewayPolicy CEL expressions.
-	// This requires listing all agents that reference this tool and regenerating
-	// the mcp-tool-access policy. Deferred until agent definition CRD is integrated.
+	// Tool-access policy recomputation is handled by the ProjectReconciler,
+	// which watches Tool events and regenerates the policy automatically.
 
 	meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
@@ -98,10 +98,22 @@ func (r *ToolReconciler) reconcileDelete(ctx context.Context, tool *v1alpha1.Too
 	logger := log.FromContext(ctx)
 	logger.Info("Cleaning up Tool", "tool", tool.Name)
 
-	// TODO(mycelium): Remove this tool's entry from the mcp-tool-access policy
-	// CEL expressions when agent definition CRD is integrated.
+	// Wait for dependent Agents to be removed before finalizing.
+	// The ValidatingWebhook provides a UX fast path (immediate rejection), and
+	// once DeletionTimestamp is set, CREATE webhooks block new dependents.
+	var agents v1alpha1.AgentList
+	if err := r.List(ctx, &agents, client.InNamespace(tool.Namespace),
+		client.MatchingFields{IndexAgentToolRefs: tool.Name}); err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(agents.Items) > 0 {
+		logger.Info("Tool still has dependent Agents, requeuing",
+			"agents", len(agents.Items))
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
 
 	// Knative Service is cleaned up via ownerReference GC.
+	// Tool-access policy is recomputed by the ProjectReconciler watching Tool events.
 
 	controllerutil.RemoveFinalizer(tool, ToolFinalizer)
 	if err := r.Update(ctx, tool); err != nil {

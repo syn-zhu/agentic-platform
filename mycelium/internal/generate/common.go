@@ -1,10 +1,6 @@
 package generate
 
-import (
-	"strings"
-
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-)
+import "strings"
 
 // TODO(mycelium): Make this configurable — should use the Helm release name
 // or the actual controller deployment name rather than a hardcoded string.
@@ -15,10 +11,19 @@ func ManagedLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/managed-by": ManagedBy}
 }
 
-// ProjectNamespace returns the namespace name owned by a Project.
-// By convention, the namespace name equals the Project name.
-func ProjectNamespace(p *v1alpha1.Project) string {
-	return p.Name
+// ProjectAnnotations returns annotations indicating ownership by a Project.
+func ProjectAnnotations(projectName string) map[string]string {
+	return map[string]string{"mycelium.io/project": projectName}
+}
+
+// ToolAnnotations returns annotations indicating ownership by a Tool.
+func ToolAnnotations(toolName string) map[string]string {
+	return map[string]string{"mycelium.io/tool": toolName}
+}
+
+// AgentAnnotations returns annotations indicating ownership by an Agent.
+func AgentAnnotations(agentName string) map[string]string {
+	return map[string]string{"mycelium.io/agent": agentName}
 }
 
 // MCPToolName converts a K8s resource name to an MCP tool name by replacing

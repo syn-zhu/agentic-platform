@@ -15,8 +15,23 @@ Items to revisit during implementation. Check off when resolved.
 ## AgentGateway Deployment
 - [ ] **Project reconciler must create the per-namespace AgentGateway deployment.** Currently we generate AGW policies, routes, and backends, but there's no actual Gateway resource being created for them to attach to. The reconciler needs to generate a `Gateway` resource (with the `agentgateway` GatewayClass) in the project's namespace, including the external (443 HTTPS) and internal (8080 HTTP) listeners. Without this, all the generated policies have nowhere to point. This is also where the Mycelium Engine sidecar gets deployed alongside the AGW proxy.
 
+## Define kata runtime class and make configurable
+First, the knative generate function reference kata-fc but we haven't actually defined that yet.
+Second, we should probably support a few different runtime classes and allow that to be specified in the tool definition
+Same with the agent sandboxes
+
+## Consider using kmcp
+See if we can completely avoid any MCP implementation in the engine; in theory we should be able to determine the
+tools/list response entirely from code, so maybe see if something like kmcp auto-handles the response for us
+or even better, maybe agentgateway already does this. Otherwise, we'd have to push changes from the mycelium controller
+to the engine for it to become aware of new tools (similar to WDS / xDS pattern)
+
+
 ## Status Conditions
 Review and clean up the Status Conditions for every CRD
+Roughly speaking, every "owned" resource (i.e. ones which would get garbage-collected upon deletion) should be included in 
+the Status field of each CRD, and hence we should also have a Status condition associated with it
+Make sure to update all the CRD field comments / descriptions as well
 - [ ] **Project**: `AGWResourcesReady` — set after all 5 AGW resources are successfully applied via SSA. Currently only `Ready` and `NamespaceReady` are set.
 - [ ] **Tool**: `ServiceReady` — set when the generated Knative Service is available and healthy. Currently documented but not set by the reconciler.
 - [ ] **Tool**: `CredentialsValid` — set when the referenced CredentialProvider(s) exist and are Ready. Currently documented but not set by the reconciler.
@@ -24,13 +39,31 @@ Review and clean up the Status Conditions for every CRD
 - [ ] **Agent**: `ServiceAccountReady` — set when the per-agent K8s ServiceAccount is created. Depends on agent-sandbox integration.
 - [ ] **Agent**: `SandboxReady` — set when the SandboxTemplate + WarmPool are generated and healthy. Depends on agent-sandbox integration.
 
-## CRD Validation
+## Field Indexes
+- [ ] **Tool → CredentialProvider index**: Add field index on `spec.credentials.providerRefs` that returns all referenced CredentialProvider names (OAuth + API keys). Enables O(1) lookup in the CredentialProvider deletion webhook instead of listing all Tools and filtering in code. Register via `mgr.GetFieldIndexer().IndexField()` at manager startup.
+- [ ] **Agent → Tool index**: Similar index on `spec.tools[].ref.name` for the Tool deletion webhook. Enables O(1) lookup of Agents referencing a given Tool.
+- [ ] Consider indexes for any other cross-resource lookups that become hot paths at scale.
+
+## CRD 
+Especially the Tool Input schema; definitely need to add validations for that
 - [ ] Deep review of all CRD validations — cover every edge case with envtest (empty strings, max-length strings, boundary values for scaling, invalid patterns, etc.)
 - [ ] Test that `ExactlyOneOf` rejects invalid combinations at admission time (envtest)
 - [ ] Test `minScale <= maxScale` XValidation with envtest
 - [ ] Test item-level XValidation CEL rules (audience length, scope length, etc.)
 - [ ] Evaluate whether `InputSchema` needs a size bound (CEL `size(string(self)) <= 32768` or similar)
 - [ ] Consider defining shared string type aliases (TinyString, ShortString, URLString) like AgentGateway if marker repetition becomes a maintenance burden
+
+## Name every child resource relative to parent
+To avoid name conflicts, we should name each child resource that we create relative to the parent.
+We should figure out whether to have different values for Field Owner (controller) vs managed-by label. 
+
+## Define additional listener for egress
+We might wanna have three separate sections on the gateway: ingress, internal, and egress
+We can rely on DNS to make sure egress routes to different port; or actually can we? maybe we additionally have to use Cilium...
+Also, there's a number of hardcoded stuff (like port) in agw.go, consider if we should extract these out or get them passed in
+also, ProjectLabels function is inconsistent with every other type which just adds it inline
+However, since we already have actual Owner references, we should make these "mycelium.io/..." into annotations instead of labels
+Also, the MCPBackend should just point at the Engine locally via UDS, and we should get rid of engine_service.go and all references.
 
 ## CredentialProvider
 - [x] ~~`callbackUrl` in status~~ — **Resolved:** callback URL is deterministic (`{tenant-gateway-base}/oauth2/callback/{credentialprovider-name}`), no CRD field needed. Returned in the API response when creating an OAuth CredentialProvider.

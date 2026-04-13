@@ -25,13 +25,14 @@ func MCPBackend(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayBackend {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mycelium-engine",
-			Namespace: ProjectNamespace(p),
+			Namespace: p.Name,
 			Labels:    ManagedLabels(),
 		},
 		Spec: agwv1alpha1.AgentgatewayBackendSpec{
 			MCP: &agwv1alpha1.MCPBackend{
 				Targets: []agwv1alpha1.McpTargetSelector{{
 					Name: "mycelium-engine",
+					// TODO: migrate to UDS backend once https://github.com/agentgateway/agentgateway/pull/1533 merges
 					Static: &agwv1alpha1.McpTarget{
 						BackendRef: &corev1.LocalObjectReference{Name: "mycelium-engine"},
 						Port:       port,
@@ -58,7 +59,7 @@ func MCPRoute(p *v1alpha1.Project) *gwv1.HTTPRoute {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mcp-route",
-			Namespace: ProjectNamespace(p),
+			Namespace: p.Name,
 			Labels:    ManagedLabels(),
 		},
 		Spec: gwv1.HTTPRouteSpec{
@@ -106,7 +107,7 @@ func JWTPolicy(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayPolicy {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "jwt-auth",
-			Namespace: ProjectNamespace(p),
+			Namespace: p.Name,
 			Labels:    ManagedLabels(),
 		},
 		Spec: agwv1alpha1.AgentgatewayPolicySpec{
@@ -141,7 +142,7 @@ func SourceContextPolicy(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayPolicy {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "internal-source-context",
-			Namespace: ProjectNamespace(p),
+			Namespace: p.Name,
 			Labels:    ManagedLabels(),
 		},
 		Spec: agwv1alpha1.AgentgatewayPolicySpec{
@@ -170,14 +171,14 @@ func SourceContextPolicy(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayPolicy {
 
 // ToolAccessPolicy generates an AgentgatewayPolicy with backend.mcp.authorization
 // for tool-level access control based on agent identity. It computes CEL expressions
-// from the agent→tool mapping. If there are no agents or no tools, it generates a
-// deny-all policy (Deny action with a catch-all expression).
-func ToolAccessPolicy(p *v1alpha1.Project, agents []v1alpha1.Agent, tools []v1alpha1.Tool) *agwv1alpha1.AgentgatewayPolicy {
-	namespace := ProjectNamespace(p)
+// from the agent→tool mapping. If there are no agents (or none with tool refs), it
+// generates a deny-all policy (Deny action with a catch-all expression).
+func ToolAccessPolicy(p *v1alpha1.Project, agents []v1alpha1.Agent) *agwv1alpha1.AgentgatewayPolicy {
+	namespace := p.Name
 
 	var authz *shared.Authorization
 
-	exprs := toolAccessCEL(agents, tools)
+	exprs := toolAccessCEL(agents)
 	if len(exprs) == 0 {
 		// Deny all — no agents, no tools, or no valid mappings means no access
 		authz = &shared.Authorization{
@@ -222,11 +223,11 @@ func ToolAccessPolicy(p *v1alpha1.Project, agents []v1alpha1.Agent, tools []v1al
 	}
 }
 
-// toolAccessCEL generates CEL match expressions from agents and tools.
+// toolAccessCEL generates CEL match expressions from agents.
 // Returns one expression per agent, sorted by agent name for deterministic output.
-// Returns nil if there are no agents, no tools, or no valid agent→tool mappings.
-func toolAccessCEL(agents []v1alpha1.Agent, tools []v1alpha1.Tool) []shared.CELExpression {
-	if len(agents) == 0 || len(tools) == 0 {
+// Returns nil if there are no agents or no valid agent→tool mappings.
+func toolAccessCEL(agents []v1alpha1.Agent) []shared.CELExpression {
+	if len(agents) == 0 {
 		return nil
 	}
 

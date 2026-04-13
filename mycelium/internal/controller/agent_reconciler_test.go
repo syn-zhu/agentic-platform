@@ -46,7 +46,7 @@ func TestAgentReconciler_CreatesServiceAccount(t *testing.T) {
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github-assistant", Namespace: "acme"}, &sa)
 	require.NoError(t, err)
 	assert.Equal(t, "mycelium-controller", sa.Labels["app.kubernetes.io/managed-by"])
-	assert.Equal(t, "github-assistant", sa.Labels["mycelium.io/agent"])
+	assert.Equal(t, "github-assistant", sa.Annotations["mycelium.io/agent"])
 
 	// Status ref points to it
 	var updated v1alpha1.Agent
@@ -59,7 +59,14 @@ func TestAgentReconciler_CreatesServiceAccount(t *testing.T) {
 func TestAgentReconciler_SetsReadyCondition(t *testing.T) {
 	scheme := newScheme(t)
 	agent := newAgent()
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).
+	// Tool must exist for ToolsValid=True → Ready=True
+	tool := &v1alpha1.Tool{
+		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
+		Spec: v1alpha1.ToolSpec{
+			Description: "d", Container: v1alpha1.ToolContainer{Image: "i"},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent, tool).
 		WithStatusSubresource(agent).Build()
 
 	r := &controller.AgentReconciler{Client: cl, Scheme: scheme}

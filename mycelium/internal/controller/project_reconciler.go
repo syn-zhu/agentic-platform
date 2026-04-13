@@ -3,12 +3,13 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
+	"time"
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 	"github.com/mongodb/mycelium/internal/generate"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,16 +18,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const (
-	ProjectFinalizer = "mycelium.io/project-cleanup"
-	fieldManager     = "mycelium-controller"
-)
+const ProjectFinalizer = "mycelium.io/project-cleanup"
 
 type ProjectReconciler struct {
 	client.Client
@@ -79,7 +78,7 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Type:               "NamespaceReady",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Created",
-		Message:            fmt.Sprintf("Namespace %s exists", proj.Name),
+		Message:            fmt.Sprintf("Namespace %s created", proj.Name),
 		LastTransitionTime: metav1.Now(),
 	})
 	proj.Status.NamespaceRef = &corev1.LocalObjectReference{Name: proj.Name}
@@ -118,21 +117,17 @@ func (r *ProjectReconciler) ensureNamespace(ctx context.Context, proj *v1alpha1.
 		return fmt.Errorf("setting owner reference on namespace: %w", err)
 	}
 
-	if err := r.Patch(ctx, ns, client.Apply, client.FieldOwner(fieldManager), client.ForceOwnership); err != nil {
+	if err := r.Patch(ctx, ns, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
 		return fmt.Errorf("applying namespace %s: %w", proj.Name, err)
 	}
 	return nil
 }
 
 func (r *ProjectReconciler) syncAGWResources(ctx context.Context, proj *v1alpha1.Project) error {
-	// List agents and tools for tool-access policy generation
+	// List agents for tool-access policy generation
 	var agents v1alpha1.AgentList
 	if err := r.List(ctx, &agents, client.InNamespace(proj.Name)); err != nil {
 		return fmt.Errorf("listing agents: %w", err)
-	}
-	var tools v1alpha1.ToolList
-	if err := r.List(ctx, &tools, client.InNamespace(proj.Name)); err != nil {
-		return fmt.Errorf("listing tools: %w", err)
 	}
 
 	resources := []client.Object{
@@ -140,14 +135,14 @@ func (r *ProjectReconciler) syncAGWResources(ctx context.Context, proj *v1alpha1
 		generate.MCPRoute(proj),
 		generate.JWTPolicy(proj),
 		generate.SourceContextPolicy(proj),
-		generate.ToolAccessPolicy(proj, agents.Items, tools.Items),
+		generate.ToolAccessPolicy(proj, agents.Items),
 	}
 
 	for _, obj := range resources {
 		if err := controllerutil.SetControllerReference(proj, obj, r.Scheme); err != nil {
 			return fmt.Errorf("setting owner reference on %s: %w", obj.GetName(), err)
 		}
-		if err := r.Patch(ctx, obj, client.Apply, client.FieldOwner(fieldManager), client.ForceOwnership); err != nil {
+		if err := r.Patch(ctx, obj, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
 			return fmt.Errorf("applying %s/%s: %w", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName(), err)
 		}
 	}
@@ -158,16 +153,31 @@ func (r *ProjectReconciler) reconcileDelete(ctx context.Context, proj *v1alpha1.
 	logger := log.FromContext(ctx)
 	logger.Info("Cleaning up Project", "name", proj.Name)
 
-	// Dependency checks are handled by the ValidatingWebhook at admission time.
-	// If we reached here, the webhook already confirmed no dependents exist.
+	// Wait for all dependents to be removed before tearing down the namespace.
+	// The ValidatingWebhook provides a UX fast path (immediate rejection), and
+	// once DeletionTimestamp is set, CREATE webhooks block new dependents.
+	var tools v1alpha1.ToolList
+	if err := r.List(ctx, &tools, client.InNamespace(proj.Name)); err != nil {
+		return ctrl.Result{}, err
+	}
+	var cps v1alpha1.CredentialProviderList
+	if err := r.List(ctx, &cps, client.InNamespace(proj.Name)); err != nil {
+		return ctrl.Result{}, err
+	}
+	var agents v1alpha1.AgentList
+	if err := r.List(ctx, &agents, client.InNamespace(proj.Name)); err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(tools.Items)+len(cps.Items)+len(agents.Items) > 0 {
+		logger.Info("Project still has dependents, requeuing",
+			"tools", len(tools.Items), "cps", len(cps.Items), "agents", len(agents.Items))
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
 
 	// TODO(mycelium): Clean up MongoDB project database here
 
-	// Delete the namespace (owned AGW resources cascade via ownerReferences)
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: proj.Name}}
-	if err := r.Delete(ctx, ns); err != nil && !errors.IsNotFound(err) {
-		return ctrl.Result{}, err
-	}
+	// Namespace and AGW resources are cleaned up automatically via ownerReference
+	// garbage collection — no explicit deletion needed.
 
 	controllerutil.RemoveFinalizer(proj, ProjectFinalizer)
 	if err := r.Update(ctx, proj); err != nil {
@@ -178,16 +188,43 @@ func (r *ProjectReconciler) reconcileDelete(ctx context.Context, proj *v1alpha1.
 
 // mapToProject maps a namespace-scoped resource to its owning Project reconcile request.
 // By convention, the namespace name equals the Project name.
-func (r *ProjectReconciler) mapToProject(ctx context.Context, obj client.Object) []reconcile.Request {
+func (r *ProjectReconciler) mapToProject(_ context.Context, obj client.Object) []reconcile.Request {
 	return []reconcile.Request{{
 		NamespacedName: types.NamespacedName{Name: obj.GetNamespace()},
 	}}
 }
 
+// agentToolListChanged returns a predicate that fires only when an Agent's
+// tool list changes, or on create/delete. Other Agent spec changes (description,
+// container, etc.) don't affect the tool-access policy.
+func agentToolListChanged() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			agent, ok := e.Object.(*v1alpha1.Agent)
+			return !ok || len(agent.Spec.Tools) > 0
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			agent, ok := e.Object.(*v1alpha1.Agent)
+			return !ok || len(agent.Spec.Tools) > 0
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldAgent, ok := e.ObjectOld.(*v1alpha1.Agent)
+			if !ok {
+				return true
+			}
+			newAgent, ok := e.ObjectNew.(*v1alpha1.Agent)
+			if !ok {
+				return true
+			}
+			return !slices.Equal(oldAgent.Spec.Tools, newAgent.Spec.Tools)
+		},
+	}
+}
+
 func (r *ProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Project{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(&v1alpha1.Agent{}, handler.EnqueueRequestsFromMapFunc(r.mapToProject)).
-		Watches(&v1alpha1.Tool{}, handler.EnqueueRequestsFromMapFunc(r.mapToProject)).
+		Watches(&v1alpha1.Agent{}, handler.EnqueueRequestsFromMapFunc(r.mapToProject),
+			builder.WithPredicates(agentToolListChanged())).
 		Complete(r)
 }

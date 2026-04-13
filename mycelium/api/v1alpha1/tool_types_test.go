@@ -89,7 +89,7 @@ func TestTool_StatusServiceRef(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		Status: v1alpha1.ToolStatus{
 			ServiceRef: &corev1.LocalObjectReference{
-				Name: "tool-list-repos",
+				Name: "list-repos",
 			},
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled"},
@@ -99,7 +99,7 @@ func TestTool_StatusServiceRef(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, "tool-list-repos", tool.Status.ServiceRef.Name)
+	assert.Equal(t, "list-repos", tool.Status.ServiceRef.Name)
 	assert.Len(t, tool.Status.Conditions, 3)
 	assert.Equal(t, "CredentialsValid", tool.Status.Conditions[2].Type)
 }

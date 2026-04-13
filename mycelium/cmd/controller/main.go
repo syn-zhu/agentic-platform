@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
@@ -44,6 +45,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Register field indexes before starting reconcilers
+	if err := controller.SetupIndexes(context.Background(), mgr); err != nil {
+		ctrl.Log.Error(err, "unable to setup field indexes")
+		os.Exit(1)
+	}
+
 	if err := (&controller.ProjectReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -65,6 +72,14 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create CredentialProvider controller")
+		os.Exit(1)
+	}
+
+	if err := (&controller.AgentReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		ctrl.Log.Error(err, "unable to create Agent controller")
 		os.Exit(1)
 	}
 

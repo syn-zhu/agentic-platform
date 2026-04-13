@@ -20,10 +20,10 @@ func TestKnativeService_Defaults(t *testing.T) {
 	}
 
 	svc := generate.KnativeService(tool)
-	assert.Equal(t, "tool-list-repos", svc.Name)
+	assert.Equal(t, "list-repos", svc.Name)
 	assert.Equal(t, "tenant-a", svc.Namespace)
 	assert.Equal(t, "mycelium-controller", svc.Labels["app.kubernetes.io/managed-by"])
-	assert.Equal(t, "list-repos", svc.Labels["mycelium.io/tool"])
+	assert.Equal(t, "list-repos", svc.Annotations["mycelium.io/tool"])
 
 	// containerConcurrency = 1
 	require.NotNil(t, svc.Spec.Template.Spec.ContainerConcurrency)
@@ -33,9 +33,9 @@ func TestKnativeService_Defaults(t *testing.T) {
 	require.NotNil(t, svc.Spec.Template.Spec.RuntimeClassName)
 	assert.Equal(t, "kata-fc", *svc.Spec.Template.Spec.RuntimeClassName)
 
-	// Default scaling
-	assert.Equal(t, "0", svc.Spec.Template.Annotations["autoscaling.knative.dev/minScale"])
-	assert.Equal(t, "10", svc.Spec.Template.Annotations["autoscaling.knative.dev/maxScale"])
+	// No scaling specified → no scaling annotations
+	assert.Empty(t, svc.Spec.Template.Annotations["autoscaling.knative.dev/minScale"])
+	assert.Empty(t, svc.Spec.Template.Annotations["autoscaling.knative.dev/maxScale"])
 
 	// Container
 	require.Len(t, svc.Spec.Template.Spec.Containers, 1)
@@ -69,7 +69,7 @@ func TestKnativeService_NilScaling(t *testing.T) {
 	}
 
 	svc := generate.KnativeService(tool)
-	// Should use defaults
-	assert.Equal(t, "0", svc.Spec.Template.Annotations["autoscaling.knative.dev/minScale"])
-	assert.Equal(t, "10", svc.Spec.Template.Annotations["autoscaling.knative.dev/maxScale"])
+	// No scaling specified → no scaling annotations
+	assert.Empty(t, svc.Spec.Template.Annotations["autoscaling.knative.dev/minScale"])
+	assert.Empty(t, svc.Spec.Template.Annotations["autoscaling.knative.dev/maxScale"])
 }
