@@ -4,22 +4,26 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: tenantconfigs.mycelium.io
+  name: projects.mycelium.io
 spec:
   group: mycelium.io
   names:
     categories:
     - mycelium
-    kind: TenantConfig
-    listKind: TenantConfigList
-    plural: tenantconfigs
+    kind: Project
+    listKind: ProjectList
+    plural: projects
     shortNames:
-    - tc
-    singular: tenantconfig
-  scope: Namespaced
+    - proj
+    singular: project
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - description: Whether the TenantConfig is ready
+    - description: The namespace for this project
+      jsonPath: .status.namespace
+      name: Namespace
+      type: string
+    - description: Whether the project is ready
       jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
       type: string
@@ -29,7 +33,9 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: TenantConfig is the Schema for the tenantconfigs API.
+        description: |-
+          Project is the Schema for the projects API. Each Project is cluster-scoped
+          and owns a namespace where Tools and CredentialProviders live.
         properties:
           apiVersion:
             description: |-
@@ -49,7 +55,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: TenantConfigSpec defines the desired state of TenantConfig.
+            description: ProjectSpec defines the desired state of Project.
             properties:
               identityProvider:
                 description: IdentityProvider configures the tenant's IdP for inbound
@@ -105,12 +111,12 @@ spec:
             - userVerifierUrl
             type: object
           status:
-            description: TenantConfigStatus defines the observed state of TenantConfig.
+            description: ProjectStatus defines the observed state of Project.
             properties:
               conditions:
                 description: |-
-                  Conditions represent the latest observations of the TenantConfig's state.
-                  Known condition types: "Ready"
+                  Conditions represent the latest observations of the Project's state.
+                  Known condition types: "Ready", "NamespaceReady"
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -170,6 +176,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              namespace:
+                description: Namespace is the name of the namespace created for this
+                  project.
+                type: string
             type: object
         required:
         - spec

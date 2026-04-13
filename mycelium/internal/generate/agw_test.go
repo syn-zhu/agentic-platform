@@ -13,10 +13,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func testTenantConfig() *v1alpha1.TenantConfig {
-	return &v1alpha1.TenantConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "config", Namespace: "tenant-a"},
-		Spec: v1alpha1.TenantConfigSpec{
+func testProject() *v1alpha1.Project {
+	return &v1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: v1alpha1.ProjectSpec{
 			UserVerifierURL: "https://app.acme.com/verify",
 			IdentityProvider: v1alpha1.IdentityProviderConfig{
 				Issuer:         "https://accounts.google.com",
@@ -29,10 +29,10 @@ func testTenantConfig() *v1alpha1.TenantConfig {
 }
 
 func TestMCPBackend(t *testing.T) {
-	backend := generate.MCPBackend(testTenantConfig())
+	backend := generate.MCPBackend(testProject())
 
 	assert.Equal(t, "mycelium-engine", backend.Name)
-	assert.Equal(t, "tenant-a", backend.Namespace)
+	assert.Equal(t, "acme", backend.Namespace)
 	assert.Equal(t, "agentgateway.dev/v1alpha1", backend.APIVersion)
 	assert.Equal(t, "AgentgatewayBackend", backend.Kind)
 	assert.Equal(t, "mycelium-controller", backend.Labels["app.kubernetes.io/managed-by"])
@@ -46,10 +46,10 @@ func TestMCPBackend(t *testing.T) {
 }
 
 func TestMCPRoute(t *testing.T) {
-	route := generate.MCPRoute(testTenantConfig())
+	route := generate.MCPRoute(testProject())
 
 	assert.Equal(t, "mcp-route", route.Name)
-	assert.Equal(t, "tenant-a", route.Namespace)
+	assert.Equal(t, "acme", route.Namespace)
 	assert.Equal(t, "gateway.networking.k8s.io/v1", route.APIVersion)
 	assert.Equal(t, "HTTPRoute", route.Kind)
 	assert.Equal(t, "mycelium-controller", route.Labels["app.kubernetes.io/managed-by"])
@@ -69,10 +69,10 @@ func TestMCPRoute(t *testing.T) {
 }
 
 func TestJWTPolicy(t *testing.T) {
-	policy := generate.JWTPolicy(testTenantConfig())
+	policy := generate.JWTPolicy(testProject())
 
 	assert.Equal(t, "jwt-auth", policy.Name)
-	assert.Equal(t, "tenant-a", policy.Namespace)
+	assert.Equal(t, "acme", policy.Namespace)
 	assert.Equal(t, "agentgateway.dev/v1alpha1", policy.APIVersion)
 	assert.Equal(t, "AgentgatewayPolicy", policy.Kind)
 
@@ -90,10 +90,10 @@ func TestJWTPolicy(t *testing.T) {
 }
 
 func TestSourceContextPolicy(t *testing.T) {
-	policy := generate.SourceContextPolicy(testTenantConfig())
+	policy := generate.SourceContextPolicy(testProject())
 
 	assert.Equal(t, "internal-source-context", policy.Name)
-	assert.Equal(t, "tenant-a", policy.Namespace)
+	assert.Equal(t, "acme", policy.Namespace)
 	assert.Equal(t, "AgentgatewayPolicy", policy.Kind)
 
 	require.Len(t, policy.Spec.TargetRefs, 1)
@@ -115,10 +115,10 @@ func TestToolAccessPolicy(t *testing.T) {
 		`source.workload.unverified.serviceAccount == "multi-tool-agent" && mcp.tool.name == "list_repos"`,
 	}
 
-	policy := generate.ToolAccessPolicy("tenant-a", celExprs)
+	policy := generate.ToolAccessPolicy("acme", celExprs)
 
 	assert.Equal(t, "mcp-tool-access", policy.Name)
-	assert.Equal(t, "tenant-a", policy.Namespace)
+	assert.Equal(t, "acme", policy.Namespace)
 	assert.Equal(t, "AgentgatewayPolicy", policy.Kind)
 
 	require.Len(t, policy.Spec.TargetRefs, 1)

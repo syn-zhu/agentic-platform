@@ -10,14 +10,8 @@ import (
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const managedBy = "mycelium-controller"
-
-func managedLabels() map[string]string {
-	return map[string]string{"app.kubernetes.io/managed-by": managedBy}
-}
-
 // MCPBackend generates an AgentgatewayBackend for the engine as an MCP server.
-func MCPBackend(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayBackend {
+func MCPBackend(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayBackend {
 	port := int32(8080)
 	protocol := agwv1alpha1.MCPProtocolStreamableHTTP
 	return &agwv1alpha1.AgentgatewayBackend{
@@ -27,8 +21,8 @@ func MCPBackend(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayBackend {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mycelium-engine",
-			Namespace: tc.Namespace,
-			Labels:    managedLabels(),
+			Namespace: ProjectNamespace(p),
+			Labels:    ManagedLabels(),
 		},
 		Spec: agwv1alpha1.AgentgatewayBackendSpec{
 			MCP: &agwv1alpha1.MCPBackend{
@@ -46,7 +40,7 @@ func MCPBackend(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayBackend {
 }
 
 // MCPRoute generates an HTTPRoute routing /mcp to the engine MCP backend.
-func MCPRoute(tc *v1alpha1.TenantConfig) *gwv1.HTTPRoute {
+func MCPRoute(p *v1alpha1.Project) *gwv1.HTTPRoute {
 	pathPrefix := gwv1.PathMatchPathPrefix
 	mcpPath := "/mcp"
 	sectionName := gwv1.SectionName("internal")
@@ -60,8 +54,8 @@ func MCPRoute(tc *v1alpha1.TenantConfig) *gwv1.HTTPRoute {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mcp-route",
-			Namespace: tc.Namespace,
-			Labels:    managedLabels(),
+			Namespace: ProjectNamespace(p),
+			Labels:    ManagedLabels(),
 		},
 		Spec: gwv1.HTTPRouteSpec{
 			CommonRouteSpec: gwv1.CommonRouteSpec{
@@ -92,8 +86,8 @@ func MCPRoute(tc *v1alpha1.TenantConfig) *gwv1.HTTPRoute {
 }
 
 // JWTPolicy generates an AgentgatewayPolicy for JWT validation on the external listener.
-func JWTPolicy(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayPolicy {
-	idp := tc.Spec.IdentityProvider
+func JWTPolicy(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayPolicy {
+	idp := p.Spec.IdentityProvider
 	sectionName := gwv1.SectionName("external")
 
 	provider := agwv1alpha1.JWTProvider{
@@ -108,8 +102,8 @@ func JWTPolicy(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayPolicy {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "jwt-auth",
-			Namespace: tc.Namespace,
-			Labels:    managedLabels(),
+			Namespace: ProjectNamespace(p),
+			Labels:    ManagedLabels(),
 		},
 		Spec: agwv1alpha1.AgentgatewayPolicySpec{
 			TargetRefs: []shared.LocalPolicyTargetReferenceWithSectionName{{
@@ -132,7 +126,7 @@ func JWTPolicy(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayPolicy {
 
 // SourceContextPolicy generates a PreRouting transformation policy on the internal
 // listener that injects source identity headers.
-func SourceContextPolicy(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayPolicy {
+func SourceContextPolicy(p *v1alpha1.Project) *agwv1alpha1.AgentgatewayPolicy {
 	sectionName := gwv1.SectionName("internal")
 	phase := agwv1alpha1.PolicyPhasePreRouting
 
@@ -143,8 +137,8 @@ func SourceContextPolicy(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayPol
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "internal-source-context",
-			Namespace: tc.Namespace,
-			Labels:    managedLabels(),
+			Namespace: ProjectNamespace(p),
+			Labels:    ManagedLabels(),
 		},
 		Spec: agwv1alpha1.AgentgatewayPolicySpec{
 			TargetRefs: []shared.LocalPolicyTargetReferenceWithSectionName{{
@@ -186,7 +180,7 @@ func ToolAccessPolicy(namespace string, celExpressions []string) *agwv1alpha1.Ag
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mcp-tool-access",
 			Namespace: namespace,
-			Labels:    managedLabels(),
+			Labels:    ManagedLabels(),
 		},
 		Spec: agwv1alpha1.AgentgatewayPolicySpec{
 			TargetRefs: []shared.LocalPolicyTargetReferenceWithSectionName{{

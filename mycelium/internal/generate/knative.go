@@ -23,10 +23,14 @@ func KnativeService(tool *v1alpha1.Tool) *knservingv1.Service {
 		}
 	}
 
-	labels := managedLabels()
+	labels := ManagedLabels()
 	labels["mycelium.io/tool"] = tool.Name
 
 	return &knservingv1.Service{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "serving.knative.dev/v1",
+			Kind:       "Service",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("tool-%s", tool.Name),
 			Namespace: tool.Namespace,
@@ -59,4 +63,3 @@ func KnativeService(tool *v1alpha1.Tool) *knservingv1.Service {
 	}
 }
 
-// managedLabels is defined in agw.go

@@ -1,6 +1,6 @@
 .PHONY: generate manifests test build-engine build-controller
 
-CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen
+CONTROLLER_GEN ?= $(shell go env GOPATH)/bin/controller-gen
 
 generate:
 	$(CONTROLLER_GEN) object paths="./api/..."
