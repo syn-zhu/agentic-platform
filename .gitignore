@@ -8,3 +8,5 @@ secrets.yaml
 .claude/
 .memory/
 .DS_Store
+*.omc/
+.superpowers/

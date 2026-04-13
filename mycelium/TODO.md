@@ -8,6 +8,10 @@ Items to revisit during implementation. Check off when resolved.
 - [ ] **Chainsaw e2e tests** (deployment pipeline, real cluster) — declarative YAML-based tests. Apply Mycelium CRDs → assert generated AGW/Knative resources exist with correct spec. Run against test cluster. Add when reconcilers are functional. See ~/chainsaw for framework, /Users/siyanzhu/agentic-platform/tests/e2e/waypoint-egress/ for example.
 - [ ] **Deployer-style golden tests** (optional, CI) — input CRD YAML → full reconciliation → compare multi-resource output against golden YAML. Useful for catching unintended output drift. Consider adding alongside envtest. Follow AGW pattern: `REFRESH_GOLDEN=true` to regenerate.
 
+## Helm Packaging + CRD Dependencies
+- [ ] **Package as Helm chart** with dependencies on AgentGateway, Knative Serving, and agent-sandbox declared in `Chart.yaml`. Helm installs deps first, ensuring required CRDs exist before our controller starts.
+- [ ] **Controller startup check** as a safety net — verify required CRDs (Gateway API, AgentGateway, Knative Serving, agent-sandbox) exist at startup, fail fast with clear error if missing.
+
 ## AgentGateway Deployment
 - [ ] **Project reconciler must create the per-namespace AgentGateway deployment.** Currently we generate AGW policies, routes, and backends, but there's no actual Gateway resource being created for them to attach to. The reconciler needs to generate a `Gateway` resource (with the `agentgateway` GatewayClass) in the project's namespace, including the external (443 HTTPS) and internal (8080 HTTP) listeners. Without this, all the generated policies have nowhere to point. This is also where the Mycelium Engine sidecar gets deployed alongside the AGW proxy.
 
