@@ -2,125 +2,128 @@ package generate
 
 import (
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
+	"github.com/agentgateway/agentgateway/controller/api/v1alpha1/shared"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const (
-	agwAPIVersion     = "agentgateway.dev/v1alpha1"
-	gatewayAPIVersion = "gateway.networking.k8s.io/v1"
-)
+const managedBy = "mycelium-controller"
+
+func managedLabels() map[string]string {
+	return map[string]string{"app.kubernetes.io/managed-by": managedBy}
+}
 
 // MCPBackend generates an AgentgatewayBackend for the engine as an MCP server.
-func MCPBackend(tc *v1alpha1.TenantConfig) *unstructured.Unstructured {
-	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": agwAPIVersion,
-			"kind":       "AgentgatewayBackend",
-			"metadata": map[string]interface{}{
-				"name":      "mycelium-engine",
-				"namespace": tc.Namespace,
-				"labels":    managedLabelsMap(),
-			},
-			"spec": map[string]interface{}{
-				"mcp": map[string]interface{}{
-					"targets": []interface{}{
-						map[string]interface{}{
-							"name": "mycelium-engine",
-							"backendRef": map[string]interface{}{
-								"name": "mycelium-engine",
-							},
-							"port":     int64(8080),
-							"protocol": "StreamableHTTP",
-						},
+func MCPBackend(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayBackend {
+	port := int32(8080)
+	protocol := agwv1alpha1.MCPProtocolStreamableHTTP
+	return &agwv1alpha1.AgentgatewayBackend{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "agentgateway.dev/v1alpha1",
+			Kind:       "AgentgatewayBackend",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mycelium-engine",
+			Namespace: tc.Namespace,
+			Labels:    managedLabels(),
+		},
+		Spec: agwv1alpha1.AgentgatewayBackendSpec{
+			MCP: &agwv1alpha1.MCPBackend{
+				Targets: []agwv1alpha1.McpTargetSelector{{
+					Name: "mycelium-engine",
+					Static: &agwv1alpha1.McpTarget{
+						BackendRef: &corev1.LocalObjectReference{Name: "mycelium-engine"},
+						Port:       port,
+						Protocol:   &protocol,
 					},
-				},
+				}},
 			},
 		},
 	}
 }
 
 // MCPRoute generates an HTTPRoute routing /mcp to the engine MCP backend.
-func MCPRoute(tc *v1alpha1.TenantConfig) *unstructured.Unstructured {
-	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": gatewayAPIVersion,
-			"kind":       "HTTPRoute",
-			"metadata": map[string]interface{}{
-				"name":      "mcp-route",
-				"namespace": tc.Namespace,
-				"labels":    managedLabelsMap(),
+func MCPRoute(tc *v1alpha1.TenantConfig) *gwv1.HTTPRoute {
+	pathPrefix := gwv1.PathMatchPathPrefix
+	mcpPath := "/mcp"
+	sectionName := gwv1.SectionName("internal")
+	agwGroup := gwv1.Group("agentgateway.dev")
+	agwKind := gwv1.Kind("AgentgatewayBackend")
+
+	return &gwv1.HTTPRoute{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "gateway.networking.k8s.io/v1",
+			Kind:       "HTTPRoute",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mcp-route",
+			Namespace: tc.Namespace,
+			Labels:    managedLabels(),
+		},
+		Spec: gwv1.HTTPRouteSpec{
+			CommonRouteSpec: gwv1.CommonRouteSpec{
+				ParentRefs: []gwv1.ParentReference{{
+					Name:        "tenant-gateway",
+					SectionName: &sectionName,
+				}},
 			},
-			"spec": map[string]interface{}{
-				"parentRefs": []interface{}{
-					map[string]interface{}{
-						"name":        "tenant-gateway",
-						"sectionName": "internal",
+			Rules: []gwv1.HTTPRouteRule{{
+				Matches: []gwv1.HTTPRouteMatch{{
+					Path: &gwv1.HTTPPathMatch{
+						Type:  &pathPrefix,
+						Value: &mcpPath,
 					},
-				},
-				"rules": []interface{}{
-					map[string]interface{}{
-						"matches": []interface{}{
-							map[string]interface{}{
-								"path": map[string]interface{}{
-									"type":  "PathPrefix",
-									"value": "/mcp",
-								},
-							},
-						},
-						"backendRefs": []interface{}{
-							map[string]interface{}{
-								"name":  "mycelium-engine",
-								"group": "agentgateway.dev",
-								"kind":  "AgentgatewayBackend",
-							},
+				}},
+				BackendRefs: []gwv1.HTTPBackendRef{{
+					BackendRef: gwv1.BackendRef{
+						BackendObjectReference: gwv1.BackendObjectReference{
+							Group: &agwGroup,
+							Kind:  &agwKind,
+							Name:  "mycelium-engine",
 						},
 					},
-				},
-			},
+				}},
+			}},
 		},
 	}
 }
 
 // JWTPolicy generates an AgentgatewayPolicy for JWT validation on the external listener.
-func JWTPolicy(tc *v1alpha1.TenantConfig) *unstructured.Unstructured {
+func JWTPolicy(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayPolicy {
 	idp := tc.Spec.IdentityProvider
+	sectionName := gwv1.SectionName("external")
 
-	provider := map[string]interface{}{
-		"issuer":    idp.Issuer,
-		"audiences": toInterfaceSlice(idp.Audiences),
-	}
-	if len(idp.AllowedClients) > 0 {
-		provider["allowedClients"] = toInterfaceSlice(idp.AllowedClients)
-	}
-	if len(idp.AllowedScopes) > 0 {
-		provider["allowedScopes"] = toInterfaceSlice(idp.AllowedScopes)
+	provider := agwv1alpha1.JWTProvider{
+		Issuer:    agwv1alpha1.ShortString(idp.Issuer),
+		Audiences: toShortStrings(idp.Audiences),
 	}
 
-	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": agwAPIVersion,
-			"kind":       "AgentgatewayPolicy",
-			"metadata": map[string]interface{}{
-				"name":      "jwt-auth",
-				"namespace": tc.Namespace,
-				"labels":    managedLabelsMap(),
-			},
-			"spec": map[string]interface{}{
-				"targetRefs": []interface{}{
-					map[string]interface{}{
-						"group":       "gateway.networking.k8s.io",
-						"kind":        "Gateway",
-						"name":        "tenant-gateway",
-						"sectionName": "external",
-					},
+	return &agwv1alpha1.AgentgatewayPolicy{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "agentgateway.dev/v1alpha1",
+			Kind:       "AgentgatewayPolicy",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "jwt-auth",
+			Namespace: tc.Namespace,
+			Labels:    managedLabels(),
+		},
+		Spec: agwv1alpha1.AgentgatewayPolicySpec{
+			TargetRefs: []shared.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: shared.LocalPolicyTargetReference{
+					Group: "gateway.networking.k8s.io",
+					Kind:  "Gateway",
+					Name:  "tenant-gateway",
 				},
-				"traffic": map[string]interface{}{
-					"jwtAuthentication": map[string]interface{}{
-						"mode": "Strict",
-						"providers": []interface{}{
-							provider,
-						},
-					},
+				SectionName: &sectionName,
+			}},
+			Traffic: &agwv1alpha1.Traffic{
+				JWTAuthentication: &agwv1alpha1.JWTAuthentication{
+					Mode:      agwv1alpha1.JWTAuthenticationModeStrict,
+					Providers: []agwv1alpha1.JWTProvider{provider},
 				},
 			},
 		},
@@ -128,40 +131,37 @@ func JWTPolicy(tc *v1alpha1.TenantConfig) *unstructured.Unstructured {
 }
 
 // SourceContextPolicy generates a PreRouting transformation policy on the internal
-// listener that injects source identity headers (X-Source-Pod-IP, X-Source-Service-Account).
-func SourceContextPolicy(tc *v1alpha1.TenantConfig) *unstructured.Unstructured {
-	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": agwAPIVersion,
-			"kind":       "AgentgatewayPolicy",
-			"metadata": map[string]interface{}{
-				"name":      "internal-source-context",
-				"namespace": tc.Namespace,
-				"labels":    managedLabelsMap(),
-			},
-			"spec": map[string]interface{}{
-				"targetRefs": []interface{}{
-					map[string]interface{}{
-						"group":       "gateway.networking.k8s.io",
-						"kind":        "Gateway",
-						"name":        "tenant-gateway",
-						"sectionName": "internal",
-					},
+// listener that injects source identity headers.
+func SourceContextPolicy(tc *v1alpha1.TenantConfig) *agwv1alpha1.AgentgatewayPolicy {
+	sectionName := gwv1.SectionName("internal")
+	phase := agwv1alpha1.PolicyPhasePreRouting
+
+	return &agwv1alpha1.AgentgatewayPolicy{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "agentgateway.dev/v1alpha1",
+			Kind:       "AgentgatewayPolicy",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "internal-source-context",
+			Namespace: tc.Namespace,
+			Labels:    managedLabels(),
+		},
+		Spec: agwv1alpha1.AgentgatewayPolicySpec{
+			TargetRefs: []shared.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: shared.LocalPolicyTargetReference{
+					Group: "gateway.networking.k8s.io",
+					Kind:  "Gateway",
+					Name:  "tenant-gateway",
 				},
-				"traffic": map[string]interface{}{
-					"phase": "PreRouting",
-					"transformation": map[string]interface{}{
-						"request": map[string]interface{}{
-							"set": []interface{}{
-								map[string]interface{}{
-									"name":  "X-Source-Pod-IP",
-									"value": "source.address",
-								},
-								map[string]interface{}{
-									"name":  "X-Source-Service-Account",
-									"value": "source.workload.unverified.serviceAccount",
-								},
-							},
+				SectionName: &sectionName,
+			}},
+			Traffic: &agwv1alpha1.Traffic{
+				Phase: &phase,
+				Transformation: &agwv1alpha1.Transformation{
+					Request: &agwv1alpha1.Transform{
+						Set: []agwv1alpha1.HeaderTransformation{
+							{Name: "X-Source-Pod-IP", Value: "source.address"},
+							{Name: "X-Source-Service-Account", Value: "source.workload.unverified.serviceAccount"},
 						},
 					},
 				},
@@ -172,36 +172,36 @@ func SourceContextPolicy(tc *v1alpha1.TenantConfig) *unstructured.Unstructured {
 
 // ToolAccessPolicy generates an AgentgatewayPolicy with backend.mcp.authorization
 // for tool-level access control based on agent identity.
-func ToolAccessPolicy(namespace string, celExpressions []string) *unstructured.Unstructured {
-	exprs := make([]interface{}, len(celExpressions))
+func ToolAccessPolicy(namespace string, celExpressions []string) *agwv1alpha1.AgentgatewayPolicy {
+	exprs := make([]shared.CELExpression, len(celExpressions))
 	for i, e := range celExpressions {
-		exprs[i] = e
+		exprs[i] = shared.CELExpression(e)
 	}
 
-	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": agwAPIVersion,
-			"kind":       "AgentgatewayPolicy",
-			"metadata": map[string]interface{}{
-				"name":      "mcp-tool-access",
-				"namespace": namespace,
-				"labels":    managedLabelsMap(),
-			},
-			"spec": map[string]interface{}{
-				"targetRefs": []interface{}{
-					map[string]interface{}{
-						"group": "agentgateway.dev",
-						"kind":  "AgentgatewayBackend",
-						"name":  "mycelium-engine",
-					},
+	return &agwv1alpha1.AgentgatewayPolicy{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "agentgateway.dev/v1alpha1",
+			Kind:       "AgentgatewayPolicy",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mcp-tool-access",
+			Namespace: namespace,
+			Labels:    managedLabels(),
+		},
+		Spec: agwv1alpha1.AgentgatewayPolicySpec{
+			TargetRefs: []shared.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: shared.LocalPolicyTargetReference{
+					Group: "agentgateway.dev",
+					Kind:  "AgentgatewayBackend",
+					Name:  "mycelium-engine",
 				},
-				"backend": map[string]interface{}{
-					"mcp": map[string]interface{}{
-						"authorization": map[string]interface{}{
-							"action": "Allow",
-							"policy": map[string]interface{}{
-								"matchExpressions": exprs,
-							},
+			}},
+			Backend: &agwv1alpha1.BackendFull{
+				MCP: &agwv1alpha1.BackendMCP{
+					Authorization: &shared.Authorization{
+						Action: shared.AuthorizationPolicyActionAllow,
+						Policy: shared.AuthorizationPolicy{
+							MatchExpressions: exprs,
 						},
 					},
 				},
@@ -210,14 +210,10 @@ func ToolAccessPolicy(namespace string, celExpressions []string) *unstructured.U
 	}
 }
 
-func managedLabelsMap() map[string]interface{} {
-	return map[string]interface{}{"mycelium.io/managed-by": "controller"}
-}
-
-func toInterfaceSlice(ss []string) []interface{} {
-	result := make([]interface{}, len(ss))
+func toShortStrings(ss []string) []agwv1alpha1.ShortString {
+	result := make([]agwv1alpha1.ShortString, len(ss))
 	for i, s := range ss {
-		result[i] = s
+		result[i] = agwv1alpha1.ShortString(s)
 	}
 	return result
 }

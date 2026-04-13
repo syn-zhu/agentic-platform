@@ -59,6 +59,4 @@ func KnativeService(tool *v1alpha1.Tool) *knservingv1.Service {
 	}
 }
 
-func managedLabels() map[string]string {
-	return map[string]string{"mycelium.io/managed-by": "controller"}
-}
+// managedLabels is defined in agw.go

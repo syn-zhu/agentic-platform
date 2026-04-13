@@ -5,52 +5,19 @@ import (
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 	"github.com/mongodb/mycelium/internal/generate"
+
+	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
+	"github.com/agentgateway/agentgateway/controller/api/v1alpha1/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestMCPBackend(t *testing.T) {
-	tc := &v1alpha1.TenantConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "config", Namespace: "tenant-a"},
-	}
-
-	obj := generate.MCPBackend(tc)
-	assert.Equal(t, "mycelium-engine", obj.GetName())
-	assert.Equal(t, "tenant-a", obj.GetNamespace())
-	assert.Equal(t, "controller", obj.GetLabels()["mycelium.io/managed-by"])
-	assert.Equal(t, "agentgateway.dev/v1alpha1", obj.GetAPIVersion())
-	assert.Equal(t, "AgentgatewayBackend", obj.GetKind())
-
-	// Verify MCP target structure
-	spec, ok := obj.Object["spec"].(map[string]interface{})
-	require.True(t, ok)
-	mcp, ok := spec["mcp"].(map[string]interface{})
-	require.True(t, ok)
-	targets, ok := mcp["targets"].([]interface{})
-	require.True(t, ok)
-	require.Len(t, targets, 1)
-	target := targets[0].(map[string]interface{})
-	assert.Equal(t, "mycelium-engine", target["name"])
-	assert.Equal(t, "StreamableHTTP", target["protocol"])
-}
-
-func TestMCPRoute(t *testing.T) {
-	tc := &v1alpha1.TenantConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "config", Namespace: "tenant-a"},
-	}
-
-	obj := generate.MCPRoute(tc)
-	assert.Equal(t, "mcp-route", obj.GetName())
-	assert.Equal(t, "tenant-a", obj.GetNamespace())
-	assert.Equal(t, "gateway.networking.k8s.io/v1", obj.GetAPIVersion())
-	assert.Equal(t, "HTTPRoute", obj.GetKind())
-}
-
-func TestJWTPolicy(t *testing.T) {
-	tc := &v1alpha1.TenantConfig{
+func testTenantConfig() *v1alpha1.TenantConfig {
+	return &v1alpha1.TenantConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "config", Namespace: "tenant-a"},
 		Spec: v1alpha1.TenantConfigSpec{
+			UserVerifierURL: "https://app.acme.com/verify",
 			IdentityProvider: v1alpha1.IdentityProviderConfig{
 				Issuer:         "https://accounts.google.com",
 				Audiences:      []string{"mycelium-tenant-a"},
@@ -59,56 +26,110 @@ func TestJWTPolicy(t *testing.T) {
 			},
 		},
 	}
+}
 
-	obj := generate.JWTPolicy(tc)
-	assert.Equal(t, "jwt-auth", obj.GetName())
-	assert.Equal(t, "tenant-a", obj.GetNamespace())
-	assert.Equal(t, "agentgateway.dev/v1alpha1", obj.GetAPIVersion())
-	assert.Equal(t, "AgentgatewayPolicy", obj.GetKind())
+func TestMCPBackend(t *testing.T) {
+	backend := generate.MCPBackend(testTenantConfig())
 
-	// Verify issuer is in the spec
-	spec, ok := obj.Object["spec"].(map[string]interface{})
-	require.True(t, ok)
-	traffic, ok := spec["traffic"].(map[string]interface{})
-	require.True(t, ok)
-	jwtAuth, ok := traffic["jwtAuthentication"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "Strict", jwtAuth["mode"])
+	assert.Equal(t, "mycelium-engine", backend.Name)
+	assert.Equal(t, "tenant-a", backend.Namespace)
+	assert.Equal(t, "agentgateway.dev/v1alpha1", backend.APIVersion)
+	assert.Equal(t, "AgentgatewayBackend", backend.Kind)
+	assert.Equal(t, "mycelium-controller", backend.Labels["app.kubernetes.io/managed-by"])
+
+	require.NotNil(t, backend.Spec.MCP)
+	require.Len(t, backend.Spec.MCP.Targets, 1)
+	assert.Equal(t, "mycelium-engine", string(backend.Spec.MCP.Targets[0].Name))
+	require.NotNil(t, backend.Spec.MCP.Targets[0].Static)
+	assert.Equal(t, "mycelium-engine", string(backend.Spec.MCP.Targets[0].Static.BackendRef.Name))
+	assert.Equal(t, int32(8080), backend.Spec.MCP.Targets[0].Static.Port)
+}
+
+func TestMCPRoute(t *testing.T) {
+	route := generate.MCPRoute(testTenantConfig())
+
+	assert.Equal(t, "mcp-route", route.Name)
+	assert.Equal(t, "tenant-a", route.Namespace)
+	assert.Equal(t, "gateway.networking.k8s.io/v1", route.APIVersion)
+	assert.Equal(t, "HTTPRoute", route.Kind)
+	assert.Equal(t, "mycelium-controller", route.Labels["app.kubernetes.io/managed-by"])
+
+	require.Len(t, route.Spec.ParentRefs, 1)
+	assert.Equal(t, "tenant-gateway", string(route.Spec.ParentRefs[0].Name))
+	assert.Equal(t, "internal", string(*route.Spec.ParentRefs[0].SectionName))
+
+	require.Len(t, route.Spec.Rules, 1)
+	require.Len(t, route.Spec.Rules[0].Matches, 1)
+	assert.Equal(t, "/mcp", *route.Spec.Rules[0].Matches[0].Path.Value)
+
+	require.Len(t, route.Spec.Rules[0].BackendRefs, 1)
+	assert.Equal(t, "mycelium-engine", string(route.Spec.Rules[0].BackendRefs[0].Name))
+	assert.Equal(t, "agentgateway.dev", string(*route.Spec.Rules[0].BackendRefs[0].Group))
+	assert.Equal(t, "AgentgatewayBackend", string(*route.Spec.Rules[0].BackendRefs[0].Kind))
+}
+
+func TestJWTPolicy(t *testing.T) {
+	policy := generate.JWTPolicy(testTenantConfig())
+
+	assert.Equal(t, "jwt-auth", policy.Name)
+	assert.Equal(t, "tenant-a", policy.Namespace)
+	assert.Equal(t, "agentgateway.dev/v1alpha1", policy.APIVersion)
+	assert.Equal(t, "AgentgatewayPolicy", policy.Kind)
+
+	require.Len(t, policy.Spec.TargetRefs, 1)
+	assert.Equal(t, "Gateway", string(policy.Spec.TargetRefs[0].Kind))
+	assert.Equal(t, "tenant-gateway", string(policy.Spec.TargetRefs[0].Name))
+	assert.Equal(t, "external", string(*policy.Spec.TargetRefs[0].SectionName))
+
+	require.NotNil(t, policy.Spec.Traffic)
+	require.NotNil(t, policy.Spec.Traffic.JWTAuthentication)
+	assert.Equal(t, "Strict", string(policy.Spec.Traffic.JWTAuthentication.Mode))
+	require.Len(t, policy.Spec.Traffic.JWTAuthentication.Providers, 1)
+	assert.Equal(t, "https://accounts.google.com", string(policy.Spec.Traffic.JWTAuthentication.Providers[0].Issuer))
+	assert.Equal(t, "mycelium-tenant-a", string(policy.Spec.Traffic.JWTAuthentication.Providers[0].Audiences[0]))
 }
 
 func TestSourceContextPolicy(t *testing.T) {
-	tc := &v1alpha1.TenantConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "config", Namespace: "tenant-a"},
-	}
+	policy := generate.SourceContextPolicy(testTenantConfig())
 
-	obj := generate.SourceContextPolicy(tc)
-	assert.Equal(t, "internal-source-context", obj.GetName())
-	assert.Equal(t, "tenant-a", obj.GetNamespace())
-	assert.Equal(t, "AgentgatewayPolicy", obj.GetKind())
+	assert.Equal(t, "internal-source-context", policy.Name)
+	assert.Equal(t, "tenant-a", policy.Namespace)
+	assert.Equal(t, "AgentgatewayPolicy", policy.Kind)
 
-	// Verify PreRouting phase
-	spec := obj.Object["spec"].(map[string]interface{})
-	traffic := spec["traffic"].(map[string]interface{})
-	assert.Equal(t, "PreRouting", traffic["phase"])
+	require.Len(t, policy.Spec.TargetRefs, 1)
+	assert.Equal(t, "internal", string(*policy.Spec.TargetRefs[0].SectionName))
+
+	require.NotNil(t, policy.Spec.Traffic)
+	assert.Equal(t, "PreRouting", string(*policy.Spec.Traffic.Phase))
+	require.NotNil(t, policy.Spec.Traffic.Transformation)
+	require.NotNil(t, policy.Spec.Traffic.Transformation.Request)
+	require.Len(t, policy.Spec.Traffic.Transformation.Request.Set, 2)
+	assert.Equal(t, agwv1alpha1.HeaderName("X-Source-Pod-IP"), policy.Spec.Traffic.Transformation.Request.Set[0].Name)
+	assert.Equal(t, shared.CELExpression("source.address"), policy.Spec.Traffic.Transformation.Request.Set[0].Value)
+	assert.Equal(t, agwv1alpha1.HeaderName("X-Source-Service-Account"), policy.Spec.Traffic.Transformation.Request.Set[1].Name)
 }
 
 func TestToolAccessPolicy(t *testing.T) {
 	celExprs := []string{
-		`source.workload.unverified.serviceAccount == "github-assistant" && mcp.tool.name == "list_repos"`,
+		`source.workload.unverified.serviceAccount == "github-assistant" && mcp.tool.name in ["create_issue", "list_repos"]`,
+		`source.workload.unverified.serviceAccount == "multi-tool-agent" && mcp.tool.name == "list_repos"`,
 	}
 
-	obj := generate.ToolAccessPolicy("tenant-a", celExprs)
-	assert.Equal(t, "mcp-tool-access", obj.GetName())
-	assert.Equal(t, "tenant-a", obj.GetNamespace())
-	assert.Equal(t, "AgentgatewayPolicy", obj.GetKind())
+	policy := generate.ToolAccessPolicy("tenant-a", celExprs)
 
-	// Verify CEL expressions are in the spec
-	spec := obj.Object["spec"].(map[string]interface{})
-	backend := spec["backend"].(map[string]interface{})
-	mcp := backend["mcp"].(map[string]interface{})
-	authz := mcp["authorization"].(map[string]interface{})
-	assert.Equal(t, "Allow", authz["action"])
-	policy := authz["policy"].(map[string]interface{})
-	exprs := policy["matchExpressions"].([]interface{})
-	assert.Len(t, exprs, 1)
+	assert.Equal(t, "mcp-tool-access", policy.Name)
+	assert.Equal(t, "tenant-a", policy.Namespace)
+	assert.Equal(t, "AgentgatewayPolicy", policy.Kind)
+
+	require.Len(t, policy.Spec.TargetRefs, 1)
+	assert.Equal(t, "AgentgatewayBackend", string(policy.Spec.TargetRefs[0].Kind))
+	assert.Equal(t, "mycelium-engine", string(policy.Spec.TargetRefs[0].Name))
+
+	require.NotNil(t, policy.Spec.Backend)
+	require.NotNil(t, policy.Spec.Backend.MCP)
+	require.NotNil(t, policy.Spec.Backend.MCP.Authorization)
+	assert.Equal(t, shared.AuthorizationPolicyActionAllow, policy.Spec.Backend.MCP.Authorization.Action)
+	require.Len(t, policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions, 2)
+	assert.Contains(t, string(policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[0]), "github-assistant")
+	assert.Contains(t, string(policy.Spec.Backend.MCP.Authorization.Policy.MatchExpressions[1]), "multi-tool-agent")
 }

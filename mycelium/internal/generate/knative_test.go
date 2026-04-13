@@ -23,7 +23,7 @@ func TestKnativeService_Defaults(t *testing.T) {
 	svc := generate.KnativeService(tool)
 	assert.Equal(t, "tool-list-repos", svc.Name)
 	assert.Equal(t, "tenant-a", svc.Namespace)
-	assert.Equal(t, "controller", svc.Labels["mycelium.io/managed-by"])
+	assert.Equal(t, "mycelium-controller", svc.Labels["app.kubernetes.io/managed-by"])
 	assert.Equal(t, "list-repos", svc.Labels["mycelium.io/tool"])
 
 	// containerConcurrency = 1
