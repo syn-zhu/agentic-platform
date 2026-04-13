@@ -121,5 +121,6 @@ func (r *AgentReconciler) reconcileDelete(ctx context.Context, agent *v1alpha1.A
 func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Agent{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Owns(&corev1.ServiceAccount{}).
 		Complete(r)
 }

@@ -74,28 +74,6 @@ func TestAgentValidator_CreateRejectsWhenProjectDeleting(t *testing.T) {
 	assert.Contains(t, err.Error(), "being deleted")
 }
 
-func TestAgentValidator_CreateRejectsWhenNamespaceNotReady(t *testing.T) {
-	scheme := newScheme(t)
-	require.NoError(t, corev1.AddToScheme(scheme))
-
-	proj := &v1alpha1.Project{
-		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
-		Spec: v1alpha1.ProjectSpec{
-			UserVerifierURL:  "https://app.acme.com/verify",
-			IdentityProvider: v1alpha1.IdentityProviderConfig{Issuer: "https://accounts.google.com", Audiences: []string{"acme"}},
-		},
-	}
-
-	cl := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(managedNamespace("acme"), proj).
-		WithStatusSubresource(proj).Build()
-
-	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), newTestAgent())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet provisioned")
-}
-
 func TestAgentValidator_CreateRejectsWhenToolNotFound(t *testing.T) {
 	scheme := newScheme(t)
 	require.NoError(t, corev1.AddToScheme(scheme))

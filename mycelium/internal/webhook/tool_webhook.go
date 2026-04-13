@@ -33,10 +33,6 @@ func (v *ToolValidator) ValidateCreate(ctx context.Context, tool *v1alpha1.Tool)
 		return fmt.Errorf("Project %s is being deleted", projectName)
 	}
 
-	if proj.Status.NamespaceRef == nil {
-		return fmt.Errorf("Project %s namespace not yet provisioned", projectName)
-	}
-
 	return v.validateCredentialRefs(ctx, tool)
 }
 
@@ -63,30 +59,19 @@ func (v *ToolValidator) ValidateDelete(ctx context.Context, tool *v1alpha1.Tool)
 }
 
 func (v *ToolValidator) validateCredentialRefs(ctx context.Context, tool *v1alpha1.Tool) error {
-	if tool.Spec.Credentials == nil {
-		return nil
-	}
-
-	if oauth := tool.Spec.Credentials.OAuth; oauth != nil {
-		cp, err := v.getCredentialProvider(ctx, tool.Namespace, oauth.ProviderRef.Name)
+	for _, cr := range tool.Spec.Credentials {
+		name := cr.ProviderName()
+		cp, err := v.getCredentialProvider(ctx, tool.Namespace, name)
 		if err != nil {
 			return err
 		}
-		if !cp.IsOAuth() {
-			return fmt.Errorf("CredentialProvider %s is not an OAuth provider", oauth.ProviderRef.Name)
+		if cr.IsOAuth() && !cp.IsOAuth() {
+			return fmt.Errorf("CredentialProvider %s is not an OAuth provider", name)
+		}
+		if cr.IsAPIKey() && !cp.IsAPIKey() {
+			return fmt.Errorf("CredentialProvider %s is not an API key provider", name)
 		}
 	}
-
-	for _, ak := range tool.Spec.Credentials.APIKeys {
-		cp, err := v.getCredentialProvider(ctx, tool.Namespace, ak.ProviderRef.Name)
-		if err != nil {
-			return err
-		}
-		if !cp.IsAPIKey() {
-			return fmt.Errorf("CredentialProvider %s is not an API key provider", ak.ProviderRef.Name)
-		}
-	}
-
 	return nil
 }
 

@@ -23,20 +23,54 @@ func newTool() *v1alpha1.Tool {
 		Spec: v1alpha1.ToolSpec{
 			Description: "List GitHub repos for an org.",
 			Container:   v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
-			Credentials: &v1alpha1.ToolCredentials{
-				OAuth: &v1alpha1.OAuthCredentialRef{
-					ProviderRef: corev1.LocalObjectReference{Name: "github"},
-					Scopes:      []string{"repo"},
+			Credentials: []v1alpha1.CredentialBinding{
+				{
+					OAuth: &v1alpha1.OAuthCredentialBinding{
+						ProviderRef: corev1.LocalObjectReference{Name: "github"},
+						Scopes:      []string{"repo"},
+					},
 				},
 			},
 		},
 	}
 }
 
+func toolProject() *v1alpha1.Project {
+	return &v1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"},
+		Spec: v1alpha1.ProjectSpec{
+			UserVerifierURL:  "https://app.acme.com/verify",
+			IdentityProvider: v1alpha1.IdentityProviderConfig{Issuer: "https://accounts.google.com", Audiences: []string{"acme"}},
+		},
+	}
+}
+
+func githubCredentialProvider() *v1alpha1.CredentialProvider {
+	return &v1alpha1.CredentialProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "tenant-a"},
+		Spec: v1alpha1.CredentialProviderSpec{
+			OAuth: &v1alpha1.OAuthProviderSpec{
+				ClientID: "client-id",
+				ClientSecretRef: corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "secret"},
+					Key:                  "client-secret",
+				},
+				Discovery: v1alpha1.OAuthDiscovery{
+					DiscoveryURL: "https://accounts.google.com/.well-known/openid-configuration",
+				},
+			},
+		},
+	}
+}
+
+// --- CREATE: happy path ---
+
 func TestToolReconciler_CreatesKnativeService(t *testing.T) {
 	scheme := newScheme(t)
 	tool := newTool()
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool).
+	proj := toolProject()
+	cp := githubCredentialProvider()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, proj, cp).
 		WithStatusSubresource(tool).Build()
 
 	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
@@ -45,7 +79,6 @@ func TestToolReconciler_CreatesKnativeService(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Verify Knative Service was created
 	var svc knservingv1.Service
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &svc)
 	require.NoError(t, err)
@@ -61,7 +94,9 @@ func TestToolReconciler_CreatesKnativeService(t *testing.T) {
 func TestToolReconciler_SetsStatusServiceRef(t *testing.T) {
 	scheme := newScheme(t)
 	tool := newTool()
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool).
+	proj := toolProject()
+	cp := githubCredentialProvider()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, proj, cp).
 		WithStatusSubresource(tool).Build()
 
 	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
@@ -80,7 +115,9 @@ func TestToolReconciler_SetsStatusServiceRef(t *testing.T) {
 func TestToolReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	tool := newTool()
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool).
+	proj := toolProject()
+	cp := githubCredentialProvider()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, proj, cp).
 		WithStatusSubresource(tool).Build()
 
 	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
@@ -98,7 +135,9 @@ func TestToolReconciler_AddsFinalizer(t *testing.T) {
 func TestToolReconciler_SetsReadyCondition(t *testing.T) {
 	scheme := newScheme(t)
 	tool := newTool()
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool).
+	proj := toolProject()
+	cp := githubCredentialProvider()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, proj, cp).
 		WithStatusSubresource(tool).Build()
 
 	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
@@ -110,11 +149,124 @@ func TestToolReconciler_SetsReadyCondition(t *testing.T) {
 	var updated v1alpha1.Tool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
-	require.NotEmpty(t, updated.Status.Conditions)
+
+	projValid := findCondition(updated.Status.Conditions, "ProjectValid")
+	credsValid := findCondition(updated.Status.Conditions, "CredentialsValid")
+	svcReady := findCondition(updated.Status.Conditions, "ServiceReady")
 	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, projValid)
+	require.NotNil(t, credsValid)
+	require.NotNil(t, svcReady)
 	require.NotNil(t, ready)
+
+	assert.Equal(t, metav1.ConditionTrue, projValid.Status)
+	assert.Equal(t, metav1.ConditionTrue, credsValid.Status)
+	assert.Equal(t, metav1.ConditionTrue, svcReady.Status)
 	assert.Equal(t, metav1.ConditionTrue, ready.Status)
 }
+
+// --- Project validation ---
+
+func TestToolReconciler_ProjectNotFound(t *testing.T) {
+	scheme := newScheme(t)
+	tool := newTool()
+	cp := githubCredentialProvider()
+	// No Project created
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, cp).
+		WithStatusSubresource(tool).Build()
+
+	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"},
+	})
+	require.NoError(t, err)
+
+	var updated v1alpha1.Tool
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
+	require.NoError(t, err)
+
+	projValid := findCondition(updated.Status.Conditions, "ProjectValid")
+	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, projValid)
+	assert.Equal(t, metav1.ConditionFalse, projValid.Status)
+	assert.Equal(t, "ProjectNotFound", projValid.Reason)
+
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, "ProjectInvalid", ready.Reason)
+}
+
+// --- Credential validation ---
+
+func TestToolReconciler_CredentialsInvalidWhenProviderMissing(t *testing.T) {
+	scheme := newScheme(t)
+	tool := newTool()
+	proj := toolProject()
+	// No CredentialProvider created — ref is dangling
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, proj).
+		WithStatusSubresource(tool).Build()
+
+	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"},
+	})
+	require.NoError(t, err)
+
+	var updated v1alpha1.Tool
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
+	require.NoError(t, err)
+
+	credsValid := findCondition(updated.Status.Conditions, "CredentialsValid")
+	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, credsValid)
+	assert.Equal(t, metav1.ConditionFalse, credsValid.Status)
+	assert.Equal(t, "InvalidCredentialRef", credsValid.Reason)
+	assert.Contains(t, credsValid.Message, "not found")
+
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, "CredentialsInvalid", ready.Reason)
+}
+
+func TestToolReconciler_CredentialsInvalidWhenProviderWrongType(t *testing.T) {
+	scheme := newScheme(t)
+	tool := newTool()
+	proj := toolProject()
+	// Create an API key provider where OAuth is expected
+	wrongTypeCp := &v1alpha1.CredentialProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "tenant-a"},
+		Spec: v1alpha1.CredentialProviderSpec{
+			APIKey: &v1alpha1.APIKeyProviderSpec{
+				APIKeySecretRef: corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "secret"},
+					Key:                  "api-key",
+				},
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, proj, wrongTypeCp).
+		WithStatusSubresource(tool).Build()
+
+	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"},
+	})
+	require.NoError(t, err)
+
+	var updated v1alpha1.Tool
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
+	require.NoError(t, err)
+
+	credsValid := findCondition(updated.Status.Conditions, "CredentialsValid")
+	require.NotNil(t, credsValid)
+	assert.Equal(t, metav1.ConditionFalse, credsValid.Status)
+	assert.Contains(t, credsValid.Message, "not an OAuth provider")
+}
+
+// --- Deletion ---
 
 func TestToolReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	scheme := newScheme(t)
@@ -123,7 +275,6 @@ func TestToolReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	now := metav1.Now()
 	tool.DeletionTimestamp = &now
 
-	// No agents referencing this tool
 	cl := newClientWithIndexes(t, scheme, tool)
 
 	r := &controller.ToolReconciler{Client: cl, Scheme: scheme}
@@ -132,7 +283,6 @@ func TestToolReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Object should be deleted (fake client removes when finalizer cleared + DeletionTimestamp set)
 	var updated v1alpha1.Tool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	assert.True(t, err != nil, "expected tool to be deleted after finalizer removal")
@@ -165,7 +315,6 @@ func TestToolReconciler_DeletionRequeuesWithDependentAgents(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter, "expected requeue when dependent agents exist")
 
-	// Tool should still have its finalizer
 	var updated v1alpha1.Tool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)

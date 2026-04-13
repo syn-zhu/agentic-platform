@@ -25,15 +25,9 @@ func newClientWithIndexes(t *testing.T, scheme *runtime.Scheme, objs ...client.O
 		WithObjects(objs...).
 		WithIndex(&v1alpha1.Tool{}, "spec.credentials.providerRefs", func(obj client.Object) []string {
 			tool := obj.(*v1alpha1.Tool)
-			if tool.Spec.Credentials == nil {
-				return nil
-			}
 			var refs []string
-			if tool.Spec.Credentials.OAuth != nil {
-				refs = append(refs, tool.Spec.Credentials.OAuth.ProviderRef.Name)
-			}
-			for _, ak := range tool.Spec.Credentials.APIKeys {
-				refs = append(refs, ak.ProviderRef.Name)
+			for _, cr := range tool.Spec.Credentials {
+				refs = append(refs, cr.ProviderName())
 			}
 			return refs
 		}).

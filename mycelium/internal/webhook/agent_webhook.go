@@ -16,8 +16,7 @@ type AgentValidator struct {
 }
 
 // ValidateCreate checks that the namespace is a Mycelium project (not being
-// deleted, namespace provisioned) and that all tool refs exist and are not
-// being deleted.
+// deleted) and that all tool refs exist and are not being deleted.
 func (v *AgentValidator) ValidateCreate(ctx context.Context, agent *v1alpha1.Agent) error {
 	projectName := agent.Namespace
 
@@ -31,10 +30,6 @@ func (v *AgentValidator) ValidateCreate(ctx context.Context, agent *v1alpha1.Age
 
 	if !proj.DeletionTimestamp.IsZero() {
 		return fmt.Errorf("Project %s is being deleted", projectName)
-	}
-
-	if proj.Status.NamespaceRef == nil {
-		return fmt.Errorf("Project %s namespace not yet provisioned", projectName)
 	}
 
 	return v.validateToolRefs(ctx, agent)

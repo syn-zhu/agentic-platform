@@ -6,8 +6,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// OAuthCredentialRef binds a tool to an OAuth CredentialProvider with specific scopes.
-type OAuthCredentialRef struct {
+// OAuthCredentialBinding binds a tool to an OAuth CredentialProvider with specific scopes.
+type OAuthCredentialBinding struct {
 	// ProviderRef references an OAuth CredentialProvider in the same namespace.
 	// +kubebuilder:validation:Required
 	ProviderRef corev1.LocalObjectReference `json:"providerRef"`
@@ -19,24 +19,40 @@ type OAuthCredentialRef struct {
 	Scopes []string `json:"scopes"`
 }
 
-// APIKeyCredentialRef binds a tool to an API key CredentialProvider.
-type APIKeyCredentialRef struct {
+// APIKeyCredentialBinding binds a tool to an API key CredentialProvider.
+type APIKeyCredentialBinding struct {
 	// ProviderRef references an API key CredentialProvider in the same namespace.
 	// +kubebuilder:validation:Required
 	ProviderRef corev1.LocalObjectReference `json:"providerRef"`
 }
 
-// ToolCredentials defines the credential providers required by a tool.
-type ToolCredentials struct {
-	// OAuth is the optional OAuth credential binding. At most one per tool,
-	// since each requires a user authorization flow.
+// CredentialBinding binds a tool to a credential provider. Exactly one of oauth or apiKey must be set.
+// +kubebuilder:validation:ExactlyOneOf=oauth;apiKey
+type CredentialBinding struct {
+	// OAuth binds this tool to an OAuth CredentialProvider with specific scopes.
 	// +optional
-	OAuth *OAuthCredentialRef `json:"oauth,omitempty"`
-	// APIKeys are optional API key credential bindings. Multiple allowed,
-	// since API keys don't require user authorization.
+	OAuth *OAuthCredentialBinding `json:"oauth,omitempty"`
+	// APIKey binds this tool to an API key CredentialProvider.
 	// +optional
-	// +kubebuilder:validation:MaxItems=8
-	APIKeys []APIKeyCredentialRef `json:"apiKeys,omitempty"`
+	APIKey *APIKeyCredentialBinding `json:"apiKey,omitempty"`
+}
+
+// IsOAuth returns true if this is an OAuth credential binding.
+func (cb *CredentialBinding) IsOAuth() bool {
+	return cb.OAuth != nil
+}
+
+// IsAPIKey returns true if this is an API key credential binding.
+func (cb *CredentialBinding) IsAPIKey() bool {
+	return cb.APIKey != nil
+}
+
+// ProviderName returns the referenced CredentialProvider name.
+func (cb *CredentialBinding) ProviderName() string {
+	if cb.IsOAuth() {
+		return cb.OAuth.ProviderRef.Name
+	}
+	return cb.APIKey.ProviderRef.Name
 }
 
 // ToolContainer defines the container spec for the tool executor.
@@ -76,9 +92,13 @@ type ToolSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Description string `json:"description"`
-	// Credentials defines the credential providers required by this tool.
+	// Credentials are the credential provider bindings required by this tool.
+	// At most one OAuth credential ref is allowed (since each requires a user
+	// authorization flow). Multiple API key refs are allowed.
 	// +optional
-	Credentials *ToolCredentials `json:"credentials,omitempty"`
+	// +kubebuilder:validation:MaxItems=9
+	// +kubebuilder:validation:XValidation:rule="self.filter(c, has(c.oauth)).size() <= 1",message="at most one OAuth credential ref is allowed per tool"
+	Credentials []CredentialBinding `json:"credentials,omitempty"`
 	// InputSchema is the MCP-compatible JSON Schema for the tool's input.
 	// +optional
 	InputSchema *apiextv1.JSON `json:"inputSchema,omitempty"`

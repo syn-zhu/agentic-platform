@@ -38,10 +38,33 @@ func newOAuthCredentialProvider() *v1alpha1.CredentialProvider {
 	}
 }
 
+func cpProject() *v1alpha1.Project {
+	return &v1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"},
+		Spec: v1alpha1.ProjectSpec{
+			UserVerifierURL:  "https://app.acme.com/verify",
+			IdentityProvider: v1alpha1.IdentityProviderConfig{Issuer: "https://accounts.google.com", Audiences: []string{"acme"}},
+		},
+	}
+}
+
+func oauthSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-oauth-secret", Namespace: "tenant-a"},
+		Data: map[string][]byte{
+			"client-secret": []byte("secret-value"),
+		},
+	}
+}
+
+// --- Happy path ---
+
 func TestCredentialProviderReconciler_SetsReadyCondition(t *testing.T) {
 	scheme := newScheme(t)
 	cp := newOAuthCredentialProvider()
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp).
+	proj := cpProject()
+	secret := oauthSecret()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp, proj, secret).
 		WithStatusSubresource(cp).Build()
 
 	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
@@ -53,15 +76,26 @@ func TestCredentialProviderReconciler_SetsReadyCondition(t *testing.T) {
 	var updated v1alpha1.CredentialProvider
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
+
+	projValid := findCondition(updated.Status.Conditions, "ProjectValid")
+	secretValid := findCondition(updated.Status.Conditions, "SecretValid")
 	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, projValid)
+	require.NotNil(t, secretValid)
 	require.NotNil(t, ready)
+
+	assert.Equal(t, metav1.ConditionTrue, projValid.Status)
+	assert.Equal(t, metav1.ConditionTrue, secretValid.Status)
 	assert.Equal(t, metav1.ConditionTrue, ready.Status)
 }
 
 func TestCredentialProviderReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	cp := newOAuthCredentialProvider()
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp).
+	proj := cpProject()
+	secret := oauthSecret()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp, proj, secret).
 		WithStatusSubresource(cp).Build()
 
 	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
@@ -76,8 +110,73 @@ func TestCredentialProviderReconciler_AddsFinalizer(t *testing.T) {
 	assert.Contains(t, updated.Finalizers, controller.CredentialProviderFinalizer)
 }
 
-// Dependency check on deletion is handled by the ValidatingWebhook.
-// The reconciler just removes the finalizer.
+// --- Project validation ---
+
+func TestCredentialProviderReconciler_ProjectNotFound(t *testing.T) {
+	scheme := newScheme(t)
+	cp := newOAuthCredentialProvider()
+	secret := oauthSecret()
+	// No Project
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp, secret).
+		WithStatusSubresource(cp).Build()
+
+	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "github", Namespace: "tenant-a"},
+	})
+	require.NoError(t, err)
+
+	var updated v1alpha1.CredentialProvider
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
+	require.NoError(t, err)
+
+	projValid := findCondition(updated.Status.Conditions, "ProjectValid")
+	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, projValid)
+	assert.Equal(t, metav1.ConditionFalse, projValid.Status)
+	assert.Equal(t, "ProjectNotFound", projValid.Reason)
+
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, "ProjectInvalid", ready.Reason)
+}
+
+// --- Secret validation ---
+
+func TestCredentialProviderReconciler_SecretNotFound(t *testing.T) {
+	scheme := newScheme(t)
+	cp := newOAuthCredentialProvider()
+	proj := cpProject()
+	// No Secret
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp, proj).
+		WithStatusSubresource(cp).Build()
+
+	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "github", Namespace: "tenant-a"},
+	})
+	require.NoError(t, err)
+
+	var updated v1alpha1.CredentialProvider
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
+	require.NoError(t, err)
+
+	secretValid := findCondition(updated.Status.Conditions, "SecretValid")
+	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, secretValid)
+	assert.Equal(t, metav1.ConditionFalse, secretValid.Status)
+	assert.Equal(t, "SecretNotFound", secretValid.Reason)
+	assert.Contains(t, secretValid.Message, "github-oauth-secret")
+
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, "SecretMissing", ready.Reason)
+}
+
+// --- Deletion ---
+
 func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	cp := newOAuthCredentialProvider()
@@ -85,7 +184,6 @@ func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	now := metav1.Now()
 	cp.DeletionTimestamp = &now
 
-	// No tools referencing this provider
 	cl := newClientWithIndexes(t, scheme, cp)
 
 	r := &controller.CredentialProviderReconciler{Client: cl, Scheme: scheme}
@@ -94,7 +192,6 @@ func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Object should be deleted (fake client deletes when finalizer removed + DeletionTimestamp set)
 	var updated v1alpha1.CredentialProvider
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
 	assert.True(t, err != nil, "expected object to be deleted after finalizer removal")
@@ -112,10 +209,12 @@ func TestCredentialProviderReconciler_DeletionRequeuesWithDependentTools(t *test
 		Spec: v1alpha1.ToolSpec{
 			Description: "d",
 			Container:   v1alpha1.ToolContainer{Image: "i"},
-			Credentials: &v1alpha1.ToolCredentials{
-				OAuth: &v1alpha1.OAuthCredentialRef{
-					ProviderRef: corev1.LocalObjectReference{Name: "github"},
-					Scopes:      []string{"repo"},
+			Credentials: []v1alpha1.CredentialBinding{
+				{
+					OAuth: &v1alpha1.OAuthCredentialBinding{
+						ProviderRef: corev1.LocalObjectReference{Name: "github"},
+						Scopes:      []string{"repo"},
+					},
 				},
 			},
 		},
@@ -130,7 +229,6 @@ func TestCredentialProviderReconciler_DeletionRequeuesWithDependentTools(t *test
 	require.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter, "expected requeue when dependent tools exist")
 
-	// CP should still have its finalizer
 	var updated v1alpha1.CredentialProvider
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)

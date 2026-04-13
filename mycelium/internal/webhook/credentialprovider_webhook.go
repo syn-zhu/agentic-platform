@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -15,10 +16,9 @@ type CredentialProviderValidator struct {
 	client.Client
 }
 
-// ValidateCreate checks that the namespace is a Mycelium project and the
-// Project is not being deleted.
+// ValidateCreate checks that the namespace is a Mycelium project (not being
+// deleted) and that the referenced Secret exists.
 func (v *CredentialProviderValidator) ValidateCreate(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
-	// Check Project exists (project name == namespace name)
 	projectName := cp.Namespace
 	var proj v1alpha1.Project
 	if err := v.Get(ctx, types.NamespacedName{Name: projectName}, &proj); err != nil {
@@ -28,21 +28,19 @@ func (v *CredentialProviderValidator) ValidateCreate(ctx context.Context, cp *v1
 		return fmt.Errorf("checking Project: %w", err)
 	}
 
-	// Check Project is not being deleted
 	if !proj.DeletionTimestamp.IsZero() {
 		return fmt.Errorf("Project %s is being deleted", projectName)
 	}
 
-	// Check Project namespace is provisioned
-	if proj.Status.NamespaceRef == nil {
-		return fmt.Errorf("Project %s namespace not yet provisioned", projectName)
-	}
+	return v.validateSecret(ctx, cp)
+}
 
-	return nil
+// ValidateUpdate re-checks the referenced Secret in case it changed.
+func (v *CredentialProviderValidator) ValidateUpdate(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
+	return v.validateSecret(ctx, cp)
 }
 
 // ValidateDelete checks that no Tools reference this CredentialProvider.
-// Uses the spec.credentials.providerRefs field index for efficient lookup.
 func (v *CredentialProviderValidator) ValidateDelete(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
 	var toolList v1alpha1.ToolList
 	if err := v.List(ctx, &toolList,
@@ -55,6 +53,24 @@ func (v *CredentialProviderValidator) ValidateDelete(ctx context.Context, cp *v1
 	if len(toolList.Items) > 0 {
 		return fmt.Errorf("cannot delete CredentialProvider %s: referenced by %d Tool(s)",
 			cp.Name, len(toolList.Items))
+	}
+	return nil
+}
+
+func (v *CredentialProviderValidator) validateSecret(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
+	var secretName string
+	if cp.IsOAuth() {
+		secretName = cp.Spec.OAuth.ClientSecretRef.Name
+	} else {
+		secretName = cp.Spec.APIKey.APIKeySecretRef.Name
+	}
+
+	var secret corev1.Secret
+	if err := v.Get(ctx, types.NamespacedName{Name: secretName, Namespace: cp.Namespace}, &secret); err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("Secret %s not found", secretName)
+		}
+		return fmt.Errorf("checking Secret %s: %w", secretName, err)
 	}
 	return nil
 }

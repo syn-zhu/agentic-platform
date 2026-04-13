@@ -9,28 +9,22 @@ import (
 )
 
 const (
-	// IndexToolCredentialProviderRefs indexes Tools by their referenced CredentialProvider names.
-	IndexToolCredentialProviderRefs = "spec.credentials.providerRefs"
+	// IndexToolCredentialBindings indexes Tools by their referenced CredentialProvider names.
+	IndexToolCredentialBindings = "spec.credentials.providerRefs"
 	// IndexAgentToolRefs indexes Agents by their referenced Tool names.
 	IndexAgentToolRefs = "spec.tools.refs"
 )
 
 // SetupIndexes registers field indexes required by reconcilers and webhooks.
 func SetupIndexes(ctx context.Context, mgr manager.Manager) error {
-	// Tool → CredentialProvider refs (OAuth + API keys)
+	// Tool → CredentialProvider refs
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &v1alpha1.Tool{},
-		IndexToolCredentialProviderRefs,
+		IndexToolCredentialBindings,
 		func(obj client.Object) []string {
 			tool := obj.(*v1alpha1.Tool)
-			if tool.Spec.Credentials == nil {
-				return nil
-			}
 			var refs []string
-			if tool.Spec.Credentials.OAuth != nil {
-				refs = append(refs, tool.Spec.Credentials.OAuth.ProviderRef.Name)
-			}
-			for _, ak := range tool.Spec.Credentials.APIKeys {
-				refs = append(refs, ak.ProviderRef.Name)
+			for _, cr := range tool.Spec.Credentials {
+				refs = append(refs, cr.ProviderName())
 			}
 			return refs
 		},

@@ -56,6 +56,9 @@ Especially the Tool Input schema; definitely need to add validations for that
 ## Name every child resource relative to parent
 To avoid name conflicts, we should name each child resource that we create relative to the parent.
 We should figure out whether to have different values for Field Owner (controller) vs managed-by label. 
+We can tighten / stricted the predicate logic in each reconciler's watches to minimize
+the number of reconciles (e.g. we probably only need to reconcile on project deletes)
+Later on we'll also wanna add "Owns(...)" to credentialprovider_reconciler, and all the others. I think we're actually using it wrong rn, because the controller doesn't own
 
 ## Define additional listener for egress
 We might wanna have three separate sections on the gateway: ingress, internal, and egress

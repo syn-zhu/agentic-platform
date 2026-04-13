@@ -18,14 +18,22 @@ func TestTool_WithOAuthAndAPIKeys(t *testing.T) {
 		},
 		Spec: v1alpha1.ToolSpec{
 			Description: "List GitHub repos for an org.",
-			Credentials: &v1alpha1.ToolCredentials{
-				OAuth: &v1alpha1.OAuthCredentialRef{
-					ProviderRef: corev1.LocalObjectReference{Name: "github"},
-					Scopes:      []string{"repo"},
+			Credentials: []v1alpha1.CredentialBinding{
+				{
+					OAuth: &v1alpha1.OAuthCredentialBinding{
+						ProviderRef: corev1.LocalObjectReference{Name: "github"},
+						Scopes:      []string{"repo"},
+					},
 				},
-				APIKeys: []v1alpha1.APIKeyCredentialRef{
-					{ProviderRef: corev1.LocalObjectReference{Name: "stripe-api"}},
-					{ProviderRef: corev1.LocalObjectReference{Name: "sendgrid"}},
+				{
+					APIKey: &v1alpha1.APIKeyCredentialBinding{
+						ProviderRef: corev1.LocalObjectReference{Name: "stripe-api"},
+					},
+				},
+				{
+					APIKey: &v1alpha1.APIKeyCredentialBinding{
+						ProviderRef: corev1.LocalObjectReference{Name: "sendgrid"},
+					},
 				},
 			},
 			InputSchema: &apiextv1.JSON{Raw: []byte(`{"type":"object","properties":{"org":{"type":"string"}}}`)},
@@ -36,29 +44,33 @@ func TestTool_WithOAuthAndAPIKeys(t *testing.T) {
 	}
 
 	assert.Equal(t, "list-repos", tool.Name)
-	assert.Equal(t, "github", tool.Spec.Credentials.OAuth.ProviderRef.Name)
-	assert.Equal(t, []string{"repo"}, tool.Spec.Credentials.OAuth.Scopes)
-	assert.Len(t, tool.Spec.Credentials.APIKeys, 2)
-	assert.Equal(t, "stripe-api", tool.Spec.Credentials.APIKeys[0].ProviderRef.Name)
-	assert.Equal(t, "sendgrid", tool.Spec.Credentials.APIKeys[1].ProviderRef.Name)
+	assert.Len(t, tool.Spec.Credentials, 3)
+	assert.True(t, tool.Spec.Credentials[0].IsOAuth())
+	assert.Equal(t, "github", tool.Spec.Credentials[0].ProviderName())
+	assert.Equal(t, []string{"repo"}, tool.Spec.Credentials[0].OAuth.Scopes)
+	assert.True(t, tool.Spec.Credentials[1].IsAPIKey())
+	assert.Equal(t, "stripe-api", tool.Spec.Credentials[1].ProviderName())
+	assert.Equal(t, "sendgrid", tool.Spec.Credentials[2].ProviderName())
 }
 
 func TestTool_OAuthOnly(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		Spec: v1alpha1.ToolSpec{
 			Description: "Create a GitHub issue.",
-			Credentials: &v1alpha1.ToolCredentials{
-				OAuth: &v1alpha1.OAuthCredentialRef{
-					ProviderRef: corev1.LocalObjectReference{Name: "github"},
-					Scopes:      []string{"repo", "issues"},
+			Credentials: []v1alpha1.CredentialBinding{
+				{
+					OAuth: &v1alpha1.OAuthCredentialBinding{
+						ProviderRef: corev1.LocalObjectReference{Name: "github"},
+						Scopes:      []string{"repo", "issues"},
+					},
 				},
 			},
 			Container: v1alpha1.ToolContainer{Image: "tools/create-issue:latest"},
 		},
 	}
 
-	assert.NotNil(t, tool.Spec.Credentials.OAuth)
-	assert.Nil(t, tool.Spec.Credentials.APIKeys)
+	assert.Len(t, tool.Spec.Credentials, 1)
+	assert.True(t, tool.Spec.Credentials[0].IsOAuth())
 }
 
 func TestTool_NoCredentials(t *testing.T) {
@@ -68,7 +80,7 @@ func TestTool_NoCredentials(t *testing.T) {
 			Container:   v1alpha1.ToolContainer{Image: "tools/echo:latest"},
 		},
 	}
-	assert.Nil(t, tool.Spec.Credentials)
+	assert.Empty(t, tool.Spec.Credentials)
 }
 
 func TestTool_ScalingOverrides(t *testing.T) {
@@ -102,6 +114,27 @@ func TestTool_StatusServiceRef(t *testing.T) {
 	assert.Equal(t, "list-repos", tool.Status.ServiceRef.Name)
 	assert.Len(t, tool.Status.Conditions, 3)
 	assert.Equal(t, "CredentialsValid", tool.Status.Conditions[2].Type)
+}
+
+func TestCredentialRef_Helpers(t *testing.T) {
+	oauth := v1alpha1.CredentialBinding{
+		OAuth: &v1alpha1.OAuthCredentialBinding{
+			ProviderRef: corev1.LocalObjectReference{Name: "github"},
+			Scopes:      []string{"repo"},
+		},
+	}
+	assert.True(t, oauth.IsOAuth())
+	assert.False(t, oauth.IsAPIKey())
+	assert.Equal(t, "github", oauth.ProviderName())
+
+	apiKey := v1alpha1.CredentialBinding{
+		APIKey: &v1alpha1.APIKeyCredentialBinding{
+			ProviderRef: corev1.LocalObjectReference{Name: "stripe"},
+		},
+	}
+	assert.False(t, apiKey.IsOAuth())
+	assert.True(t, apiKey.IsAPIKey())
+	assert.Equal(t, "stripe", apiKey.ProviderName())
 }
 
 func ptrInt32(v int32) *int32 { return &v }
