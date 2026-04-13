@@ -87,7 +87,7 @@ func TestProjectReconciler_CreatesAGWResources(t *testing.T) {
 	require.NotNil(t, srcPolicy.Spec.Traffic.Transformation)
 }
 
-func TestProjectReconciler_SetsStatusNamespace(t *testing.T) {
+func TestProjectReconciler_SetsStatusNamespaceRef(t *testing.T) {
 	scheme := newScheme(t)
 	proj := newProject()
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
@@ -102,7 +102,8 @@ func TestProjectReconciler_SetsStatusNamespace(t *testing.T) {
 	var updated v1alpha1.Project
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updated)
 	require.NoError(t, err)
-	assert.Equal(t, "acme", updated.Status.Namespace)
+	require.NotNil(t, updated.Status.NamespaceRef)
+	assert.Equal(t, "acme", updated.Status.NamespaceRef.Name)
 }
 
 func TestProjectReconciler_SetsReadyCondition(t *testing.T) {

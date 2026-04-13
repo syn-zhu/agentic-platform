@@ -4,26 +4,22 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: projects.mycelium.io
+  name: agents.mycelium.io
 spec:
   group: mycelium.io
   names:
     categories:
     - mycelium
-    kind: Project
-    listKind: ProjectList
-    plural: projects
+    kind: Agent
+    listKind: AgentList
+    plural: agents
     shortNames:
-    - proj
-    singular: project
-  scope: Cluster
+    - ag
+    singular: agent
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - description: The namespace for this project
-      jsonPath: .status.namespaceRef.name
-      name: Namespace
-      type: string
-    - description: Whether the project is ready
+    - description: Whether the agent is ready
       jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
       type: string
@@ -34,8 +30,8 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          Project is the Schema for the projects API. Each Project is cluster-scoped
-          and owns a namespace where Tools and CredentialProviders live.
+          Agent is the Schema for the agents API. Each Agent defines which Tools it
+          can access and how its sandbox is configured.
         properties:
           apiVersion:
             description: |-
@@ -55,68 +51,94 @@ spec:
           metadata:
             type: object
           spec:
-            description: ProjectSpec defines the desired state of Project.
+            description: AgentSpec defines the desired state of Agent.
             properties:
-              identityProvider:
-                description: IdentityProvider configures the tenant's IdP for inbound
-                  JWT validation.
+              container:
+                description: Container defines the agent sandbox container.
                 properties:
-                  allowedClients:
-                    description: AllowedClients are the allowed OAuth client IDs.
-                    items:
-                      type: string
-                    maxItems: 64
-                    type: array
-                    x-kubernetes-validations:
-                    - message: each client ID must be 1-256 characters
-                      rule: self.all(c, size(c) >= 1 && size(c) <= 256)
-                  allowedScopes:
-                    description: AllowedScopes are the allowed OAuth scopes.
-                    items:
-                      type: string
-                    maxItems: 64
-                    type: array
-                    x-kubernetes-validations:
-                    - message: each scope must be 1-256 characters
-                      rule: self.all(s, size(s) >= 1 && size(s) <= 256)
-                  audiences:
-                    description: Audiences are the allowed JWT audiences.
-                    items:
-                      type: string
-                    maxItems: 16
-                    minItems: 1
-                    type: array
-                    x-kubernetes-validations:
-                    - message: each audience must be 1-256 characters
-                      rule: self.all(a, size(a) >= 1 && size(a) <= 256)
-                  issuer:
-                    description: Issuer is the OIDC issuer URL.
-                    format: uri
-                    maxLength: 2048
+                  image:
+                    description: Image is the container image for the agent.
+                    maxLength: 1024
                     minLength: 1
                     type: string
                 required:
-                - audiences
-                - issuer
+                - image
                 type: object
-              userVerifierUrl:
-                description: UserVerifierURL is the developer-managed endpoint for
-                  session binding.
-                format: uri
-                maxLength: 2048
+              description:
+                description: Description is the human-readable agent description.
+                maxLength: 1024
                 minLength: 1
                 type: string
+              sandbox:
+                description: Sandbox configures the agent sandbox lifecycle. If nil,
+                  defaults are used.
+                properties:
+                  shutdownTimeout:
+                    description: |-
+                      ShutdownTimeout is the duration after which an idle sandbox is released.
+                      Format: Go duration string (e.g., "30m", "1h").
+                    maxLength: 32
+                    minLength: 1
+                    pattern: ^[0-9]+(s|m|h)$
+                    type: string
+                  warmPool:
+                    description: WarmPool configures pre-warmed sandbox pods for this
+                      agent.
+                    properties:
+                      replicas:
+                        default: 1
+                        description: Replicas is the number of pre-warmed sandbox
+                          pods to maintain.
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                    required:
+                    - replicas
+                    type: object
+                required:
+                - shutdownTimeout
+                type: object
+              tools:
+                description: |-
+                  Tools are the tools this agent can access, as typed references to Tool resources
+                  in the same namespace. The Mycelium controller uses this to generate the
+                  AGW tool-access policy CEL expressions.
+                items:
+                  description: ToolRef is a reference to a Tool in the same namespace.
+                  properties:
+                    ref:
+                      description: Ref references a Tool by name in the same namespace.
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                  required:
+                  - ref
+                  type: object
+                maxItems: 64
+                minItems: 1
+                type: array
             required:
-            - identityProvider
-            - userVerifierUrl
+            - container
+            - description
+            - tools
             type: object
           status:
-            description: ProjectStatus defines the observed state of Project.
+            description: AgentStatus defines the observed state of Agent.
             properties:
               conditions:
                 description: |-
-                  Conditions represent the latest observations of the Project's state.
-                  Known condition types: "Ready", "NamespaceReady"
+                  Conditions represent the latest observations of the Agent's state.
+                  Known condition types: "Ready", "ToolsValid"
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -176,9 +198,14 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              namespaceRef:
-                description: NamespaceRef references the namespace created for this
-                  project.
+              serviceAccount:
+                description: |-
+                  ServiceAccount is the K8s service account name derived from this agent.
+                  Used in tool-access policy CEL expressions for identity resolution.
+                type: string
+              warmPoolRef:
+                description: WarmPoolRef references the generated SandboxWarmPool
+                  for this agent.
                 properties:
                   name:
                     default: ""

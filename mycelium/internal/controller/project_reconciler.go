@@ -77,7 +77,7 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Message:            fmt.Sprintf("Namespace %s exists", proj.Name),
 		LastTransitionTime: metav1.Now(),
 	})
-	proj.Status.Namespace = proj.Name
+	proj.Status.NamespaceRef = &corev1.LocalObjectReference{Name: proj.Name}
 
 	// Generate and apply AGW resources via SSA into the project's namespace
 	if err := r.applyGeneratedResources(ctx, &proj); err != nil {

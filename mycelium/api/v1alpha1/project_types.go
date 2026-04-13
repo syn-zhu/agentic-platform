@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -44,9 +45,9 @@ type ProjectSpec struct {
 
 // ProjectStatus defines the observed state of Project.
 type ProjectStatus struct {
-	// Namespace is the name of the namespace created for this project.
+	// NamespaceRef references the namespace created for this project.
 	// +optional
-	Namespace string `json:"namespace,omitempty"`
+	NamespaceRef *corev1.LocalObjectReference `json:"namespaceRef,omitempty"`
 	// Conditions represent the latest observations of the Project's state.
 	// Known condition types: "Ready", "NamespaceReady"
 	// +optional
@@ -59,7 +60,7 @@ type ProjectStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=proj,categories=mycelium
-// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=".status.namespace",description="The namespace for this project"
+// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=".status.namespaceRef.name",description="The namespace for this project"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`,description="Whether the project is ready"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 

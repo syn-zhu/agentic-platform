@@ -5,6 +5,7 @@ import (
 
 	"github.com/mongodb/mycelium/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -44,13 +45,13 @@ func TestProject_IsClusterScoped(t *testing.T) {
 func TestProject_StatusTracksNamespace(t *testing.T) {
 	p := &v1alpha1.Project{
 		Status: v1alpha1.ProjectStatus{
-			Namespace: "acme",
+			NamespaceRef: &corev1.LocalObjectReference{Name: "acme"},
 			Conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled"},
 				{Type: "NamespaceReady", Status: metav1.ConditionTrue, Reason: "Created"},
 			},
 		},
 	}
-	assert.Equal(t, "acme", p.Status.Namespace)
+	assert.Equal(t, "acme", p.Status.NamespaceRef.Name)
 	assert.Len(t, p.Status.Conditions, 2)
 }
