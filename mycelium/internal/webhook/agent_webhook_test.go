@@ -40,7 +40,7 @@ func TestAgentValidator_CreateAllows(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), tool).Build()
 
 	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), newTestAgent())
+	_, err := v.ValidateCreate(context.Background(), newTestAgent())
 	assert.NoError(t, err)
 }
 
@@ -51,7 +51,7 @@ func TestAgentValidator_CreateRejectsWhenProjectNotFound(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), newTestAgent())
+	_, err := v.ValidateCreate(context.Background(), newTestAgent())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -69,7 +69,7 @@ func TestAgentValidator_CreateRejectsWhenProjectDeleting(t *testing.T) {
 		WithObjects(managedNamespace("acme"), proj).Build()
 
 	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), newTestAgent())
+	_, err := v.ValidateCreate(context.Background(), newTestAgent())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "being deleted")
 }
@@ -83,7 +83,7 @@ func TestAgentValidator_CreateRejectsWhenToolNotFound(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), newTestAgent())
+	_, err := v.ValidateCreate(context.Background(), newTestAgent())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list-repos")
 	assert.Contains(t, err.Error(), "not found")
@@ -102,7 +102,7 @@ func TestAgentValidator_UpdateAllowsValidToolRefs(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), tool).Build()
 
 	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateUpdate(context.Background(), newTestAgent())
+	_, err := v.ValidateUpdate(context.Background(), newTestAgent(), newTestAgent())
 	assert.NoError(t, err)
 }
 
@@ -115,7 +115,7 @@ func TestAgentValidator_UpdateRejectsWhenToolNotFound(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateUpdate(context.Background(), newTestAgent())
+	_, err := v.ValidateUpdate(context.Background(), newTestAgent(), newTestAgent())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list-repos")
 	assert.Contains(t, err.Error(), "not found")
@@ -138,7 +138,7 @@ func TestAgentValidator_CreateRejectsWhenToolDeleting(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), tool).Build()
 
 	v := &webhook.AgentValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), newTestAgent())
+	_, err := v.ValidateCreate(context.Background(), newTestAgent())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list-repos")
 	assert.Contains(t, err.Error(), "being deleted")

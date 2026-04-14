@@ -8,7 +8,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // CredentialProviderValidator validates CredentialProvider operations.
@@ -16,45 +18,53 @@ type CredentialProviderValidator struct {
 	client.Client
 }
 
+var _ admission.Validator[*v1alpha1.CredentialProvider] = &CredentialProviderValidator{}
+
+func (v *CredentialProviderValidator) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewWebhookManagedBy(mgr, &v1alpha1.CredentialProvider{}).
+		WithValidator(v).
+		Complete()
+}
+
 // ValidateCreate checks that the namespace is a Mycelium project (not being
 // deleted) and that the referenced Secret exists.
-func (v *CredentialProviderValidator) ValidateCreate(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
+func (v *CredentialProviderValidator) ValidateCreate(ctx context.Context, cp *v1alpha1.CredentialProvider) (admission.Warnings, error) {
 	projectName := cp.Namespace
 	var proj v1alpha1.Project
 	if err := v.Get(ctx, types.NamespacedName{Name: projectName}, &proj); err != nil {
 		if errors.IsNotFound(err) {
-			return fmt.Errorf("Project %s not found", projectName)
+			return nil, fmt.Errorf("Project %s not found", projectName)
 		}
-		return fmt.Errorf("checking Project: %w", err)
+		return nil, fmt.Errorf("checking Project: %w", err)
 	}
 
 	if !proj.DeletionTimestamp.IsZero() {
-		return fmt.Errorf("Project %s is being deleted", projectName)
+		return nil, fmt.Errorf("Project %s is being deleted", projectName)
 	}
 
-	return v.validateSecret(ctx, cp)
+	return nil, v.validateSecret(ctx, cp)
 }
 
 // ValidateUpdate re-checks the referenced Secret in case it changed.
-func (v *CredentialProviderValidator) ValidateUpdate(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
-	return v.validateSecret(ctx, cp)
+func (v *CredentialProviderValidator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.CredentialProvider) (admission.Warnings, error) {
+	return nil, v.validateSecret(ctx, newObj)
 }
 
 // ValidateDelete checks that no Tools reference this CredentialProvider.
-func (v *CredentialProviderValidator) ValidateDelete(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
+func (v *CredentialProviderValidator) ValidateDelete(ctx context.Context, cp *v1alpha1.CredentialProvider) (admission.Warnings, error) {
 	var toolList v1alpha1.ToolList
 	if err := v.List(ctx, &toolList,
 		client.InNamespace(cp.Namespace),
 		client.MatchingFields{"spec.credentials.providerRefs": cp.Name},
 	); err != nil {
-		return fmt.Errorf("listing Tools: %w", err)
+		return nil, fmt.Errorf("listing Tools: %w", err)
 	}
 
 	if len(toolList.Items) > 0 {
-		return fmt.Errorf("cannot delete CredentialProvider %s: referenced by %d Tool(s)",
+		return nil, fmt.Errorf("cannot delete CredentialProvider %s: referenced by %d Tool(s)",
 			cp.Name, len(toolList.Items))
 	}
-	return nil
+	return nil, nil
 }
 
 func (v *CredentialProviderValidator) validateSecret(ctx context.Context, cp *v1alpha1.CredentialProvider) error {

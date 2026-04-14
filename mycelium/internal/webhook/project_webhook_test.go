@@ -22,7 +22,7 @@ func TestProjectValidator_DeleteAllowsWhenEmpty(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	v := &webhook.ProjectValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), proj)
+	_, err := v.ValidateDelete(context.Background(), proj)
 	assert.NoError(t, err)
 }
 
@@ -41,7 +41,7 @@ func TestProjectValidator_DeleteRejectsWithTools(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool).Build()
 
 	v := &webhook.ProjectValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), proj)
+	_, err := v.ValidateDelete(context.Background(), proj)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Tool")
 }
@@ -65,7 +65,7 @@ func TestProjectValidator_DeleteRejectsWithCredentialProviders(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp).Build()
 
 	v := &webhook.ProjectValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), proj)
+	_, err := v.ValidateDelete(context.Background(), proj)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CredentialProvider")
 }
@@ -86,7 +86,7 @@ func TestProjectValidator_DeleteRejectsWithAgents(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).Build()
 
 	v := &webhook.ProjectValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), proj)
+	_, err := v.ValidateDelete(context.Background(), proj)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Agent")
 }

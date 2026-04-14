@@ -85,7 +85,7 @@ func TestCredentialProviderValidator_CreateAllowsWithSecret(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), cpSecret("github-secret", "acme")).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), cp)
+	_, err := v.ValidateCreate(context.Background(), cp)
 	assert.NoError(t, err)
 }
 
@@ -98,7 +98,7 @@ func TestCredentialProviderValidator_CreateAllowsAPIKeyWithSecret(t *testing.T) 
 		WithObjects(managedNamespace("acme"), readyProject(), cpSecret("stripe-secret", "acme")).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), cp)
+	_, err := v.ValidateCreate(context.Background(), cp)
 	assert.NoError(t, err)
 }
 
@@ -110,7 +110,7 @@ func TestCredentialProviderValidator_CreateRejectsWhenProjectNotFound(t *testing
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), cp)
+	_, err := v.ValidateCreate(context.Background(), cp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -129,7 +129,7 @@ func TestCredentialProviderValidator_CreateRejectsWhenProjectDeleting(t *testing
 		WithObjects(managedNamespace("acme"), proj).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), cp)
+	_, err := v.ValidateCreate(context.Background(), cp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "being deleted")
 }
@@ -144,7 +144,7 @@ func TestCredentialProviderValidator_CreateRejectsWhenSecretNotFound(t *testing.
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), cp)
+	_, err := v.ValidateCreate(context.Background(), cp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Secret github-secret not found")
 }
@@ -158,7 +158,7 @@ func TestCredentialProviderValidator_CreateRejectsAPIKeyWhenSecretNotFound(t *te
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), cp)
+	_, err := v.ValidateCreate(context.Background(), cp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Secret stripe-secret not found")
 }
@@ -174,7 +174,7 @@ func TestCredentialProviderValidator_UpdateRejectsWhenSecretNotFound(t *testing.
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateUpdate(context.Background(), cp)
+	_, err := v.ValidateUpdate(context.Background(), newOAuthCP(), cp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Secret github-secret not found")
 }
@@ -188,7 +188,7 @@ func TestCredentialProviderValidator_UpdateAllowsWithSecret(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), cpSecret("github-secret", "acme")).Build()
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateUpdate(context.Background(), cp)
+	_, err := v.ValidateUpdate(context.Background(), newOAuthCP(), cp)
 	assert.NoError(t, err)
 }
 
@@ -202,7 +202,7 @@ func TestCredentialProviderValidator_DeleteAllowsWhenNoDependents(t *testing.T) 
 	cl := newClientWithIndexes(t, scheme)
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), cp)
+	_, err := v.ValidateDelete(context.Background(), cp)
 	assert.NoError(t, err)
 }
 
@@ -231,7 +231,7 @@ func TestCredentialProviderValidator_DeleteRejectsWithDependentOAuth(t *testing.
 	cl := newClientWithIndexes(t, scheme, tool)
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), cp)
+	_, err := v.ValidateDelete(context.Background(), cp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 Tool(s)")
 }
@@ -260,7 +260,7 @@ func TestCredentialProviderValidator_DeleteRejectsWithDependentAPIKey(t *testing
 	cl := newClientWithIndexes(t, scheme, tool)
 
 	v := &webhook.CredentialProviderValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), cp)
+	_, err := v.ValidateDelete(context.Background(), cp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 Tool(s)")
 }

@@ -7,7 +7,9 @@ import (
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // ToolValidator validates Tool operations.
@@ -15,47 +17,55 @@ type ToolValidator struct {
 	client.Client
 }
 
+var _ admission.Validator[*v1alpha1.Tool] = &ToolValidator{}
+
+func (v *ToolValidator) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewWebhookManagedBy(mgr, &v1alpha1.Tool{}).
+		WithValidator(v).
+		Complete()
+}
+
 // ValidateCreate checks that the namespace is a Mycelium project (not being
-// deleted, namespace provisioned) and that all credential provider refs exist,
-// are not being deleted, and are of the correct type.
-func (v *ToolValidator) ValidateCreate(ctx context.Context, tool *v1alpha1.Tool) error {
+// deleted) and that all credential provider refs exist, are not being deleted,
+// and are of the correct type.
+func (v *ToolValidator) ValidateCreate(ctx context.Context, tool *v1alpha1.Tool) (admission.Warnings, error) {
 	projectName := tool.Namespace
 
 	var proj v1alpha1.Project
 	if err := v.Get(ctx, types.NamespacedName{Name: projectName}, &proj); err != nil {
 		if errors.IsNotFound(err) {
-			return fmt.Errorf("Project %s not found", projectName)
+			return nil, fmt.Errorf("Project %s not found", projectName)
 		}
-		return fmt.Errorf("checking Project: %w", err)
+		return nil, fmt.Errorf("checking Project: %w", err)
 	}
 
 	if !proj.DeletionTimestamp.IsZero() {
-		return fmt.Errorf("Project %s is being deleted", projectName)
+		return nil, fmt.Errorf("Project %s is being deleted", projectName)
 	}
 
-	return v.validateCredentialRefs(ctx, tool)
+	return nil, v.validateCredentialRefs(ctx, tool)
 }
 
 // ValidateUpdate re-checks credential refs in case new ones were added.
-func (v *ToolValidator) ValidateUpdate(ctx context.Context, tool *v1alpha1.Tool) error {
-	return v.validateCredentialRefs(ctx, tool)
+func (v *ToolValidator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.Tool) (admission.Warnings, error) {
+	return nil, v.validateCredentialRefs(ctx, newObj)
 }
 
 // ValidateDelete checks that no Agents reference this Tool.
-func (v *ToolValidator) ValidateDelete(ctx context.Context, tool *v1alpha1.Tool) error {
+func (v *ToolValidator) ValidateDelete(ctx context.Context, tool *v1alpha1.Tool) (admission.Warnings, error) {
 	var agentList v1alpha1.AgentList
 	if err := v.List(ctx, &agentList,
 		client.InNamespace(tool.Namespace),
 		client.MatchingFields{"spec.tools.refs": tool.Name},
 	); err != nil {
-		return fmt.Errorf("listing Agents: %w", err)
+		return nil, fmt.Errorf("listing Agents: %w", err)
 	}
 
 	if len(agentList.Items) > 0 {
-		return fmt.Errorf("cannot delete Tool %s: referenced by %d Agent(s)",
+		return nil, fmt.Errorf("cannot delete Tool %s: referenced by %d Agent(s)",
 			tool.Name, len(agentList.Items))
 	}
-	return nil
+	return nil, nil
 }
 
 func (v *ToolValidator) validateCredentialRefs(ctx context.Context, tool *v1alpha1.Tool) error {

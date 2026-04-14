@@ -19,7 +19,11 @@ import (
 
 func newTool() *v1alpha1.Tool {
 	return &v1alpha1.Tool{
-		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "list-repos",
+			Namespace:  "tenant-a",
+			Finalizers: []string{controller.ToolFinalizer},
+		},
 		Spec: v1alpha1.ToolSpec{
 			Description: "List GitHub repos for an org.",
 			Container:   v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
@@ -114,7 +118,21 @@ func TestToolReconciler_SetsStatusServiceRef(t *testing.T) {
 
 func TestToolReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
-	tool := newTool()
+	tool := &v1alpha1.Tool{
+		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
+		Spec: v1alpha1.ToolSpec{
+			Description: "List GitHub repos for an org.",
+			Container:   v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
+			Credentials: []v1alpha1.CredentialBinding{
+				{
+					OAuth: &v1alpha1.OAuthCredentialBinding{
+						ProviderRef: corev1.LocalObjectReference{Name: "github"},
+						Scopes:      []string{"repo"},
+					},
+				},
+			},
+		},
+	}
 	proj := toolProject()
 	cp := githubCredentialProvider()
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tool, proj, cp).
@@ -271,7 +289,6 @@ func TestToolReconciler_CredentialsInvalidWhenProviderWrongType(t *testing.T) {
 func TestToolReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	tool := newTool()
-	tool.Finalizers = []string{controller.ToolFinalizer}
 	now := metav1.Now()
 	tool.DeletionTimestamp = &now
 
@@ -291,7 +308,6 @@ func TestToolReconciler_DeletionRemovesFinalizer(t *testing.T) {
 func TestToolReconciler_DeletionRequeuesWithDependentAgents(t *testing.T) {
 	scheme := newScheme(t)
 	tool := newTool()
-	tool.Finalizers = []string{controller.ToolFinalizer}
 	now := metav1.Now()
 	tool.DeletionTimestamp = &now
 

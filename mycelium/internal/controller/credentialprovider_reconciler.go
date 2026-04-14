@@ -6,13 +6,16 @@ import (
 	"time"
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
+	myceliumutil "github.com/mongodb/mycelium/internal/util"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,7 +39,7 @@ type CredentialProviderReconciler struct {
 // +kubebuilder:rbac:groups=mycelium.io,resources=tools,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
-func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	logger := log.FromContext(ctx)
 
 	var cp v1alpha1.CredentialProvider
@@ -44,46 +47,48 @@ func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Handle deletion
 	if !cp.DeletionTimestamp.IsZero() {
+		logger.Info("Cleaning up CredentialProvider", "name", cp.Name)
 		return r.reconcileDelete(ctx, &cp)
 	}
 
-	// Add finalizer if not present
 	if !controllerutil.ContainsFinalizer(&cp, CredentialProviderFinalizer) {
-		controllerutil.AddFinalizer(&cp, CredentialProviderFinalizer)
-		if err := r.Update(ctx, &cp); err != nil {
-			return ctrl.Result{}, err
-		}
+		return r.reconcileCreate(ctx, &cp)
 	}
+
+	original := cp.DeepCopy()
+
+	defer func() {
+		if !equality.Semantic.DeepEqual(original.Status, cp.Status) {
+			if err := r.Status().Patch(ctx, &cp, client.MergeFrom(original)); err != nil {
+				reterr = kerrors.NewAggregate([]error{reterr, err})
+			}
+		}
+	}()
 
 	logger.Info("Reconciling CredentialProvider", "name", cp.Name, "isOAuth", cp.IsOAuth(), "isAPIKey", cp.IsAPIKey())
 
-	// Validate parent Project
-	if err := r.reconcileProject(ctx, &cp); err != nil {
-		_ = r.Status().Update(ctx, &cp)
-		return ctrl.Result{}, err
+	var errs []error
+	res := ctrl.Result{}
+	for _, phase := range []func(context.Context, *v1alpha1.CredentialProvider) (ctrl.Result, error){
+		r.reconcileProject,
+		r.reconcileSecret,
+	} {
+		phaseResult, err := phase(ctx, &cp)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		res = myceliumutil.LowestNonZeroResult(res, phaseResult)
 	}
 
-	// Validate referenced Secret
-	if err := r.reconcileSecret(ctx, &cp); err != nil {
-		r.setReadyCondition(&cp)
-		_ = r.Status().Update(ctx, &cp)
-		return ctrl.Result{}, err
+	if len(errs) > 0 {
+		return ctrl.Result{}, kerrors.NewAggregate(errs)
 	}
-
-	// Set rollup Ready condition and persist status
-	r.setReadyCondition(&cp)
-	if err := r.Status().Update(ctx, &cp); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return res, nil
 }
 
-// reconcileProject checks that the parent Project exists.
-// Returns error only for transient API failures.
-func (r *CredentialProviderReconciler) reconcileProject(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
+func (r *CredentialProviderReconciler) reconcileProject(ctx context.Context, cp *v1alpha1.CredentialProvider) (ctrl.Result, error) {
 	var proj v1alpha1.Project
 	if err := r.Get(ctx, types.NamespacedName{Name: cp.Namespace}, &proj); err != nil {
 		if errors.IsNotFound(err) {
@@ -94,9 +99,9 @@ func (r *CredentialProviderReconciler) reconcileProject(ctx context.Context, cp 
 				Message:            fmt.Sprintf("Project %s not found", cp.Namespace),
 				LastTransitionTime: metav1.Now(),
 			})
-			return nil
+			return ctrl.Result{}, nil
 		}
-		return fmt.Errorf("checking Project: %w", err)
+		return ctrl.Result{}, fmt.Errorf("checking Project: %w", err)
 	}
 
 	meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
@@ -106,12 +111,10 @@ func (r *CredentialProviderReconciler) reconcileProject(ctx context.Context, cp 
 		Message:            "Parent project exists",
 		LastTransitionTime: metav1.Now(),
 	})
-	return nil
+	return ctrl.Result{}, nil
 }
 
-// reconcileSecret validates the referenced K8s Secret exists.
-// Returns error only for transient API failures.
-func (r *CredentialProviderReconciler) reconcileSecret(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
+func (r *CredentialProviderReconciler) reconcileSecret(ctx context.Context, cp *v1alpha1.CredentialProvider) (ctrl.Result, error) {
 	var secretName string
 	if cp.IsOAuth() {
 		secretName = cp.Spec.OAuth.ClientSecretRef.Name
@@ -129,9 +132,9 @@ func (r *CredentialProviderReconciler) reconcileSecret(ctx context.Context, cp *
 				Message:            fmt.Sprintf("Secret %s not found", secretName),
 				LastTransitionTime: metav1.Now(),
 			})
-			return nil
+			return ctrl.Result{}, nil
 		}
-		return fmt.Errorf("checking Secret %s: %w", secretName, err)
+		return ctrl.Result{}, fmt.Errorf("checking Secret %s: %w", secretName, err)
 	}
 
 	meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
@@ -141,64 +144,31 @@ func (r *CredentialProviderReconciler) reconcileSecret(ctx context.Context, cp *
 		Message:            fmt.Sprintf("Secret %s exists", secretName),
 		LastTransitionTime: metav1.Now(),
 	})
-	return nil
-}
-
-// setReadyCondition computes the rollup Ready condition from sub-conditions.
-func (r *CredentialProviderReconciler) setReadyCondition(cp *v1alpha1.CredentialProvider) {
-	projValid := meta.IsStatusConditionTrue(cp.Status.Conditions, "ProjectValid")
-	secretValid := meta.IsStatusConditionTrue(cp.Status.Conditions, "SecretValid")
-
-	if projValid && secretValid {
-		meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
-			Status:             metav1.ConditionTrue,
-			Reason:             "Reconciled",
-			Message:            "All sub-conditions satisfied",
-			LastTransitionTime: metav1.Now(),
-		})
-	} else {
-		var reason string
-		switch {
-		case !projValid:
-			reason = "ProjectInvalid"
-		default:
-			reason = "SecretMissing"
-		}
-		meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
-			Status:             metav1.ConditionFalse,
-			Reason:             reason,
-			Message:            "One or more sub-conditions not satisfied",
-			LastTransitionTime: metav1.Now(),
-		})
-	}
+	return ctrl.Result{}, nil
 }
 
 func (r *CredentialProviderReconciler) reconcileDelete(ctx context.Context, cp *v1alpha1.CredentialProvider) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-	logger.Info("Cleaning up CredentialProvider", "name", cp.Name)
-
-	// Wait for dependent Tools to be removed before finalizing.
 	var tools v1alpha1.ToolList
 	if err := r.List(ctx, &tools, client.InNamespace(cp.Namespace),
 		client.MatchingFields{IndexToolCredentialBindings: cp.Name}); err != nil {
 		return ctrl.Result{}, err
 	}
 	if len(tools.Items) > 0 {
-		logger.Info("CredentialProvider still has dependent Tools, requeuing",
-			"tools", len(tools.Items))
+		log.FromContext(ctx).Info("CredentialProvider still has dependent Tools, requeuing", "tools", len(tools.Items))
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
+	original := cp.DeepCopy()
 	controllerutil.RemoveFinalizer(cp, CredentialProviderFinalizer)
-	if err := r.Update(ctx, cp); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, r.Client.Patch(ctx, cp, client.MergeFrom(original))
 }
 
-// findCPsForProject maps a Project event to all CredentialProviders in that namespace.
+func (r *CredentialProviderReconciler) reconcileCreate(ctx context.Context, cp *v1alpha1.CredentialProvider) (ctrl.Result, error) {
+	original := cp.DeepCopy()
+	controllerutil.AddFinalizer(cp, CredentialProviderFinalizer)
+	return ctrl.Result{}, r.Client.Patch(ctx, cp, client.MergeFrom(original))
+}
+
 func (r *CredentialProviderReconciler) findCPsForProject(ctx context.Context, obj client.Object) []ctrl.Request {
 	var cpList v1alpha1.CredentialProviderList
 	if err := r.List(ctx, &cpList, client.InNamespace(obj.GetName())); err != nil {
@@ -207,10 +177,7 @@ func (r *CredentialProviderReconciler) findCPsForProject(ctx context.Context, ob
 	requests := make([]ctrl.Request, 0, len(cpList.Items))
 	for _, cp := range cpList.Items {
 		requests = append(requests, ctrl.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      cp.Name,
-				Namespace: cp.Namespace,
-			},
+			NamespacedName: types.NamespacedName{Name: cp.Name, Namespace: cp.Namespace},
 		})
 	}
 	return requests

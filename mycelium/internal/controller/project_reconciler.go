@@ -8,12 +8,15 @@ import (
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 	"github.com/mongodb/mycelium/internal/generate"
+	myceliumutil "github.com/mongodb/mycelium/internal/util"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,7 +42,7 @@ type ProjectReconciler struct {
 // +kubebuilder:rbac:groups=agentgateway.dev,resources=agentgatewaybackends;agentgatewaypolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 
-func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	logger := log.FromContext(ctx)
 
 	var proj v1alpha1.Project
@@ -47,23 +50,53 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Handle deletion
 	if !proj.DeletionTimestamp.IsZero() {
+		logger.Info("Cleaning up Project", "name", proj.Name)
 		return r.reconcileDelete(ctx, &proj)
 	}
 
-	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(&proj, ProjectFinalizer) {
-		controllerutil.AddFinalizer(&proj, ProjectFinalizer)
-		if err := r.Update(ctx, &proj); err != nil {
-			return ctrl.Result{}, err
-		}
+	if controllerutil.AddFinalizer(&proj, ProjectFinalizer) {
+		return r.reconcileCreate(ctx, &proj)
 	}
+
+	original := proj.DeepCopy()
+
+	defer func() {
+		if !equality.Semantic.DeepEqual(original.Status, proj.Status) {
+			if err := r.Status().Patch(ctx, &proj, client.MergeFrom(original)); err != nil {
+				reterr = kerrors.NewAggregate([]error{reterr, err})
+			}
+		}
+	}()
 
 	logger.Info("Reconciling Project", "name", proj.Name)
 
-	// Ensure namespace exists
-	if err := r.ensureNamespace(ctx, &proj); err != nil {
+	var errs []error
+	res := ctrl.Result{}
+	for _, phase := range []func(context.Context, *v1alpha1.Project) (ctrl.Result, error){
+		r.reconcileNamespace,
+		r.reconcileAGWResources,
+	} {
+		phaseResult, err := phase(ctx, &proj)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		res = myceliumutil.LowestNonZeroResult(res, phaseResult)
+	}
+
+	if len(errs) > 0 {
+		return ctrl.Result{}, kerrors.NewAggregate(errs)
+	}
+	return res, nil
+}
+
+func (r *ProjectReconciler) reconcileNamespace(ctx context.Context, proj *v1alpha1.Project) (ctrl.Result, error) {
+	ns := generate.Namespace(proj)
+	if err := controllerutil.SetControllerReference(proj, ns, r.Scheme); err != nil {
+		return ctrl.Result{}, fmt.Errorf("setting owner reference on namespace: %w", err)
+	}
+	if err := r.Patch(ctx, ns, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
 		meta.SetStatusCondition(&proj.Status.Conditions, metav1.Condition{
 			Type:               "NamespaceReady",
 			Status:             metav1.ConditionFalse,
@@ -71,9 +104,9 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			Message:            err.Error(),
 			LastTransitionTime: metav1.Now(),
 		})
-		_ = r.Status().Update(ctx, &proj)
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("applying namespace %s: %w", proj.Name, err)
 	}
+
 	meta.SetStatusCondition(&proj.Status.Conditions, metav1.Condition{
 		Type:               "NamespaceReady",
 		Status:             metav1.ConditionTrue,
@@ -82,52 +115,13 @@ func (r *ProjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		LastTransitionTime: metav1.Now(),
 	})
 	proj.Status.NamespaceRef = &corev1.LocalObjectReference{Name: proj.Name}
-
-	// Generate and apply all AGW resources via SSA into the project's namespace
-	if err := r.syncAGWResources(ctx, &proj); err != nil {
-		meta.SetStatusCondition(&proj.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
-			Status:             metav1.ConditionFalse,
-			Reason:             "ReconcileError",
-			Message:            err.Error(),
-			LastTransitionTime: metav1.Now(),
-		})
-		_ = r.Status().Update(ctx, &proj)
-		return ctrl.Result{}, err
-	}
-
-	meta.SetStatusCondition(&proj.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
-		Status:             metav1.ConditionTrue,
-		Reason:             "Reconciled",
-		Message:            fmt.Sprintf("Project %s reconciled", proj.Name),
-		LastTransitionTime: metav1.Now(),
-	})
-	if err := r.Status().Update(ctx, &proj); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	return ctrl.Result{}, nil
 }
 
-func (r *ProjectReconciler) ensureNamespace(ctx context.Context, proj *v1alpha1.Project) error {
-	ns := generate.Namespace(proj)
-
-	if err := controllerutil.SetControllerReference(proj, ns, r.Scheme); err != nil {
-		return fmt.Errorf("setting owner reference on namespace: %w", err)
-	}
-
-	if err := r.Patch(ctx, ns, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
-		return fmt.Errorf("applying namespace %s: %w", proj.Name, err)
-	}
-	return nil
-}
-
-func (r *ProjectReconciler) syncAGWResources(ctx context.Context, proj *v1alpha1.Project) error {
-	// List agents for tool-access policy generation
+func (r *ProjectReconciler) reconcileAGWResources(ctx context.Context, proj *v1alpha1.Project) (ctrl.Result, error) {
 	var agents v1alpha1.AgentList
 	if err := r.List(ctx, &agents, client.InNamespace(proj.Name)); err != nil {
-		return fmt.Errorf("listing agents: %w", err)
+		return ctrl.Result{}, fmt.Errorf("listing agents: %w", err)
 	}
 
 	resources := []client.Object{
@@ -140,22 +134,32 @@ func (r *ProjectReconciler) syncAGWResources(ctx context.Context, proj *v1alpha1
 
 	for _, obj := range resources {
 		if err := controllerutil.SetControllerReference(proj, obj, r.Scheme); err != nil {
-			return fmt.Errorf("setting owner reference on %s: %w", obj.GetName(), err)
+			return ctrl.Result{}, fmt.Errorf("setting owner reference on %s: %w", obj.GetName(), err)
 		}
 		if err := r.Patch(ctx, obj, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
-			return fmt.Errorf("applying %s/%s: %w", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName(), err)
+			meta.SetStatusCondition(&proj.Status.Conditions, metav1.Condition{
+				Type:               "AGWResourcesReady",
+				Status:             metav1.ConditionFalse,
+				Reason:             "AGWResourceError",
+				Message:            err.Error(),
+				LastTransitionTime: metav1.Now(),
+			})
+			return ctrl.Result{}, fmt.Errorf("applying %s/%s: %w", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName(), err)
 		}
 	}
-	return nil
+
+	meta.SetStatusCondition(&proj.Status.Conditions, metav1.Condition{
+		Type:               "AGWResourcesReady",
+		Status:             metav1.ConditionTrue,
+		Reason:             "Synced",
+		Message:            "All AGW resources synced",
+		LastTransitionTime: metav1.Now(),
+	})
+	return ctrl.Result{}, nil
 }
 
+// reconcileDelete just mutates in-memory state. The deferred patch persists the changes.
 func (r *ProjectReconciler) reconcileDelete(ctx context.Context, proj *v1alpha1.Project) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-	logger.Info("Cleaning up Project", "name", proj.Name)
-
-	// Wait for all dependents to be removed before tearing down the namespace.
-	// The ValidatingWebhook provides a UX fast path (immediate rejection), and
-	// once DeletionTimestamp is set, CREATE webhooks block new dependents.
 	var tools v1alpha1.ToolList
 	if err := r.List(ctx, &tools, client.InNamespace(proj.Name)); err != nil {
 		return ctrl.Result{}, err
@@ -169,34 +173,28 @@ func (r *ProjectReconciler) reconcileDelete(ctx context.Context, proj *v1alpha1.
 		return ctrl.Result{}, err
 	}
 	if len(tools.Items)+len(cps.Items)+len(agents.Items) > 0 {
-		logger.Info("Project still has dependents, requeuing",
+		log.FromContext(ctx).Info("Project still has dependents, requeuing",
 			"tools", len(tools.Items), "cps", len(cps.Items), "agents", len(agents.Items))
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	// TODO(mycelium): Clean up MongoDB project database here
-
-	// Namespace and AGW resources are cleaned up automatically via ownerReference
-	// garbage collection — no explicit deletion needed.
-
+	original := proj.DeepCopy()
 	controllerutil.RemoveFinalizer(proj, ProjectFinalizer)
-	if err := r.Update(ctx, proj); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, r.Client.Patch(ctx, proj, client.MergeFrom(original))
 }
 
-// mapToProject maps a namespace-scoped resource to its owning Project reconcile request.
-// By convention, the namespace name equals the Project name.
+func (r *ProjectReconciler) reconcileCreate(ctx context.Context, proj *v1alpha1.Project) (ctrl.Result, error) {
+	original := proj.DeepCopy()
+	controllerutil.AddFinalizer(proj, ProjectFinalizer)
+	return ctrl.Result{}, r.Client.Patch(ctx, proj, client.MergeFrom(original))
+}
+
 func (r *ProjectReconciler) mapToProject(_ context.Context, obj client.Object) []reconcile.Request {
 	return []reconcile.Request{{
 		NamespacedName: types.NamespacedName{Name: obj.GetNamespace()},
 	}}
 }
 
-// agentToolListChanged returns a predicate that fires only when an Agent's
-// tool list changes, or on create/delete. Other Agent spec changes (description,
-// container, etc.) don't affect the tool-access policy.
 func agentToolListChanged() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {

@@ -18,7 +18,11 @@ import (
 
 func newOAuthCredentialProvider() *v1alpha1.CredentialProvider {
 	return &v1alpha1.CredentialProvider{
-		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "tenant-a"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "github",
+			Namespace:  "tenant-a",
+			Finalizers: []string{controller.CredentialProviderFinalizer},
+		},
 		Spec: v1alpha1.CredentialProviderSpec{
 			OAuth: &v1alpha1.OAuthProviderSpec{
 				ClientID: "Iv1.abc123",
@@ -92,7 +96,10 @@ func TestCredentialProviderReconciler_SetsReadyCondition(t *testing.T) {
 
 func TestCredentialProviderReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
-	cp := newOAuthCredentialProvider()
+	cp := &v1alpha1.CredentialProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "tenant-a"},
+		Spec:       newOAuthCredentialProvider().Spec,
+	}
 	proj := cpProject()
 	secret := oauthSecret()
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cp, proj, secret).
@@ -180,7 +187,6 @@ func TestCredentialProviderReconciler_SecretNotFound(t *testing.T) {
 func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	cp := newOAuthCredentialProvider()
-	cp.Finalizers = []string{controller.CredentialProviderFinalizer}
 	now := metav1.Now()
 	cp.DeletionTimestamp = &now
 
@@ -200,7 +206,6 @@ func TestCredentialProviderReconciler_DeletionRemovesFinalizer(t *testing.T) {
 func TestCredentialProviderReconciler_DeletionRequeuesWithDependentTools(t *testing.T) {
 	scheme := newScheme(t)
 	cp := newOAuthCredentialProvider()
-	cp.Finalizers = []string{controller.CredentialProviderFinalizer}
 	now := metav1.Now()
 	cp.DeletionTimestamp = &now
 

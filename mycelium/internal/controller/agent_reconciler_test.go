@@ -18,7 +18,11 @@ import (
 
 func newAgent() *v1alpha1.Agent {
 	return &v1alpha1.Agent{
-		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "github-assistant",
+			Namespace:  "acme",
+			Finalizers: []string{controller.AgentFinalizer},
+		},
 		Spec: v1alpha1.AgentSpec{
 			Description: "GitHub agent",
 			Tools: []v1alpha1.ToolRef{
@@ -79,18 +83,25 @@ func TestAgentReconciler_SetsReadyCondition(t *testing.T) {
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github-assistant", Namespace: "acme"}, &updated)
 	require.NoError(t, err)
 
-	var ready bool
-	for _, c := range updated.Status.Conditions {
-		if c.Type == "Ready" && c.Status == metav1.ConditionTrue {
-			ready = true
-		}
-	}
-	assert.True(t, ready, "expected Ready=True condition")
+	saReady := findCondition(updated.Status.Conditions, "ServiceAccountReady")
+	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, saReady)
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionTrue, saReady.Status)
+	assert.Equal(t, metav1.ConditionTrue, ready.Status)
 }
 
 func TestAgentReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
-	agent := newAgent()
+	agent := &v1alpha1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
+		Spec: v1alpha1.AgentSpec{
+			Description: "GitHub agent",
+			Tools:       []v1alpha1.ToolRef{{Ref: corev1.LocalObjectReference{Name: "list-repos"}}},
+			Container:   v1alpha1.AgentContainer{Image: "acme/gh:latest"},
+		},
+	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).
 		WithStatusSubresource(agent).Build()
 
@@ -109,7 +120,6 @@ func TestAgentReconciler_AddsFinalizer(t *testing.T) {
 func TestAgentReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	agent := newAgent()
-	agent.Finalizers = []string{controller.AgentFinalizer}
 	now := metav1.Now()
 	agent.DeletionTimestamp = &now
 

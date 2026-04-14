@@ -7,6 +7,7 @@ import (
 
 	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
 	"github.com/mongodb/mycelium/internal/controller"
+	"github.com/mongodb/mycelium/internal/webhook"
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -80,6 +81,12 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create Agent controller")
+		os.Exit(1)
+	}
+
+	// Register validating webhooks
+	if err := webhook.SetupWebhooks(mgr); err != nil {
+		ctrl.Log.Error(err, "unable to setup webhooks")
 		os.Exit(1)
 	}
 

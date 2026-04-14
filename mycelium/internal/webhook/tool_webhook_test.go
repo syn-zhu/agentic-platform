@@ -86,7 +86,7 @@ func TestToolValidator_CreateAllowsInManagedNamespace(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	assert.NoError(t, err)
 }
 
@@ -98,7 +98,7 @@ func TestToolValidator_CreateRejectsWhenProjectNotFound(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -117,7 +117,7 @@ func TestToolValidator_CreateRejectsWhenProjectDeleting(t *testing.T) {
 		WithObjects(managedNamespace("acme"), proj).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "being deleted")
 }
@@ -135,7 +135,7 @@ func TestToolValidator_CreateAllowsWithValidOAuthRef(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), oauthCredentialProvider("github", "acme")).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	assert.NoError(t, err)
 }
 
@@ -150,7 +150,7 @@ func TestToolValidator_CreateRejectsWhenOAuthRefNotFound(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CredentialProvider github not found")
 }
@@ -166,7 +166,7 @@ func TestToolValidator_CreateRejectsWhenOAuthRefIsAPIKey(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), apiKeyCredentialProvider("stripe", "acme")).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not an OAuth provider")
 }
@@ -182,7 +182,7 @@ func TestToolValidator_CreateRejectsWhenAPIKeyRefIsOAuth(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject(), oauthCredentialProvider("github", "acme")).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not an API key provider")
 }
@@ -203,7 +203,7 @@ func TestToolValidator_CreateRejectsWhenCredentialProviderDeleting(t *testing.T)
 		WithObjects(managedNamespace("acme"), readyProject(), cp).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "being deleted")
 }
@@ -226,7 +226,7 @@ func TestToolValidator_CreateAllowsWithBothOAuthAndAPIKey(t *testing.T) {
 		).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateCreate(context.Background(), tool)
+	_, err := v.ValidateCreate(context.Background(), tool)
 	assert.NoError(t, err)
 }
 
@@ -243,7 +243,7 @@ func TestToolValidator_UpdateRevalidatesCredentialRefs(t *testing.T) {
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateUpdate(context.Background(), tool)
+	_, err := v.ValidateUpdate(context.Background(), baseTool("list-repos", "acme"), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -273,7 +273,7 @@ func TestToolValidator_DeleteAllowsWhenNoDependents(t *testing.T) {
 	cl := newClientWithAgentIndex(t, scheme)
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), tool)
+	_, err := v.ValidateDelete(context.Background(), tool)
 	assert.NoError(t, err)
 }
 
@@ -294,7 +294,7 @@ func TestToolValidator_DeleteRejectsWithDependentAgent(t *testing.T) {
 	cl := newClientWithAgentIndex(t, scheme, agent)
 
 	v := &webhook.ToolValidator{Client: cl}
-	err := v.ValidateDelete(context.Background(), tool)
+	_, err := v.ValidateDelete(context.Background(), tool)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 Agent(s)")
 }

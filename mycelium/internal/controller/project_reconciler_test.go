@@ -21,7 +21,10 @@ import (
 
 func newProject() *v1alpha1.Project {
 	return &v1alpha1.Project{
-		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "acme",
+			Finalizers: []string{controller.ProjectFinalizer},
+		},
 		Spec: v1alpha1.ProjectSpec{
 			UserVerifierURL: "https://app.acme.com/verify",
 			IdentityProvider: v1alpha1.IdentityProviderConfig{
@@ -122,22 +125,30 @@ func TestProjectReconciler_SetsReadyCondition(t *testing.T) {
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updated)
 	require.NoError(t, err)
 
-	var ready, nsReady bool
-	for _, c := range updated.Status.Conditions {
-		if c.Type == "Ready" && c.Status == metav1.ConditionTrue {
-			ready = true
-		}
-		if c.Type == "NamespaceReady" && c.Status == metav1.ConditionTrue {
-			nsReady = true
-		}
-	}
-	assert.True(t, ready, "expected Ready condition")
-	assert.True(t, nsReady, "expected NamespaceReady condition")
+	nsReady := findCondition(updated.Status.Conditions, "NamespaceReady")
+	agwReady := findCondition(updated.Status.Conditions, "AGWResourcesReady")
+	ready := findCondition(updated.Status.Conditions, "Ready")
+
+	require.NotNil(t, nsReady)
+	require.NotNil(t, agwReady)
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionTrue, nsReady.Status)
+	assert.Equal(t, metav1.ConditionTrue, agwReady.Status)
+	assert.Equal(t, metav1.ConditionTrue, ready.Status)
 }
 
 func TestProjectReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
-	proj := newProject()
+	proj := &v1alpha1.Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
+		Spec: v1alpha1.ProjectSpec{
+			UserVerifierURL: "https://app.acme.com/verify",
+			IdentityProvider: v1alpha1.IdentityProviderConfig{
+				Issuer:    "https://accounts.google.com",
+				Audiences: []string{"mycelium-acme"},
+			},
+		},
+	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
@@ -234,7 +245,6 @@ func TestProjectReconciler_NoAgents_DenyAllPolicy(t *testing.T) {
 func TestProjectReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	scheme := newScheme(t)
 	proj := newProject()
-	proj.Finalizers = []string{controller.ProjectFinalizer}
 	now := metav1.Now()
 	proj.DeletionTimestamp = &now
 
@@ -257,7 +267,6 @@ func TestProjectReconciler_DeletionRemovesFinalizer(t *testing.T) {
 func TestProjectReconciler_DeletionRequeuesWithDependents(t *testing.T) {
 	scheme := newScheme(t)
 	proj := newProject()
-	proj.Finalizers = []string{controller.ProjectFinalizer}
 	now := metav1.Now()
 	proj.DeletionTimestamp = &now
 
