@@ -45,22 +45,22 @@ type ProjectSpec struct {
 
 // ProjectStatus defines the observed state of Project.
 type ProjectStatus struct {
-	// NamespaceRef references the namespace created for this project.
+	BaseStatus `json:",inline"`
+	// Namespace tracks the status of the managed namespace for this project.
 	// +optional
-	NamespaceRef *corev1.LocalObjectReference `json:"namespaceRef,omitempty"`
-	// Conditions represent the latest observations of the Project's state.
-	// Known condition types: "Ready", "NamespaceReady"
-	// +optional
-	// +listType=map
-	// +listMapKey=type
-	// +kubebuilder:validation:MaxItems=8
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Namespace *corev1.TypedLocalObjectReference `json:"namespace,omitempty"`
+
+	MCPBackend          *corev1.TypedLocalObjectReference `json:"mcpBackend,omitempty"`
+	MCPRoute            *corev1.TypedLocalObjectReference `json:"mcpRoute,omitempty"`
+	JWTPolicy           *corev1.TypedLocalObjectReference `json:"jwtPolicy,omitempty"`
+	SourceContextPolicy *corev1.TypedLocalObjectReference `json:"sourceContextPolicy,omitempty"`
+	ToolAccessPolicy    *corev1.TypedLocalObjectReference `json:"toolAccessPolicy,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=proj,categories=mycelium
-// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=".status.namespaceRef.name",description="The namespace for this project"
+// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=".status.namespace.name",description="The namespace for this project"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`,description="Whether the project is ready"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 

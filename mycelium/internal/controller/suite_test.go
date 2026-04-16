@@ -3,8 +3,8 @@ package controller_test
 import (
 	"testing"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/controller"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/controller"
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,7 +48,7 @@ func newClientWithIndexes(t *testing.T, scheme *runtime.Scheme, objs ...client.O
 			}
 			return refs
 		}).
-		WithIndex(&v1alpha1.Agent{}, controller.IndexAgentToolRefs, func(obj client.Object) []string {
+		WithIndex(&v1alpha1.Agent{}, controller.IndexAgentToolBindings, func(obj client.Object) []string {
 			agent := obj.(*v1alpha1.Agent)
 			var refs []string
 			for _, t := range agent.Spec.Tools {

@@ -11,18 +11,18 @@ func ManagedLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/managed-by": ManagedBy}
 }
 
-// ProjectAnnotations returns annotations indicating ownership by a Project.
-func ProjectAnnotations(projectName string) map[string]string {
+// ProjectLabels returns labels indicating ownership by a Project.
+func ProjectLabels(projectName string) map[string]string {
 	return map[string]string{"mycelium.io/project": projectName}
 }
 
-// ToolAnnotations returns annotations indicating ownership by a Tool.
-func ToolAnnotations(toolName string) map[string]string {
+// ToolLabels returns labels indicating ownership by a Tool.
+func ToolLabels(toolName string) map[string]string {
 	return map[string]string{"mycelium.io/tool": toolName}
 }
 
-// AgentAnnotations returns annotations indicating ownership by an Agent.
-func AgentAnnotations(agentName string) map[string]string {
+// AgentLabels returns labels indicating ownership by an Agent.
+func AgentLabels(agentName string) map[string]string {
 	return map[string]string{"mycelium.io/agent": agentName}
 }
 

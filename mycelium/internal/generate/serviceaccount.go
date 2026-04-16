@@ -1,7 +1,7 @@
 package generate
 
 import (
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -19,7 +19,7 @@ func ServiceAccount(agent *v1alpha1.Agent) *corev1.ServiceAccount {
 			Name:        agent.Name,
 			Namespace:   agent.Namespace,
 			Labels:      ManagedLabels(),
-			Annotations: AgentAnnotations(agent.Name),
+			Annotations: AgentLabels(agent.Name),
 		},
 	}
 }

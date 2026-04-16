@@ -3,7 +3,7 @@ package webhook_test
 import (
 	"testing"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"

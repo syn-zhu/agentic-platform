@@ -1,13 +1,12 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"os"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/controller"
-	"github.com/mongodb/mycelium/internal/webhook"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/controller"
+	"mycelium.io/mycelium/internal/webhook"
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,7 +24,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 	utilruntime.Must(gwv1.Install(scheme))
-	utilruntime.Must(agwv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(agwv1alpha1.Install(scheme))
 	utilruntime.Must(knservingv1.AddToScheme(scheme))
 }
 
@@ -34,7 +33,7 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true))) // TODO
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:           scheme,
@@ -46,8 +45,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := ctrl.SetupSignalHandler()
+
 	// Register field indexes before starting reconcilers
-	if err := controller.SetupIndexes(context.Background(), mgr); err != nil {
+	if err := controller.SetupIndexes(ctx, mgr); err != nil {
 		ctrl.Log.Error(err, "unable to setup field indexes")
 		os.Exit(1)
 	}
@@ -91,7 +92,7 @@ func main() {
 	}
 
 	ctrl.Log.Info("starting controller manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		ctrl.Log.Error(err, "problem running manager")
 		os.Exit(1)
 	}

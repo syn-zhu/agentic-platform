@@ -61,8 +61,8 @@ const (
 	TokenEndpointAuthMethodBasic TokenEndpointAuthMethod = "client_secret_basic"
 )
 
-// OAuthProviderSpec configures an OAuth 2.0 credential provider.
-type OAuthProviderSpec struct {
+// OAuthCredentialProviderSpec configures an OAuth 2.0 credential provider.
+type OAuthCredentialProviderSpec struct {
 	// ClientID is the OAuth client ID.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -76,35 +76,43 @@ type OAuthProviderSpec struct {
 	Discovery OAuthDiscovery `json:"discovery"`
 }
 
-// APIKeyProviderSpec configures an API key credential provider.
-type APIKeyProviderSpec struct {
+// APIKeyCredentialProviderSpec configures an API key credential provider.
+type APIKeyCredentialProviderSpec struct {
 	// APIKeySecretRef references a key in a Kubernetes Secret containing the API key.
 	// The key value is passed in the request body to the tool executor.
 	// +kubebuilder:validation:Required
 	APIKeySecretRef corev1.SecretKeySelector `json:"apiKeySecretRef"`
 }
 
+// CredentialProviderType identifies the type of credential provider.
+// +kubebuilder:validation:Enum=OAuth;APIKey
+type CredentialProviderType string
+
+const (
+	CredentialProviderTypeOAuth  CredentialProviderType = "OAuth"
+	CredentialProviderTypeAPIKey CredentialProviderType = "APIKey"
+)
+
 // CredentialProviderSpec defines the desired state of CredentialProvider.
-// Exactly one of oauth or apiKey must be set.
-// +kubebuilder:validation:ExactlyOneOf=oauth;apiKey
+//
+// +kubebuilder:validation:XValidation:message="oauth must be set when type is OAuth",rule="self.type == 'OAuth' ? has(self.oauth) : !has(self.oauth)"
+// +kubebuilder:validation:XValidation:message="apiKey must be set when type is APIKey",rule="self.type == 'APIKey' ? has(self.apiKey) : !has(self.apiKey)"
 type CredentialProviderSpec struct {
+	// Type is the type of credential provider.
+	// +unionDiscriminator
+	// +kubebuilder:validation:Required
+	Type CredentialProviderType `json:"type"`
 	// OAuth configures this as an OAuth 2.0 credential provider.
 	// +optional
-	OAuth *OAuthProviderSpec `json:"oauth,omitempty"`
+	OAuth *OAuthCredentialProviderSpec `json:"oauth,omitempty"`
 	// APIKey configures this as an API key credential provider.
 	// +optional
-	APIKey *APIKeyProviderSpec `json:"apiKey,omitempty"`
+	APIKey *APIKeyCredentialProviderSpec `json:"apiKey,omitempty"`
 }
 
 // CredentialProviderStatus defines the observed state of CredentialProvider.
 type CredentialProviderStatus struct {
-	// Conditions represent the latest observations.
-	// Known condition types: "Ready"
-	// +optional
-	// +listType=map
-	// +listMapKey=type
-	// +kubebuilder:validation:MaxItems=8
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	BaseStatus `json:",inline"`
 }
 
 // +kubebuilder:object:root=true
@@ -131,16 +139,6 @@ type CredentialProviderList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []CredentialProvider `json:"items"`
-}
-
-// IsOAuth returns true if this is an OAuth credential provider.
-func (cp *CredentialProvider) IsOAuth() bool {
-	return cp.Spec.OAuth != nil
-}
-
-// IsAPIKey returns true if this is an API key credential provider.
-func (cp *CredentialProvider) IsAPIKey() bool {
-	return cp.Spec.APIKey != nil
 }
 
 func init() {

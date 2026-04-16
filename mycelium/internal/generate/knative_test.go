@@ -3,8 +3,8 @@ package generate_test
 import (
 	"testing"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/generate"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/generate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,7 +15,7 @@ func TestKnativeService_Defaults(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
 		Spec: v1alpha1.ToolSpec{
-			Container: v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
+			WorkerPool: v1alpha1.WorkerPoolConfig{Image: "tenant-a/tool-list-repos:latest"},
 		},
 	}
 
@@ -47,10 +47,10 @@ func TestKnativeService_CustomScaling(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		ObjectMeta: metav1.ObjectMeta{Name: "heavy-tool", Namespace: "tenant-a"},
 		Spec: v1alpha1.ToolSpec{
-			Container: v1alpha1.ToolContainer{Image: "tools/heavy:latest"},
-			Scaling: &v1alpha1.ToolScaling{
-				MinScale: ptr.To[int32](2),
-				MaxScale: ptr.To[int32](50),
+			WorkerPool: v1alpha1.WorkerPoolConfig{
+				Image:       "tools/heavy:latest",
+				MinReplicas: ptr.To[int32](2),
+				MaxReplicas: ptr.To[int32](50),
 			},
 		},
 	}
@@ -64,7 +64,7 @@ func TestKnativeService_NilScaling(t *testing.T) {
 	tool := &v1alpha1.Tool{
 		ObjectMeta: metav1.ObjectMeta{Name: "simple", Namespace: "tenant-b"},
 		Spec: v1alpha1.ToolSpec{
-			Container: v1alpha1.ToolContainer{Image: "tools/simple:v1"},
+			WorkerPool: v1alpha1.WorkerPoolConfig{Image: "tools/simple:v1"},
 		},
 	}
 

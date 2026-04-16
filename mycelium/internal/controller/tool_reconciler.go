@@ -5,19 +5,18 @@ import (
 	"fmt"
 	"time"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/generate"
-	myceliumutil "github.com/mongodb/mycelium/internal/util"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/generate"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	knapis "knative.dev/pkg/apis"
 	knservingv1 "knative.dev/serving/pkg/apis/serving/v1"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,163 +48,178 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	patchHelper, err := patch.NewHelper(&tool, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	defer func() {
+		// Only set Ready on error here; on success it is set inline based on phaseStatus.
+		if tool.DeletionTimestamp.IsZero() && reterr != nil {
+			tool.Status.SetStatusCondition(metav1.Condition{
+				Type:    v1alpha1.ReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  v1alpha1.FailedReason,
+				Message: fmt.Sprintf("Failed to reconcile: %v", reterr),
+			})
+		}
+		if err := patchHelper.Patch(ctx, &tool,
+			patch.WithOwnedConditions{Conditions: []string{v1alpha1.ReadyCondition, v1alpha1.KnativeServiceCondition}},
+			patch.WithStatusObservedGeneration{},
+		); err != nil {
+			reterr = kerrors.NewAggregate([]error{reterr, err})
+		}
+	}()
+
 	if !tool.DeletionTimestamp.IsZero() {
 		logger.Info("Cleaning up Tool", "tool", tool.Name)
 		return r.reconcileDelete(ctx, &tool)
 	}
 
-	if !controllerutil.ContainsFinalizer(&tool, ToolFinalizer) {
-		return r.reconcileCreate(ctx, &tool)
-	}
-
-	original := tool.DeepCopy()
-
-	defer func() {
-		if !equality.Semantic.DeepEqual(original.Status, tool.Status) {
-			if err := r.Status().Patch(ctx, &tool, client.MergeFrom(original)); err != nil {
-				reterr = kerrors.NewAggregate([]error{reterr, err})
-			}
-		}
-	}()
-
 	logger.Info("Reconciling Tool", "tool", tool.Name)
 
-	var errs []error
-	res := ctrl.Result{}
-	for _, phase := range []func(context.Context, *v1alpha1.Tool) (ctrl.Result, error){
-		r.reconcileProject,
-		r.reconcileCredentials,
-		r.reconcileService,
-	} {
-		phaseResult, err := phase(ctx, &tool)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		res = myceliumutil.LowestNonZeroResult(res, phaseResult)
+	// Prerequisites: validate sequentially, fail early.
+	if err := r.validateProject(ctx, &tool); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.validateCredentialBindings(ctx, &tool); err != nil {
+		return ctrl.Result{}, err
 	}
 
-	if len(errs) > 0 {
-		return ctrl.Result{}, kerrors.NewAggregate(errs)
+	// Owned resources.
+	st, err := r.reconcileService(ctx, &tool)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-	return res, nil
+
+	switch st {
+	case phaseDone:
+		tool.Status.SetStatusCondition(metav1.Condition{
+			Type:    v1alpha1.ReadyCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  v1alpha1.SucceededReason,
+			Message: fmt.Sprintf("Tool %s reconciled", tool.Name),
+		})
+	case phaseProgressing:
+		tool.Status.SetStatusCondition(metav1.Condition{
+			Type:    v1alpha1.ReadyCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  v1alpha1.ProgressingReason,
+			Message: "Waiting for Knative Service to become ready",
+		})
+	case phaseFailed:
+		tool.Status.SetStatusCondition(metav1.Condition{
+			Type:    v1alpha1.ReadyCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  v1alpha1.FailedReason,
+			Message: "Knative Service failed",
+		})
+	}
+	return ctrl.Result{}, nil
 }
 
-func (r *ToolReconciler) reconcileProject(ctx context.Context, tool *v1alpha1.Tool) (ctrl.Result, error) {
+// validateProject checks that the parent Project exists.
+func (r *ToolReconciler) validateProject(ctx context.Context, tool *v1alpha1.Tool) error {
 	var proj v1alpha1.Project
 	if err := r.Get(ctx, types.NamespacedName{Name: tool.Namespace}, &proj); err != nil {
-		if errors.IsNotFound(err) {
-			meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
-				Type:               "ProjectValid",
-				Status:             metav1.ConditionFalse,
-				Reason:             "ProjectNotFound",
-				Message:            fmt.Sprintf("Project %s not found", tool.Namespace),
-				LastTransitionTime: metav1.Now(),
-			})
-			return ctrl.Result{}, nil
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("Project %s not found", tool.Namespace)
 		}
-		return ctrl.Result{}, fmt.Errorf("checking Project: %w", err)
+		return fmt.Errorf("checking Project: %w", err)
 	}
-
-	meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
-		Type:               "ProjectValid",
-		Status:             metav1.ConditionTrue,
-		Reason:             "Valid",
-		Message:            "Parent project exists",
-		LastTransitionTime: metav1.Now(),
-	})
-	return ctrl.Result{}, nil
+	return nil
 }
 
-func (r *ToolReconciler) reconcileCredentials(ctx context.Context, tool *v1alpha1.Tool) (ctrl.Result, error) {
-	if len(tool.Spec.Credentials) == 0 {
-		meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
-			Type:               "CredentialsValid",
-			Status:             metav1.ConditionTrue,
-			Reason:             "NoCredentials",
-			Message:            "No credentials required",
-			LastTransitionTime: metav1.Now(),
-		})
-		return ctrl.Result{}, nil
-	}
+// validateCredentialBindings checks that each referenced CredentialProvider exists and has the correct type.
+func (r *ToolReconciler) validateCredentialBindings(ctx context.Context, tool *v1alpha1.Tool) error {
+	for _, cr := range tool.Spec.CredentialBindings {
+		name := cr.CredentialProviderName()
 
-	for _, cr := range tool.Spec.Credentials {
-		msg, err := r.validateCredentialRef(ctx, tool.Namespace, &cr)
-		if err != nil {
-			return ctrl.Result{}, err
+		var cp v1alpha1.CredentialProvider
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: tool.Namespace}, &cp); err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("CredentialProvider %s not found", name)
+			}
+			return fmt.Errorf("checking CredentialProvider %s: %w", name, err)
 		}
-		if msg != "" {
-			meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
-				Type:               "CredentialsValid",
-				Status:             metav1.ConditionFalse,
-				Reason:             "InvalidCredentialRef",
-				Message:            msg,
-				LastTransitionTime: metav1.Now(),
-			})
-			return ctrl.Result{}, nil
+		if cp.Spec.Type != cr.Type {
+			return fmt.Errorf("CredentialProvider %s has type %s, binding expects %s", name, cp.Spec.Type, cr.Type)
 		}
 	}
-
-	meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
-		Type:               "CredentialsValid",
-		Status:             metav1.ConditionTrue,
-		Reason:             "Valid",
-		Message:            "All credential providers valid",
-		LastTransitionTime: metav1.Now(),
-	})
-	return ctrl.Result{}, nil
+	return nil
 }
 
-func (r *ToolReconciler) validateCredentialRef(ctx context.Context, namespace string, cr *v1alpha1.CredentialBinding) (string, error) {
-	name := cr.ProviderName()
-	var cp v1alpha1.CredentialProvider
-	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cp); err != nil {
-		if errors.IsNotFound(err) {
-			return fmt.Sprintf("CredentialProvider %s not found", name), nil
-		}
-		return "", fmt.Errorf("checking CredentialProvider %s: %w", name, err)
-	}
-	if cr.IsOAuth() && !cp.IsOAuth() {
-		return fmt.Sprintf("CredentialProvider %s is not an OAuth provider", name), nil
-	}
-	if cr.IsAPIKey() && !cp.IsAPIKey() {
-		return fmt.Sprintf("CredentialProvider %s is not an API key provider", name), nil
-	}
-	return "", nil
-}
-
-func (r *ToolReconciler) reconcileService(ctx context.Context, tool *v1alpha1.Tool) (ctrl.Result, error) {
+// reconcileService ensures the Knative Service for this tool exists and propagates its readiness.
+func (r *ToolReconciler) reconcileService(ctx context.Context, tool *v1alpha1.Tool) (phaseStatus, error) {
 	knSvc := generate.KnativeService(tool)
 	if err := controllerutil.SetControllerReference(tool, knSvc, r.Scheme); err != nil {
-		return ctrl.Result{}, fmt.Errorf("setting owner reference on Knative Service: %w", err)
+		return phaseProgressing, fmt.Errorf("setting owner reference on Knative Service: %w", err)
 	}
 	if err := r.Patch(ctx, knSvc, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
-		meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
-			Type:               "ServiceReady",
-			Status:             metav1.ConditionFalse,
-			Reason:             "KnativeServiceError",
-			Message:            err.Error(),
-			LastTransitionTime: metav1.Now(),
-		})
-		return ctrl.Result{}, fmt.Errorf("applying Knative Service: %w", err)
+		return phaseProgressing, fmt.Errorf("applying Knative Service %s: %w", knSvc.Name, err)
 	}
 
-	tool.Status.ServiceRef = &corev1.LocalObjectReference{Name: knSvc.Name}
-	meta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
-		Type:               "ServiceReady",
-		Status:             metav1.ConditionTrue,
-		Reason:             "KnativeServiceCreated",
-		Message:            fmt.Sprintf("Knative Service %s created", knSvc.Name),
-		LastTransitionTime: metav1.Now(),
-	})
-	return ctrl.Result{}, nil
+	tool.Status.Service = &corev1.TypedLocalObjectReference{
+		Kind: "Service",
+		Name: knSvc.Name,
+	}
+
+	// Read back the current status set by the Knative controller.
+	var svc knservingv1.Service
+	if err := r.Get(ctx, types.NamespacedName{Name: knSvc.Name, Namespace: tool.Namespace}, &svc); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Just applied; cache hasn't caught up yet. The Owns() watch will re-trigger.
+			tool.Status.SetStatusCondition(metav1.Condition{
+				Type:    v1alpha1.KnativeServiceCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  v1alpha1.ProgressingReason,
+				Message: "Waiting for Knative Service to be created",
+			})
+			return phaseProgressing, nil
+		}
+		return phaseProgressing, fmt.Errorf("getting Knative Service %s: %w", knSvc.Name, err)
+	}
+
+	cond := svc.Status.GetCondition(knapis.ConditionReady)
+	switch {
+	case cond == nil || cond.IsUnknown():
+		msg := "Knative Service not yet ready"
+		if cond != nil && cond.Message != "" {
+			msg = cond.Message
+		}
+		tool.Status.SetStatusCondition(metav1.Condition{
+			Type:    v1alpha1.KnativeServiceCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  v1alpha1.ProgressingReason,
+			Message: msg,
+		})
+		return phaseProgressing, nil
+	case cond.IsTrue():
+		tool.Status.SetStatusCondition(metav1.Condition{
+			Type:   v1alpha1.KnativeServiceCondition,
+			Status: metav1.ConditionTrue,
+			Reason: v1alpha1.SyncedReason,
+		})
+		return phaseDone, nil
+	default: // IsFalse
+		reason := cond.Reason
+		if reason == "" {
+			reason = v1alpha1.FailedReason
+		}
+		tool.Status.SetStatusCondition(metav1.Condition{
+			Type:    v1alpha1.KnativeServiceCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  reason,
+			Message: cond.Message,
+		})
+		return phaseFailed, nil
+	}
 }
 
-// reconcileDelete just mutates in-memory state. The deferred patch persists the changes.
 func (r *ToolReconciler) reconcileDelete(ctx context.Context, tool *v1alpha1.Tool) (ctrl.Result, error) {
 	var agents v1alpha1.AgentList
 	if err := r.List(ctx, &agents, client.InNamespace(tool.Namespace),
-		client.MatchingFields{IndexAgentToolRefs: tool.Name}); err != nil {
+		client.MatchingFields{IndexAgentToolBindings: tool.Name}); err != nil {
 		return ctrl.Result{}, err
 	}
 	if len(agents.Items) > 0 {
@@ -213,22 +227,19 @@ func (r *ToolReconciler) reconcileDelete(ctx context.Context, tool *v1alpha1.Too
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	original := tool.DeepCopy()
 	controllerutil.RemoveFinalizer(tool, ToolFinalizer)
-	return ctrl.Result{}, r.Client.Patch(ctx, tool, client.MergeFrom(original))
-}
-
-func (r *ToolReconciler) reconcileCreate(ctx context.Context, tool *v1alpha1.Tool) (ctrl.Result, error) {
-	original := tool.DeepCopy()
-	controllerutil.AddFinalizer(tool, ToolFinalizer)
-	return ctrl.Result{}, r.Client.Patch(ctx, tool, client.MergeFrom(original))
+	return ctrl.Result{}, nil
 }
 
 func (r *ToolReconciler) findToolsForCredentialProvider(ctx context.Context, obj client.Object) []ctrl.Request {
+	cp, ok := obj.(*v1alpha1.CredentialProvider)
+	if !ok {
+		return nil
+	}
 	var toolList v1alpha1.ToolList
 	if err := r.List(ctx, &toolList,
-		client.InNamespace(obj.GetNamespace()),
-		client.MatchingFields{IndexToolCredentialBindings: obj.GetName()},
+		client.InNamespace(cp.Namespace),
+		client.MatchingFields{ToolCredentialBindingIndex(cp.Spec.Type): cp.Name},
 	); err != nil {
 		return nil
 	}

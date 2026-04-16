@@ -6,11 +6,37 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// CredentialProviderRef references a CredentialProvider by name in the same namespace.
+type CredentialProviderRef struct {
+	// Name is the name of the CredentialProvider.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+}
+
+// CredentialBinding binds a tool to a credential provider.
+// The Type field uses the same CredentialProviderType enum as the CredentialProvider CRD.
+//
+// +kubebuilder:validation:XValidation:message="oauth must be set when type is OAuth",rule="self.type == 'OAuth' ? has(self.oauth) : !has(self.oauth)"
+// +kubebuilder:validation:XValidation:message="apiKey must be set when type is APIKey",rule="self.type == 'APIKey' ? has(self.apiKey) : !has(self.apiKey)"
+type CredentialBinding struct {
+	// Type is the type of credential binding (must match the referenced CredentialProvider's type).
+	// +unionDiscriminator
+	// +kubebuilder:validation:Required
+	Type CredentialProviderType `json:"type"`
+	// OAuth binds this tool to an OAuth CredentialProvider with specific scopes.
+	// +optional
+	OAuth *OAuthCredentialBinding `json:"oauth,omitempty"`
+	// APIKey binds this tool to an API key CredentialProvider.
+	// +optional
+	APIKey *APIKeyCredentialBinding `json:"apiKey,omitempty"`
+}
+
 // OAuthCredentialBinding binds a tool to an OAuth CredentialProvider with specific scopes.
 type OAuthCredentialBinding struct {
-	// ProviderRef references an OAuth CredentialProvider in the same namespace.
+	// CredentialProviderRef references an OAuth CredentialProvider in the same namespace.
 	// +kubebuilder:validation:Required
-	ProviderRef corev1.LocalObjectReference `json:"providerRef"`
+	CredentialProviderRef CredentialProviderRef `json:"credentialProviderRef"`
 	// Scopes are the OAuth scopes required by this tool.
 	// +required
 	// +kubebuilder:validation:MinItems=1
@@ -21,64 +47,43 @@ type OAuthCredentialBinding struct {
 
 // APIKeyCredentialBinding binds a tool to an API key CredentialProvider.
 type APIKeyCredentialBinding struct {
-	// ProviderRef references an API key CredentialProvider in the same namespace.
+	// CredentialProviderRef references an API key CredentialProvider in the same namespace.
 	// +kubebuilder:validation:Required
-	ProviderRef corev1.LocalObjectReference `json:"providerRef"`
+	CredentialProviderRef CredentialProviderRef `json:"credentialProviderRef"`
 }
 
-// CredentialBinding binds a tool to a credential provider. Exactly one of oauth or apiKey must be set.
-// +kubebuilder:validation:ExactlyOneOf=oauth;apiKey
-type CredentialBinding struct {
-	// OAuth binds this tool to an OAuth CredentialProvider with specific scopes.
-	// +optional
-	OAuth *OAuthCredentialBinding `json:"oauth,omitempty"`
-	// APIKey binds this tool to an API key CredentialProvider.
-	// +optional
-	APIKey *APIKeyCredentialBinding `json:"apiKey,omitempty"`
-}
-
-// IsOAuth returns true if this is an OAuth credential binding.
-func (cb *CredentialBinding) IsOAuth() bool {
-	return cb.OAuth != nil
-}
-
-// IsAPIKey returns true if this is an API key credential binding.
-func (cb *CredentialBinding) IsAPIKey() bool {
-	return cb.APIKey != nil
-}
-
-// ProviderName returns the referenced CredentialProvider name.
-func (cb *CredentialBinding) ProviderName() string {
-	if cb.IsOAuth() {
-		return cb.OAuth.ProviderRef.Name
-	}
-	return cb.APIKey.ProviderRef.Name
-}
-
-// ToolContainer defines the container spec for the tool executor.
-type ToolContainer struct {
+// WorkerPoolConfig defines the container and scaling settings for tool executor pods.
+// +kubebuilder:validation:XValidation:rule="!has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas <= self.maxReplicas",message="minReplicas must be less than or equal to maxReplicas"
+type WorkerPoolConfig struct {
 	// Image is the container image for the tool executor.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Image string `json:"image"`
-}
-
-// ToolScaling defines scaling parameters for the tool executor.
-// +kubebuilder:validation:XValidation:rule="!has(self.minScale) || !has(self.maxScale) || self.minScale <= self.maxScale",message="minScale must be less than or equal to maxScale"
-type ToolScaling struct {
-	// MinScale is the minimum number of replicas (0 for scale-to-zero).
-	// If not set, Knative's default is used.
+	// MinReplicas is the minimum number of replicas (0 for scale-to-zero).
+	// If not set, the platform default is used.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=100
 	// +optional
-	MinScale *int32 `json:"minScale,omitempty"`
-	// MaxScale is the maximum number of replicas.
-	// If not set, Knative's default is used.
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+	// MaxReplicas is the maximum number of replicas.
+	// If not set, the platform default is used.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=100
 	// +optional
-	MaxScale *int32 `json:"maxScale,omitempty"`
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+}
+
+// CredentialProviderName returns the name of the referenced CredentialProvider.
+func (cb *CredentialBinding) CredentialProviderName() string {
+	switch cb.Type {
+	case CredentialProviderTypeOAuth:
+		return cb.OAuth.CredentialProviderRef.Name
+	case CredentialProviderTypeAPIKey:
+		return cb.APIKey.CredentialProviderRef.Name
+	default:
+		return ""
+	}
 }
 
 // ToolSpec defines the desired state of Tool.
@@ -92,38 +97,28 @@ type ToolSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Description string `json:"description"`
-	// Credentials are the credential provider bindings required by this tool.
-	// At most one OAuth credential ref is allowed (since each requires a user
-	// authorization flow). Multiple API key refs are allowed.
+	// CredentialBindings are the credential provider bindings required by this tool.
+	// At most one OAuth credential binding is allowed (since each requires a user
+	// authorization flow). Multiple API key bindings are allowed.
 	// +optional
 	// +kubebuilder:validation:MaxItems=9
-	// +kubebuilder:validation:XValidation:rule="self.filter(c, has(c.oauth)).size() <= 1",message="at most one OAuth credential ref is allowed per tool"
-	Credentials []CredentialBinding `json:"credentials,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self.filter(c, has(c.oauth)).size() <= 1",message="at most one OAuth credential binding is allowed per tool"
+	// +kubebuilder:validation:XValidation:rule="self.map(b, b.type == 'OAuth' ? b.oauth.credentialProviderRef.name : b.apiKey.credentialProviderRef.name).distinct().size() == self.size()",message="each credential provider may only be referenced once per tool"
+	CredentialBindings []CredentialBinding `json:"credentialBindings,omitempty"`
 	// InputSchema is the MCP-compatible JSON Schema for the tool's input.
 	// +optional
 	InputSchema *apiextv1.JSON `json:"inputSchema,omitempty"`
-	// Container defines the tool executor container.
+	// WorkerPool defines the container image and scaling settings for the tool executor.
 	// +kubebuilder:validation:Required
-	Container ToolContainer `json:"container"`
-	// Scaling defines optional scaling overrides for the Knative Service.
-	// +optional
-	Scaling *ToolScaling `json:"scaling,omitempty"`
+	WorkerPool WorkerPoolConfig `json:"workerPool"`
 }
 
 // ToolStatus defines the observed state of Tool.
 type ToolStatus struct {
-	// ServiceRef references the generated Knative Service for this tool.
-	// The controller sets an ownerReference on the Knative Service pointing back
-	// to this Tool, so deleting the Tool cascade-deletes the Service.
+	BaseStatus `json:",inline"`
+	// Service tracks the generated Knative Service (owned resource).
 	// +optional
-	ServiceRef *corev1.LocalObjectReference `json:"serviceRef,omitempty"`
-	// Conditions represent the latest observations of the Tool's state.
-	// Known condition types: "Ready", "ServiceReady", "CredentialsValid"
-	// +optional
-	// +listType=map
-	// +listMapKey=type
-	// +kubebuilder:validation:MaxItems=8
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Service *corev1.TypedLocalObjectReference `json:"service,omitempty"`
 }
 
 // +kubebuilder:object:root=true

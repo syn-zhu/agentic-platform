@@ -1,39 +1,32 @@
-package webhook
+package project
 
 import (
 	"context"
 	"fmt"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	ctrl "sigs.k8s.io/controller-runtime"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// ProjectValidator validates Project operations.
-type ProjectValidator struct {
+// Validator validates Project operations.
+type Validator struct {
 	client.Client
 }
 
-var _ admission.Validator[*v1alpha1.Project] = &ProjectValidator{}
+var _ admission.Validator[*v1alpha1.Project] = &Validator{}
 
-func (v *ProjectValidator) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr, &v1alpha1.Project{}).
-		WithValidator(v).
-		Complete()
-}
-
-func (v *ProjectValidator) ValidateCreate(_ context.Context, _ *v1alpha1.Project) (admission.Warnings, error) {
+func (v *Validator) ValidateCreate(_ context.Context, _ *v1alpha1.Project) (admission.Warnings, error) {
 	return nil, nil
 }
 
-func (v *ProjectValidator) ValidateUpdate(_ context.Context, _, _ *v1alpha1.Project) (admission.Warnings, error) {
+func (v *Validator) ValidateUpdate(_ context.Context, _, _ *v1alpha1.Project) (admission.Warnings, error) {
 	return nil, nil
 }
 
 // ValidateDelete checks that no Tools, CredentialProviders, or Agents exist
 // in the project's namespace.
-func (v *ProjectValidator) ValidateDelete(ctx context.Context, proj *v1alpha1.Project) (admission.Warnings, error) {
+func (v *Validator) ValidateDelete(ctx context.Context, proj *v1alpha1.Project) (admission.Warnings, error) {
 	ns := proj.Name
 
 	var tools v1alpha1.ToolList

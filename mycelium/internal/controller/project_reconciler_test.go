@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/controller"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/controller"
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
 	"github.com/agentgateway/agentgateway/controller/api/v1alpha1/shared"
@@ -105,8 +105,8 @@ func TestProjectReconciler_SetsStatusNamespaceRef(t *testing.T) {
 	var updated v1alpha1.Project
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updated)
 	require.NoError(t, err)
-	require.NotNil(t, updated.Status.NamespaceRef)
-	assert.Equal(t, "acme", updated.Status.NamespaceRef.Name)
+	require.NotNil(t, updated.Status.Namespace)
+	assert.Equal(t, "acme", updated.Status.Namespace.Ref)
 }
 
 func TestProjectReconciler_SetsReadyCondition(t *testing.T) {

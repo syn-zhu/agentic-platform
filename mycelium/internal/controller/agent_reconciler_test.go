@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/controller"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/controller"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,8 +56,8 @@ func TestAgentReconciler_CreatesServiceAccount(t *testing.T) {
 	var updated v1alpha1.Agent
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github-assistant", Namespace: "acme"}, &updated)
 	require.NoError(t, err)
-	require.NotNil(t, updated.Status.ServiceAccountRef)
-	assert.Equal(t, "github-assistant", updated.Status.ServiceAccountRef.Name)
+	require.NotNil(t, updated.Status.ServiceAccount)
+	assert.Equal(t, "github-assistant", updated.Status.ServiceAccount.Ref)
 }
 
 func TestAgentReconciler_SetsReadyCondition(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/controller"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/controller"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,8 +112,8 @@ func TestToolReconciler_SetsStatusServiceRef(t *testing.T) {
 	var updated v1alpha1.Tool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
-	require.NotNil(t, updated.Status.ServiceRef)
-	assert.Equal(t, "list-repos", updated.Status.ServiceRef.Name)
+	require.NotNil(t, updated.Status.Service)
+	assert.Equal(t, "list-repos", updated.Status.Service.Ref)
 }
 
 func TestToolReconciler_AddsFinalizer(t *testing.T) {
@@ -168,19 +168,15 @@ func TestToolReconciler_SetsReadyCondition(t *testing.T) {
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 
-	projValid := findCondition(updated.Status.Conditions, "ProjectValid")
-	credsValid := findCondition(updated.Status.Conditions, "CredentialsValid")
-	svcReady := findCondition(updated.Status.Conditions, "ServiceReady")
+	require.NotNil(t, updated.Status.Project)
+	assert.True(t, updated.Status.Project.IsReady())
+	require.NotNil(t, updated.Status.Service)
+	assert.True(t, updated.Status.Service.IsReady())
+	require.Len(t, updated.Status.CredentialBindings, 1)
+	assert.True(t, updated.Status.CredentialBindings[0].IsReady())
+
 	ready := findCondition(updated.Status.Conditions, "Ready")
-
-	require.NotNil(t, projValid)
-	require.NotNil(t, credsValid)
-	require.NotNil(t, svcReady)
 	require.NotNil(t, ready)
-
-	assert.Equal(t, metav1.ConditionTrue, projValid.Status)
-	assert.Equal(t, metav1.ConditionTrue, credsValid.Status)
-	assert.Equal(t, metav1.ConditionTrue, svcReady.Status)
 	assert.Equal(t, metav1.ConditionTrue, ready.Status)
 }
 
@@ -204,16 +200,13 @@ func TestToolReconciler_ProjectNotFound(t *testing.T) {
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 
-	projValid := findCondition(updated.Status.Conditions, "ProjectValid")
+	require.NotNil(t, updated.Status.Project)
+	assert.False(t, updated.Status.Project.IsReady())
+	assert.Equal(t, "NotFound", findCondition(updated.Status.Project.Conditions, "Ready").Reason)
+
 	ready := findCondition(updated.Status.Conditions, "Ready")
-
-	require.NotNil(t, projValid)
-	assert.Equal(t, metav1.ConditionFalse, projValid.Status)
-	assert.Equal(t, "ProjectNotFound", projValid.Reason)
-
 	require.NotNil(t, ready)
 	assert.Equal(t, metav1.ConditionFalse, ready.Status)
-	assert.Equal(t, "ProjectInvalid", ready.Reason)
 }
 
 // --- Credential validation ---

@@ -1,33 +1,26 @@
-package webhook
+package agent
 
 import (
 	"context"
 	"fmt"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// AgentValidator validates Agent operations.
-type AgentValidator struct {
+// Validator validates Agent operations.
+type Validator struct {
 	client.Client
 }
 
-var _ admission.Validator[*v1alpha1.Agent] = &AgentValidator{}
-
-func (v *AgentValidator) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr, &v1alpha1.Agent{}).
-		WithValidator(v).
-		Complete()
-}
+var _ admission.Validator[*v1alpha1.Agent] = &Validator{}
 
 // ValidateCreate checks that the namespace is a Mycelium project (not being
 // deleted) and that all tool refs exist and are not being deleted.
-func (v *AgentValidator) ValidateCreate(ctx context.Context, agent *v1alpha1.Agent) (admission.Warnings, error) {
+func (v *Validator) ValidateCreate(ctx context.Context, agent *v1alpha1.Agent) (admission.Warnings, error) {
 	projectName := agent.Namespace
 
 	var proj v1alpha1.Project
@@ -46,28 +39,28 @@ func (v *AgentValidator) ValidateCreate(ctx context.Context, agent *v1alpha1.Age
 }
 
 // ValidateUpdate re-checks tool refs in case new ones were added.
-func (v *AgentValidator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.Agent) (admission.Warnings, error) {
+func (v *Validator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.Agent) (admission.Warnings, error) {
 	return nil, v.validateToolRefs(ctx, newObj)
 }
 
-func (v *AgentValidator) ValidateDelete(_ context.Context, _ *v1alpha1.Agent) (admission.Warnings, error) {
+func (v *Validator) ValidateDelete(_ context.Context, _ *v1alpha1.Agent) (admission.Warnings, error) {
 	return nil, nil
 }
 
-func (v *AgentValidator) validateToolRefs(ctx context.Context, agent *v1alpha1.Agent) error {
-	for _, toolRef := range agent.Spec.Tools {
+func (v *Validator) validateToolRefs(ctx context.Context, agent *v1alpha1.Agent) error {
+	for _, tb := range agent.Spec.ToolBindings {
 		var tool v1alpha1.Tool
 		if err := v.Get(ctx, types.NamespacedName{
-			Name:      toolRef.Ref.Name,
+			Name:      tb.Tool.Name,
 			Namespace: agent.Namespace,
 		}, &tool); err != nil {
 			if errors.IsNotFound(err) {
-				return fmt.Errorf("Tool %s not found", toolRef.Ref.Name)
+				return fmt.Errorf("Tool %s not found", tb.Tool.Name)
 			}
-			return fmt.Errorf("checking Tool %s: %w", toolRef.Ref.Name, err)
+			return fmt.Errorf("checking Tool %s: %w", tb.Tool.Name, err)
 		}
 		if !tool.DeletionTimestamp.IsZero() {
-			return fmt.Errorf("Tool %s is being deleted", toolRef.Ref.Name)
+			return fmt.Errorf("Tool %s is being deleted", tb.Tool.Name)
 		}
 	}
 	return nil

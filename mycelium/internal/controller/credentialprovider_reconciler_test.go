@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
-	"github.com/mongodb/mycelium/internal/controller"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/controller"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -5,33 +5,30 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ToolRef is a reference to a Tool in the same namespace.
+// ToolRef references a Tool by name in the same namespace.
 type ToolRef struct {
-	// Ref references a Tool by name in the same namespace.
+	// Name is the name of the Tool.
 	// +kubebuilder:validation:Required
-	Ref corev1.LocalObjectReference `json:"ref"`
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
-// AgentContainer defines the container spec for the agent sandbox.
-type AgentContainer struct {
+// ToolBinding binds an agent to a tool. Currently just holds a ToolRef,
+// but may be extended with per-binding configuration such as
+// per-agent rate limits (see https://agentgateway.dev/docs/kubernetes/latest/mcp/rate-limit/#global-per-tool).
+type ToolBinding struct {
+	// Tool references a Tool in the same namespace.
+	// +kubebuilder:validation:Required
+	Tool ToolRef `json:"tool"`
+}
+
+// SandboxPoolConfig defines the container, lifecycle, and warm pool settings for agent sandboxes.
+type SandboxPoolConfig struct {
 	// Image is the container image for the agent.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Image string `json:"image"`
-}
-
-// WarmPoolConfig defines the warm pool settings for agent sandboxes.
-type WarmPoolConfig struct {
-	// Replicas is the number of pre-warmed sandbox pods to maintain.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=100
-	// +kubebuilder:default=1
-	Replicas int32 `json:"replicas"`
-}
-
-// SandboxConfig defines the sandbox lifecycle settings.
-type SandboxConfig struct {
 	// ShutdownTimeout is the duration after which an idle sandbox is released.
 	// Format: Go duration string (e.g., "30m", "1h").
 	// +kubebuilder:validation:Required
@@ -39,9 +36,12 @@ type SandboxConfig struct {
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:Pattern=`^[0-9]+(s|m|h)$`
 	ShutdownTimeout string `json:"shutdownTimeout"`
-	// WarmPool configures pre-warmed sandbox pods for this agent.
+	// Replicas is the number of pre-warmed sandbox pods to maintain.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=1
 	// +optional
-	WarmPool *WarmPoolConfig `json:"warmPool,omitempty"`
+	Replicas *int32 `json:"replicas,omitempty"`
 }
 
 // AgentSpec defines the desired state of Agent.
@@ -51,38 +51,23 @@ type AgentSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Description string `json:"description"`
-	// Tools are the tools this agent can access, as typed references to Tool resources
-	// in the same namespace. The Mycelium controller uses this to generate the
-	// AGW tool-access policy CEL expressions.
+	// ToolBindings are the tools this agent can access. The Mycelium controller
+	// uses this to generate the AGW tool-access policy CEL expressions.
 	// +required
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=64
-	Tools []ToolRef `json:"tools"`
-	// Container defines the agent sandbox container.
+	ToolBindings []ToolBinding `json:"toolBindings"`
+	// Sandbox defines the container image, lifecycle, and warm pool settings for the agent sandbox.
 	// +kubebuilder:validation:Required
-	Container AgentContainer `json:"container"`
-	// Sandbox configures the agent sandbox lifecycle. If nil, defaults are used.
-	// +optional
-	Sandbox *SandboxConfig `json:"sandbox,omitempty"`
+	Sandbox SandboxPoolConfig `json:"sandbox"`
 }
 
 // AgentStatus defines the observed state of Agent.
 type AgentStatus struct {
-	// ServiceAccountRef references the K8s ServiceAccount for this agent.
-	// Created by the controller, used in tool-access policy CEL expressions
-	// for identity resolution.
+	BaseStatus `json:",inline"`
+	// ServiceAccount tracks the per-agent K8s ServiceAccount (owned resource).
 	// +optional
-	ServiceAccountRef *corev1.LocalObjectReference `json:"serviceAccountRef,omitempty"`
-	// WarmPoolRef references the generated SandboxWarmPool for this agent.
-	// +optional
-	WarmPoolRef *corev1.LocalObjectReference `json:"warmPoolRef,omitempty"`
-	// Conditions represent the latest observations of the Agent's state.
-	// Known condition types: "Ready", "ToolsValid"
-	// +optional
-	// +listType=map
-	// +listMapKey=type
-	// +kubebuilder:validation:MaxItems=8
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	ServiceAccount *corev1.TypedLocalObjectReference `json:"serviceAccount,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -1,34 +1,28 @@
-package webhook
+package tool
 
 import (
 	"context"
 	"fmt"
 
-	v1alpha1 "github.com/mongodb/mycelium/api/v1alpha1"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/controller"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// ToolValidator validates Tool operations.
-type ToolValidator struct {
+// Validator validates Tool operations.
+type Validator struct {
 	client.Client
 }
 
-var _ admission.Validator[*v1alpha1.Tool] = &ToolValidator{}
-
-func (v *ToolValidator) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr, &v1alpha1.Tool{}).
-		WithValidator(v).
-		Complete()
-}
+var _ admission.Validator[*v1alpha1.Tool] = &Validator{}
 
 // ValidateCreate checks that the namespace is a Mycelium project (not being
 // deleted) and that all credential provider refs exist, are not being deleted,
 // and are of the correct type.
-func (v *ToolValidator) ValidateCreate(ctx context.Context, tool *v1alpha1.Tool) (admission.Warnings, error) {
+func (v *Validator) ValidateCreate(ctx context.Context, tool *v1alpha1.Tool) (admission.Warnings, error) {
 	projectName := tool.Namespace
 
 	var proj v1alpha1.Project
@@ -47,16 +41,16 @@ func (v *ToolValidator) ValidateCreate(ctx context.Context, tool *v1alpha1.Tool)
 }
 
 // ValidateUpdate re-checks credential refs in case new ones were added.
-func (v *ToolValidator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.Tool) (admission.Warnings, error) {
+func (v *Validator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.Tool) (admission.Warnings, error) {
 	return nil, v.validateCredentialRefs(ctx, newObj)
 }
 
 // ValidateDelete checks that no Agents reference this Tool.
-func (v *ToolValidator) ValidateDelete(ctx context.Context, tool *v1alpha1.Tool) (admission.Warnings, error) {
+func (v *Validator) ValidateDelete(ctx context.Context, tool *v1alpha1.Tool) (admission.Warnings, error) {
 	var agentList v1alpha1.AgentList
 	if err := v.List(ctx, &agentList,
 		client.InNamespace(tool.Namespace),
-		client.MatchingFields{"spec.tools.refs": tool.Name},
+		client.MatchingFields{controller.IndexAgentToolBindings: tool.Name},
 	); err != nil {
 		return nil, fmt.Errorf("listing Agents: %w", err)
 	}
@@ -68,24 +62,20 @@ func (v *ToolValidator) ValidateDelete(ctx context.Context, tool *v1alpha1.Tool)
 	return nil, nil
 }
 
-func (v *ToolValidator) validateCredentialRefs(ctx context.Context, tool *v1alpha1.Tool) error {
-	for _, cr := range tool.Spec.Credentials {
-		name := cr.ProviderName()
-		cp, err := v.getCredentialProvider(ctx, tool.Namespace, name)
+func (v *Validator) validateCredentialRefs(ctx context.Context, tool *v1alpha1.Tool) error {
+	for _, cr := range tool.Spec.CredentialBindings {
+		cp, err := v.getCredentialProvider(ctx, tool.Namespace, cr.CredentialProviderName())
 		if err != nil {
 			return err
 		}
-		if cr.IsOAuth() && !cp.IsOAuth() {
-			return fmt.Errorf("CredentialProvider %s is not an OAuth provider", name)
-		}
-		if cr.IsAPIKey() && !cp.IsAPIKey() {
-			return fmt.Errorf("CredentialProvider %s is not an API key provider", name)
+		if cr.Type != cp.Spec.Type {
+			return fmt.Errorf("CredentialProvider %s has type %s but binding expects %s", cr.CredentialProviderName(), cp.Spec.Type, cr.Type)
 		}
 	}
 	return nil
 }
 
-func (v *ToolValidator) getCredentialProvider(ctx context.Context, namespace, name string) (*v1alpha1.CredentialProvider, error) {
+func (v *Validator) getCredentialProvider(ctx context.Context, namespace, name string) (*v1alpha1.CredentialProvider, error) {
 	var cp v1alpha1.CredentialProvider
 	if err := v.Get(ctx, types.NamespacedName{
 		Name:      name,
