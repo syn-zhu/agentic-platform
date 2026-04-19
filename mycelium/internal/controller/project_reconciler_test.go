@@ -19,17 +19,16 @@ import (
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func newProject() *v1alpha1.Project {
-	return &v1alpha1.Project{
+func newProject() *v1alpha1.MyceliumEcosystem {
+	return &v1alpha1.MyceliumEcosystem{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "acme",
 			Finalizers: []string{controller.ProjectFinalizer},
 		},
-		Spec: v1alpha1.ProjectSpec{
-			UserVerifierURL: "https://app.acme.com/verify",
-			IdentityProvider: v1alpha1.IdentityProviderConfig{
-				Issuer:    "https://accounts.google.com",
-				Audiences: []string{"mycelium-acme"},
+		Spec: v1alpha1.MyceliumEcosystemSpec{
+			UserVerifierEndpoint: "https://app.acme.com/verify",
+			IdentityProviders: []v1alpha1.IdentityProviderConfig{
+				{Name: "google", Issuer: "https://accounts.google.com", Audiences: []string{"mycelium-acme"}, JWKSEndpoint: "https://accounts.google.com/.well-known/openid-configuration/jwks"},
 			},
 		},
 	}
@@ -41,7 +40,7 @@ func TestProjectReconciler_CreatesNamespace(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
@@ -59,7 +58,7 @@ func TestProjectReconciler_CreatesAGWResources(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
@@ -96,17 +95,17 @@ func TestProjectReconciler_SetsStatusNamespaceRef(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Project
+	var updated v1alpha1.MyceliumEcosystem
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updated)
 	require.NoError(t, err)
 	require.NotNil(t, updated.Status.Namespace)
-	assert.Equal(t, "acme", updated.Status.Namespace.Ref)
+	assert.Equal(t, "acme", updated.Status.Namespace.Reference)
 }
 
 func TestProjectReconciler_SetsReadyCondition(t *testing.T) {
@@ -115,13 +114,13 @@ func TestProjectReconciler_SetsReadyCondition(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Project
+	var updated v1alpha1.MyceliumEcosystem
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updated)
 	require.NoError(t, err)
 
@@ -139,26 +138,25 @@ func TestProjectReconciler_SetsReadyCondition(t *testing.T) {
 
 func TestProjectReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
-	proj := &v1alpha1.Project{
+	proj := &v1alpha1.MyceliumEcosystem{
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
-		Spec: v1alpha1.ProjectSpec{
-			UserVerifierURL: "https://app.acme.com/verify",
-			IdentityProvider: v1alpha1.IdentityProviderConfig{
-				Issuer:    "https://accounts.google.com",
-				Audiences: []string{"mycelium-acme"},
+		Spec: v1alpha1.MyceliumEcosystemSpec{
+			UserVerifierEndpoint: "https://app.acme.com/verify",
+			IdentityProviders: []v1alpha1.IdentityProviderConfig{
+				{Name: "google", Issuer: "https://accounts.google.com", Audiences: []string{"mycelium-acme"}, JWKSEndpoint: "https://accounts.google.com/.well-known/openid-configuration/jwks"},
 			},
 		},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Project
+	var updated v1alpha1.MyceliumEcosystem
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updated)
 	require.NoError(t, err)
 	assert.Contains(t, updated.Finalizers, controller.ProjectFinalizer)
@@ -168,9 +166,9 @@ func TestProjectReconciler_SyncsToolAccessPolicy(t *testing.T) {
 	scheme := newScheme(t)
 	proj := newProject()
 
-	agent := &v1alpha1.Agent{
+	agent := &v1alpha1.MyceliumAgent{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
-		Spec: v1alpha1.AgentSpec{
+		Spec: v1alpha1.MyceliumAgentSpec{
 			Description: "GitHub agent",
 			Tools: []v1alpha1.ToolRef{
 				{Ref: corev1.LocalObjectReference{Name: "list-repos"}},
@@ -180,15 +178,15 @@ func TestProjectReconciler_SyncsToolAccessPolicy(t *testing.T) {
 		},
 	}
 
-	tool1 := &v1alpha1.Tool{
+	tool1 := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Container: v1alpha1.ToolContainer{Image: "tools/lr:latest"},
 		},
 	}
-	tool2 := &v1alpha1.Tool{
+	tool2 := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: "create-issue", Namespace: "acme"},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Container: v1alpha1.ToolContainer{Image: "tools/ci:latest"},
 		},
 	}
@@ -197,7 +195,7 @@ func TestProjectReconciler_SyncsToolAccessPolicy(t *testing.T) {
 		WithObjects(proj, agent, tool1, tool2).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
@@ -223,7 +221,7 @@ func TestProjectReconciler_NoAgents_DenyAllPolicy(t *testing.T) {
 		WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
@@ -251,7 +249,7 @@ func TestProjectReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
@@ -259,7 +257,7 @@ func TestProjectReconciler_DeletionRemovesFinalizer(t *testing.T) {
 
 	// Project should be deleted (fake client removes object when finalizer cleared + DeletionTimestamp set).
 	// Namespace cleanup happens via ownerReference garbage collection.
-	var updatedProj v1alpha1.Project
+	var updatedProj v1alpha1.MyceliumEcosystem
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updatedProj)
 	assert.True(t, err != nil, "expected project to be deleted after finalizer removal")
 }
@@ -274,9 +272,9 @@ func TestProjectReconciler_DeletionRequeuesWithDependents(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
 	}
 
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "d",
 			Container:   v1alpha1.ToolContainer{Image: "i"},
 		},
@@ -285,7 +283,7 @@ func TestProjectReconciler_DeletionRequeuesWithDependents(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proj, ns, tool).
 		WithStatusSubresource(proj).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "acme"},
 	})
@@ -298,7 +296,7 @@ func TestProjectReconciler_DeletionRequeuesWithDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	// Project should still have its finalizer
-	var updatedProj v1alpha1.Project
+	var updatedProj v1alpha1.MyceliumEcosystem
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "acme"}, &updatedProj)
 	require.NoError(t, err)
 	assert.Contains(t, updatedProj.Finalizers, controller.ProjectFinalizer)
@@ -308,7 +306,7 @@ func TestProjectReconciler_NotFound(t *testing.T) {
 	scheme := newScheme(t)
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	r := &controller.ProjectReconciler{Client: cl, Scheme: scheme}
+	r := &controller.EcosystemReconciler{Client: cl, Scheme: scheme}
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "gone"},
 	})

@@ -1,13 +1,13 @@
 package webhook
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	agentwebhook "mycelium.io/mycelium/internal/webhook/agent"
 	cpwebhook "mycelium.io/mycelium/internal/webhook/credentialprovider"
 	projectwebhook "mycelium.io/mycelium/internal/webhook/project"
 	secretwebhook "mycelium.io/mycelium/internal/webhook/secret"
 	toolwebhook "mycelium.io/mycelium/internal/webhook/tool"
-	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -15,28 +15,28 @@ import (
 func SetupWebhooks(mgr ctrl.Manager) error {
 	cl := mgr.GetClient()
 
-	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.Project{}).
+	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.MyceliumEcosystem{}).
 		WithDefaulter(&projectwebhook.Defaulter{}).
 		WithValidator(&projectwebhook.Validator{Client: cl}).
 		Complete(); err != nil {
 		return err
 	}
 
-	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.Agent{}).
+	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.MyceliumAgent{}).
 		WithDefaulter(&agentwebhook.Defaulter{}).
 		WithValidator(&agentwebhook.Validator{Client: cl}).
 		Complete(); err != nil {
 		return err
 	}
 
-	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.Tool{}).
+	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.MyceliumTool{}).
 		WithDefaulter(&toolwebhook.Defaulter{}).
 		WithValidator(&toolwebhook.Validator{Client: cl}).
 		Complete(); err != nil {
 		return err
 	}
 
-	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.CredentialProvider{}).
+	if err := ctrl.NewWebhookManagedBy(mgr, &v1alpha1.MyceliumCredentialProvider{}).
 		WithDefaulter(&cpwebhook.Defaulter{}).
 		WithValidator(&cpwebhook.Validator{Client: cl}).
 		Complete(); err != nil {

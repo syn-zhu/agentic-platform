@@ -1,7 +1,6 @@
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -14,29 +13,29 @@ type CredentialProviderRef struct {
 	Name string `json:"name"`
 }
 
-// CredentialBinding binds a tool to a credential provider.
+// CredentialProviderBinding binds a tool to a credential provider.
 // The Type field uses the same CredentialProviderType enum as the CredentialProvider CRD.
 //
 // +kubebuilder:validation:XValidation:message="oauth must be set when type is OAuth",rule="self.type == 'OAuth' ? has(self.oauth) : !has(self.oauth)"
 // +kubebuilder:validation:XValidation:message="apiKey must be set when type is APIKey",rule="self.type == 'APIKey' ? has(self.apiKey) : !has(self.apiKey)"
-type CredentialBinding struct {
+type CredentialProviderBinding struct {
 	// Type is the type of credential binding (must match the referenced CredentialProvider's type).
 	// +unionDiscriminator
 	// +kubebuilder:validation:Required
 	Type CredentialProviderType `json:"type"`
 	// OAuth binds this tool to an OAuth CredentialProvider with specific scopes.
 	// +optional
-	OAuth *OAuthCredentialBinding `json:"oauth,omitempty"`
+	OAuth *OAuthCredentialProviderBinding `json:"oauth,omitempty"`
 	// APIKey binds this tool to an API key CredentialProvider.
 	// +optional
-	APIKey *APIKeyCredentialBinding `json:"apiKey,omitempty"`
+	APIKey *APIKeyCredentialProviderBinding `json:"apiKey,omitempty"`
 }
 
-// OAuthCredentialBinding binds a tool to an OAuth CredentialProvider with specific scopes.
-type OAuthCredentialBinding struct {
+// OAuthCredentialProviderBinding binds a tool to an OAuth CredentialProvider with specific scopes.
+type OAuthCredentialProviderBinding struct {
 	// CredentialProviderRef references an OAuth CredentialProvider in the same namespace.
 	// +kubebuilder:validation:Required
-	CredentialProviderRef CredentialProviderRef `json:"credentialProviderRef"`
+	CredentialProviderRef `json:"credentialProviderRef"`
 	// Scopes are the OAuth scopes required by this tool.
 	// +required
 	// +kubebuilder:validation:MinItems=1
@@ -45,11 +44,11 @@ type OAuthCredentialBinding struct {
 	Scopes []string `json:"scopes"`
 }
 
-// APIKeyCredentialBinding binds a tool to an API key CredentialProvider.
-type APIKeyCredentialBinding struct {
+// APIKeyCredentialProviderBinding binds a tool to an API key CredentialProvider.
+type APIKeyCredentialProviderBinding struct {
 	// CredentialProviderRef references an API key CredentialProvider in the same namespace.
 	// +kubebuilder:validation:Required
-	CredentialProviderRef CredentialProviderRef `json:"credentialProviderRef"`
+	CredentialProviderRef `json:"credentialProviderRef"`
 }
 
 // WorkerPoolConfig defines the container and scaling settings for tool executor pods.
@@ -75,7 +74,7 @@ type WorkerPoolConfig struct {
 }
 
 // CredentialProviderName returns the name of the referenced CredentialProvider.
-func (cb *CredentialBinding) CredentialProviderName() string {
+func (cb *CredentialProviderBinding) CredentialProviderName() string {
 	switch cb.Type {
 	case CredentialProviderTypeOAuth:
 		return cb.OAuth.CredentialProviderRef.Name
@@ -86,26 +85,27 @@ func (cb *CredentialBinding) CredentialProviderName() string {
 	}
 }
 
-// ToolSpec defines the desired state of Tool.
+// MyceliumToolSpec defines the desired state of Tool.
 // The MCP tool name is derived from the resource's metadata.name by converting
 // hyphens to underscores (e.g., metadata.name "list-repos" → MCP name "list_repos").
 // The Mycelium API layer performs the reverse conversion when creating resources
 // from user-provided tool names.
-type ToolSpec struct {
+type MyceliumToolSpec struct {
 	// Description is the human-readable tool description.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Description string `json:"description"`
-	// CredentialBindings are the credential provider bindings required by this tool.
-	// At most one OAuth credential binding is allowed (since each requires a user
+	// CredentialProviderBindings are the credential provider bindings required by this tool.
+	// At most one OAuth credential provider binding is allowed (since each requires a user
 	// authorization flow). Multiple API key bindings are allowed.
 	// +optional
 	// +kubebuilder:validation:MaxItems=9
-	// +kubebuilder:validation:XValidation:rule="self.filter(c, has(c.oauth)).size() <= 1",message="at most one OAuth credential binding is allowed per tool"
+	// +kubebuilder:validation:XValidation:rule="self.filter(c, has(c.oauth)).size() <= 1",message="at most one OAuth credential provider binding is allowed per tool"
 	// +kubebuilder:validation:XValidation:rule="self.map(b, b.type == 'OAuth' ? b.oauth.credentialProviderRef.name : b.apiKey.credentialProviderRef.name).distinct().size() == self.size()",message="each credential provider may only be referenced once per tool"
-	CredentialBindings []CredentialBinding `json:"credentialBindings,omitempty"`
+	CredentialProviderBindings []CredentialProviderBinding `json:"credentialBindings,omitempty"`
 	// InputSchema is the MCP-compatible JSON Schema for the tool's input.
+	// TODO: should this actually be required?
 	// +optional
 	InputSchema *apiextv1.JSON `json:"inputSchema,omitempty"`
 	// WorkerPool defines the container image and scaling settings for the tool executor.
@@ -113,13 +113,23 @@ type ToolSpec struct {
 	WorkerPool WorkerPoolConfig `json:"workerPool"`
 }
 
-// ToolStatus defines the observed state of Tool.
-type ToolStatus struct {
-	BaseStatus `json:",inline"`
-	// Service tracks the generated Knative Service (owned resource).
-	// +optional
-	Service *corev1.TypedLocalObjectReference `json:"service,omitempty"`
+type CredentialProviderBindingsStatus struct {
+	CredentialProviders []ReferencedResourceStatus `json:"credentialProviders,omitempty"`
 }
+
+// MyceliumToolStatus defines the observed state of Tool.
+type MyceliumToolStatus struct {
+	BaseMyceliumResourceStatus `json:",inline"`
+	// TODO
+	// CredentialProviderBindings CredentialProviderBindingsStatus `json:"credentialProviderBindings,omitempty"`
+	// Service                    ReferencedResourceStatus         `json:"service,omitempty"`
+}
+
+// GetConditions and SetConditions implement conditions.Setter so that
+// conditions.Set(&tool, cond) stamps ObservedGeneration from tool.GetGeneration()
+// onto each condition.
+func (t *MyceliumTool) GetConditions() []metav1.Condition  { return t.Status.Conditions }
+func (t *MyceliumTool) SetConditions(c []metav1.Condition) { t.Status.Conditions = c }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -128,25 +138,25 @@ type ToolStatus struct {
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`,description="Whether the tool is ready"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
-// Tool is the Schema for the tools API.
-type Tool struct {
+// MyceliumTool is the Schema for the tools API.
+type MyceliumTool struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +required
-	Spec   ToolSpec   `json:"spec"`
-	Status ToolStatus `json:"status,omitempty"`
+	Spec   MyceliumToolSpec   `json:"spec"`
+	Status MyceliumToolStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// ToolList contains a list of Tool.
-type ToolList struct {
+// MyceliumToolList contains a list of MyceliumTool.
+type MyceliumToolList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Tool `json:"items"`
+	Items           []MyceliumTool `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Tool{}, &ToolList{})
+	SchemeBuilder.Register(&MyceliumTool{}, &MyceliumToolList{})
 }

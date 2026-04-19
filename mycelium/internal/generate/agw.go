@@ -2,116 +2,248 @@ package generate
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
-	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
-
-	agwac "github.com/agentgateway/agentgateway/controller/api/applyconfiguration/v1alpha1/agentgateway"
-	sharedac "github.com/agentgateway/agentgateway/controller/api/applyconfiguration/v1alpha1/shared"
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
 	agwshared "github.com/agentgateway/agentgateway/controller/api/v1alpha1/shared"
+	agwwellknown "github.com/agentgateway/agentgateway/controller/pkg/wellknown"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwv1ac "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
 )
 
-// MCPBackend generates an AgentgatewayBackend apply configuration for the engine as an MCP server.
-func MCPBackend(p *v1alpha1.Project) *agwac.AgentgatewayBackendApplyConfiguration {
-	port := int32(8080)
-	protocol := agwv1alpha1.MCPProtocolStreamableHTTP
-
-	return agwac.AgentgatewayBackend("mycelium-engine", p.Name).
-		WithLabels(ManagedLabels()).
-		WithSpec(agwac.AgentgatewayBackendSpec().
-			WithMCP(agwac.MCPBackend().
-				WithTargets(agwac.McpTargetSelector().
-					WithName(gwv1.SectionName("mycelium-engine")).
-					// TODO: migrate to UDS backend once https://github.com/agentgateway/agentgateway/pull/1533 merges
-					WithStatic(agwac.McpTarget().
-						WithBackendRef(corev1.LocalObjectReference{Name: "mycelium-engine"}).
-						WithPort(port).
-						WithProtocol(protocol)))))
+// Gateway generates a Gateway for the project's tenant agentgateway instance.
+// It exposes two listeners: "external" (inbound agent traffic, port 8443) and
+// "internal" (routing to backends, port 8080).
+func Gateway(p *v1alpha1.MyceliumEcosystem, name string) *gwv1.Gateway {
+	return &gwv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: p.Name,
+		},
+		Spec: gwv1.GatewaySpec{
+			// TODO: don't just use default. should be configured in helm chart probably?
+			GatewayClassName: gwv1.ObjectName(agwwellknown.DefaultAgwClassName),
+			Listeners: []gwv1.Listener{
+				{
+					Name:     "external",
+					Protocol: gwv1.HTTPProtocolType,
+					Port:     8443,
+				},
+				{
+					Name:     "internal",
+					Protocol: gwv1.HTTPProtocolType,
+					Port:     8080,
+				},
+			},
+		},
+	}
 }
 
-// MCPRoute generates an HTTPRoute apply configuration routing /mcp to the engine MCP backend.
-func MCPRoute(p *v1alpha1.Project) *gwv1ac.HTTPRouteApplyConfiguration {
+// ToolServer generates an AgentgatewayBackend for the engine as an MCP server.
+func ToolServer(p *v1alpha1.MyceliumEcosystem, name string) *agwv1alpha1.AgentgatewayBackend {
+	protocol := agwv1alpha1.MCPProtocolStreamableHTTP
+	mcpHost := agwv1alpha1.ShortString(name)
+	return &agwv1alpha1.AgentgatewayBackend{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: p.Name,
+		},
+		Spec: agwv1alpha1.AgentgatewayBackendSpec{
+			MCP: &agwv1alpha1.MCPBackend{
+				Targets: []agwv1alpha1.McpTargetSelector{{
+					Name: gwv1.SectionName(name),
+					Static: &agwv1alpha1.McpTarget{
+						// TODO: migrate to UDS backend once https://github.com/agentgateway/agentgateway/pull/1533 merges
+						Host:     &mcpHost,
+						Port:     8080,
+						Protocol: &protocol,
+					},
+				}},
+			},
+		},
+	}
+}
+
+// ToolServerRoute generates an HTTPRoute routing /mcp to the engine MCP backend.
+func ToolServerRoute(p *v1alpha1.MyceliumEcosystem, name string) *gwv1.HTTPRoute {
 	pathPrefix := gwv1.PathMatchPathPrefix
 	mcpPath := "/mcp"
 	sectionName := gwv1.SectionName("internal")
-	agwGroup := gwv1.Group("agentgateway.dev")
-	agwKind := gwv1.Kind("AgentgatewayBackend")
+	mcpBackend := p.Status.MCPBackend
+	tenantGateway := p.Status.Gateway
 
-	return gwv1ac.HTTPRoute("mcp-route", p.Name).
-		WithLabels(ManagedLabels()).
-		WithSpec(gwv1ac.HTTPRouteSpec().
-			WithParentRefs(gwv1ac.ParentReference().
-				WithName("tenant-gateway").
-				WithSectionName(sectionName)).
-			WithRules(gwv1ac.HTTPRouteRule().
-				WithMatches(gwv1ac.HTTPRouteMatch().
-					WithPath(gwv1ac.HTTPPathMatch().
-						WithType(pathPrefix).
-						WithValue(mcpPath))).
-				WithBackendRefs(gwv1ac.HTTPBackendRef().
-					WithGroup(agwGroup).
-					WithKind(agwKind).
-					WithName("mycelium-engine"))))
+	return &gwv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: p.Name,
+		},
+		Spec: gwv1.HTTPRouteSpec{
+			CommonRouteSpec: gwv1.CommonRouteSpec{
+				ParentRefs: []gwv1.ParentReference{{
+					Name:        gwv1.ObjectName(tenantGateway.Name),
+					SectionName: &sectionName,
+				}},
+			},
+			Rules: []gwv1.HTTPRouteRule{{
+				Matches: []gwv1.HTTPRouteMatch{{
+					Path: &gwv1.HTTPPathMatch{
+						Type:  &pathPrefix,
+						Value: &mcpPath,
+					},
+				}},
+				BackendRefs: []gwv1.HTTPBackendRef{{
+					BackendRef: gwv1.BackendRef{
+						BackendObjectReference: gwv1.BackendObjectReference{
+							Group: (*gwv1.Group)(mcpBackend.APIGroup),
+							Kind:  (*gwv1.Kind)(&mcpBackend.Kind),
+							Name:  gwv1.ObjectName(mcpBackend.Name),
+						},
+					},
+				}},
+			}},
+		},
+	}
 }
 
-// JWTPolicy generates an AgentgatewayPolicy apply configuration for JWT validation on the external listener.
-func JWTPolicy(p *v1alpha1.Project) *agwac.AgentgatewayPolicyApplyConfiguration {
-	idp := p.Spec.IdentityProvider
+// JWKSServiceName returns the name of the ExternalName Service created for an IdP's JWKS endpoint.
+func JWKSServiceName(idp *v1alpha1.IdentityProvider) string {
+	return idp.Name + "-jwks"
+}
+
+// JWKSService generates an ExternalName Service that resolves to the hostname of the IdP's
+// JWKS endpoint. The JWTPolicy references this Service as its backend.
+func JWKSService(idp *v1alpha1.IdentityProvider) *corev1.Service {
+	u, err := url.Parse(idp.Spec.JWKSEndpoint)
+	if err != nil {
+		// TODO
+	}
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      JWKSServiceName(idp),
+			Namespace: idp.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: u.Hostname(),
+			Ports: []corev1.ServicePort{{
+				Port:     443,
+				Protocol: corev1.ProtocolTCP,
+			}},
+		},
+	}
+}
+
+// JWTPolicy generates an AgentgatewayPolicy for JWT validation on the external listener.
+// One JWTProvider entry is created per identity provider; each provider's JWKS backend
+// references the ExternalName Service generated by JWKSService.
+func JWTPolicy(p *v1alpha1.MyceliumEcosystem, idps []v1alpha1.IdentityProvider) *agwv1alpha1.AgentgatewayPolicy {
 	sectionName := gwv1.SectionName("external")
+	jwksPort := gwv1.PortNumber(443)
+	tenantGateway := p.Status.Gateway
 
-	return agwac.AgentgatewayPolicy("jwt-auth", p.Name).
-		WithLabels(ManagedLabels()).
-		WithSpec(agwac.AgentgatewayPolicySpec().
-			WithTargetRefs(sharedac.LocalPolicyTargetReferenceWithSectionName().
-				WithGroup("gateway.networking.k8s.io").
-				WithKind("Gateway").
-				WithName("tenant-gateway").
-				WithSectionName(sectionName)).
-			WithTraffic(agwac.Traffic().
-				WithJWTAuthentication(agwac.JWTAuthentication().
-					WithMode(agwv1alpha1.JWTAuthenticationModeStrict).
-					WithProviders(agwac.JWTProvider().
-						WithIssuer(idp.Issuer).
-						WithAudiences(idp.Audiences...)))))
+	// TODO: do we need to sort providers for deterministic output?
+	// or is client.List already stable? we shouldn't sort if we don't need but we should be sure
+	providers := make([]agwv1alpha1.JWTProvider, 0, len(idps))
+	for _, idp := range idps {
+		if !idp.DeletionTimestamp.IsZero() || !meta.IsStatusConditionTrue(idp.Status.Conditions, v1alpha1.IdentityProviderReadyCondition) {
+			continue
+		}
+		u, err := url.Parse(idp.Spec.JWKSEndpoint)
+		if err != nil {
+			// TODO
+		}
+		jwksPath := u.Path
+		if jwksPath == "" {
+			// TODO: inject this in webhook
+			jwksPath = "/.well-known/jwks.json"
+		}
+		providers = append(providers, agwv1alpha1.JWTProvider{
+			Issuer:    idp.Spec.Issuer,
+			Audiences: idp.Spec.Audiences,
+			JWKS: agwv1alpha1.JWKS{
+				Remote: &agwv1alpha1.RemoteJWKS{
+					JwksPath: jwksPath,
+					BackendRef: gwv1.BackendObjectReference{
+						Name: gwv1.ObjectName(JWKSServiceName(&idp)),
+						Port: &jwksPort,
+					},
+				},
+			},
+		})
+	}
+
+	return &agwv1alpha1.AgentgatewayPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "jwt-auth",
+			Namespace: p.Name,
+		},
+		Spec: agwv1alpha1.AgentgatewayPolicySpec{
+			TargetRefs: []agwshared.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: agwshared.LocalPolicyTargetReference{
+					Group: gwv1.Group(*tenantGateway.APIGroup),
+					Kind:  gwv1.Kind(tenantGateway.Kind),
+					Name:  gwv1.ObjectName(tenantGateway.Name),
+				},
+				SectionName: &sectionName,
+			}},
+			Traffic: &agwv1alpha1.Traffic{
+				JWTAuthentication: &agwv1alpha1.JWTAuthentication{
+					Mode:      agwv1alpha1.JWTAuthenticationModeStrict,
+					Providers: providers,
+				},
+			},
+		},
+	}
 }
 
-// SourceContextPolicy generates a PreRouting transformation apply configuration on the internal
-// listener that injects source identity headers.
-func SourceContextPolicy(p *v1alpha1.Project) *agwac.AgentgatewayPolicyApplyConfiguration {
+// SourceContextPolicy generates an AgentgatewayPolicy that injects source identity headers
+// on the internal listener before routing.
+func SourceContextPolicy(p *v1alpha1.MyceliumEcosystem) *agwv1alpha1.AgentgatewayPolicy {
 	sectionName := gwv1.SectionName("internal")
 	phase := agwv1alpha1.PolicyPhasePreRouting
+	tenantGateway := p.Status.Gateway
 
-	return agwac.AgentgatewayPolicy("internal-source-context", p.Name).
-		WithLabels(ManagedLabels()).
-		WithSpec(agwac.AgentgatewayPolicySpec().
-			WithTargetRefs(sharedac.LocalPolicyTargetReferenceWithSectionName().
-				WithGroup("gateway.networking.k8s.io").
-				WithKind("Gateway").
-				WithName("tenant-gateway").
-				WithSectionName(sectionName)).
-			WithTraffic(agwac.Traffic().
-				WithPhase(phase).
-				WithTransformation(agwac.Transformation().
-					WithRequest(agwac.Transform().
-						WithSet(
-							agwac.HeaderTransformation().
-								WithName("X-Source-Pod-IP").
-								WithValue("source.address"),
-							agwac.HeaderTransformation().
-								WithName("X-Source-Service-Account").
-								WithValue("source.workload.unverified.serviceAccount"))))))
+	return &agwv1alpha1.AgentgatewayPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "internal-source-context",
+			Namespace: p.Name,
+		},
+		Spec: agwv1alpha1.AgentgatewayPolicySpec{
+			TargetRefs: []agwshared.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: agwshared.LocalPolicyTargetReference{
+					Group: gwv1.Group(*tenantGateway.APIGroup),
+					Kind:  gwv1.Kind(tenantGateway.Kind),
+					Name:  gwv1.ObjectName(tenantGateway.Name),
+				},
+				SectionName: &sectionName,
+			}},
+			Traffic: &agwv1alpha1.Traffic{
+				Phase: &phase,
+				Transformation: &agwv1alpha1.Transformation{
+					Request: &agwv1alpha1.Transform{
+						Set: []agwv1alpha1.HeaderTransformation{
+							{Name: "X-Source-Pod-IP", Value: "source.address"},
+							{Name: "X-Source-Service-Account", Value: "source.workload.unverified.serviceAccount"},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
-// ToolAccessPolicy generates an AgentgatewayPolicy apply configuration with backend.mcp.authorization
+// ToolAccessPolicy generates an AgentgatewayPolicy with backend.mcp.authorization
 // for tool-level access control based on agent identity. It computes CEL expressions
 // from the agent→tool mapping. If there are no agents (or none with tool refs), it
 // generates a deny-all policy (Deny action with a catch-all expression).
-func ToolAccessPolicy(p *v1alpha1.Project, agents []v1alpha1.Agent) *agwac.AgentgatewayPolicyApplyConfiguration {
+func ToolAccessPolicy(p *v1alpha1.MyceliumEcosystem, agents []v1alpha1.MyceliumAgent) *agwv1alpha1.AgentgatewayPolicy {
+	tenantGateway := p.Status.Gateway
+	mcpBackend := p.Status.MCPBackend
 	exprs := toolAccessCEL(agents)
 
 	var action agwshared.AuthorizationPolicyAction
@@ -122,54 +254,64 @@ func ToolAccessPolicy(p *v1alpha1.Project, agents []v1alpha1.Agent) *agwac.Agent
 		action = agwshared.AuthorizationPolicyActionAllow
 	}
 
-	return agwac.AgentgatewayPolicy("mcp-tool-access", p.Name).
-		WithLabels(ManagedLabels()).
-		WithSpec(agwac.AgentgatewayPolicySpec().
-			WithTargetRefs(sharedac.LocalPolicyTargetReferenceWithSectionName().
-				WithGroup("agentgateway.dev").
-				WithKind("AgentgatewayBackend").
-				WithName("mycelium-engine")).
-			WithBackend(agwac.BackendFull().
-				WithMCP(agwac.BackendMCP().
-					WithAuthorization(sharedac.Authorization().
-						WithAction(action).
-						WithPolicy(sharedac.AuthorizationPolicy().
-							WithMatchExpressions(exprs...))))))
+	return &agwv1alpha1.AgentgatewayPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mcp-tool-access",
+			Namespace: p.Name,
+		},
+		Spec: agwv1alpha1.AgentgatewayPolicySpec{
+			TargetRefs: []agwshared.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: agwshared.LocalPolicyTargetReference{
+					Group: gwv1.Group(*tenantGateway.APIGroup),
+					Kind:  gwv1.Kind(tenantGateway.Kind),
+					Name:  gwv1.ObjectName(mcpBackend.Name),
+				},
+			}},
+			Backend: &agwv1alpha1.BackendFull{
+				MCP: &agwv1alpha1.BackendMCP{
+					Authorization: &agwshared.Authorization{
+						Action: action,
+						Policy: agwshared.AuthorizationPolicy{
+							MatchExpressions: exprs,
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 // toolAccessCEL generates CEL match expressions from agents.
-// Returns one expression per agent, sorted by agent name for deterministic output.
-// Returns nil if there are no agents or no valid agent→tool mappings.
-func toolAccessCEL(agents []v1alpha1.Agent) []agwshared.CELExpression {
+// Only tools whose ReferenceStatus in agent.Status.Tools is Ready=True are included.
+// Returns nil if there are no agents with any ready tools.
+func toolAccessCEL(agents []v1alpha1.MyceliumAgent) []agwshared.CELExpression {
 	if len(agents) == 0 {
 		return nil
 	}
 
-	// Build one CEL expression per agent.
-	// We don't validate that tool refs point to existing Tools here — that's
-	// enforced by the ValidatingWebhook on Agent create/update (tool refs must
-	// exist) and on Tool delete (rejected if Agents reference it).
 	var exprs []agwshared.CELExpression
 	for _, agent := range agents {
-		if len(agent.Spec.ToolBindings) == 0 {
+		if !agent.DeletionTimestamp.IsZero() || !meta.IsStatusConditionTrue(agent.Status.Conditions, v1alpha1.AgentReadyCondition) {
+			continue
+		}
+		// Only include tools whose resolved status is good.
+		var readyNames []string
+		for _, ts := range agent.Status.ToolBindings {
+			if ts.Ref != nil && meta.IsStatusConditionTrue(ts.Conditions, v1alpha1.EcosystemReadyCondition) {
+				readyNames = append(readyNames, MCPToolName(ts.Ref.Name))
+			}
+		}
+		if len(readyNames) == 0 {
 			continue
 		}
 
-		var toolExpr string
-		if len(agent.Spec.ToolBindings) == 1 {
-			toolExpr = fmt.Sprintf(`mcp.tool.name == "%s"`, MCPToolName(agent.Spec.ToolBindings[0].Tool.Name))
-		} else {
-			var toolNames []string
-			for _, tb := range agent.Spec.ToolBindings {
-				toolNames = append(toolNames, MCPToolName(tb.Tool.Name))
-			}
-			sort.Strings(toolNames)
-			quoted := make([]string, len(toolNames))
-			for i, t := range toolNames {
-				quoted[i] = fmt.Sprintf(`"%s"`, t)
-			}
-			toolExpr = fmt.Sprintf(`mcp.tool.name in [%s]`, strings.Join(quoted, ", "))
+		sort.Strings(readyNames)
+
+		quoted := make([]string, len(readyNames))
+		for i, t := range readyNames {
+			quoted[i] = fmt.Sprintf(`"%s"`, t)
 		}
+		toolExpr := fmt.Sprintf(`mcp.tool.name in [%s]`, strings.Join(quoted, ", "))
 
 		exprs = append(exprs, agwshared.CELExpression(fmt.Sprintf(
 			`source.workload.unverified.serviceAccount == "%s" && %s`, agent.Name, toolExpr,
@@ -180,4 +322,3 @@ func toolAccessCEL(agents []v1alpha1.Agent) []agwshared.CELExpression {
 	sort.Slice(exprs, func(i, j int) bool { return exprs[i] < exprs[j] })
 	return exprs
 }
-

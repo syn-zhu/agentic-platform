@@ -14,10 +14,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func newTestAgent() *v1alpha1.Agent {
-	return &v1alpha1.Agent{
+func newTestAgent() *v1alpha1.MyceliumAgent {
+	return &v1alpha1.MyceliumAgent{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
-		Spec: v1alpha1.AgentSpec{
+		Spec: v1alpha1.MyceliumAgentSpec{
 			Description: "GitHub agent",
 			Tools: []v1alpha1.ToolRef{
 				{Ref: corev1.LocalObjectReference{Name: "list-repos"}},
@@ -31,9 +31,9 @@ func TestAgentValidator_CreateAllows(t *testing.T) {
 	scheme := newScheme(t)
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-		Spec:       v1alpha1.ToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
+		Spec:       v1alpha1.MyceliumToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
 	}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
@@ -93,9 +93,9 @@ func TestAgentValidator_UpdateAllowsValidToolRefs(t *testing.T) {
 	scheme := newScheme(t)
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-		Spec:       v1alpha1.ToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
+		Spec:       v1alpha1.MyceliumToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
 	}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
@@ -125,13 +125,13 @@ func TestAgentValidator_CreateRejectsWhenToolDeleting(t *testing.T) {
 	scheme := newScheme(t)
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "list-repos", Namespace: "acme",
 			Finalizers:        []string{"mycelium.io/tool-cleanup"},
 			DeletionTimestamp: func() *metav1.Time { now := metav1.Now(); return &now }(),
 		},
-		Spec: v1alpha1.ToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
+		Spec: v1alpha1.MyceliumToolSpec{Description: "d", Container: v1alpha1.ToolContainer{Image: "i"}},
 	}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).

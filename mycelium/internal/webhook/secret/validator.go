@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
-	"mycelium.io/mycelium/internal/controller"
+	"mycelium.io/mycelium/internal/indexes"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,10 +31,10 @@ func (v *Validator) ValidateUpdate(_ context.Context, _, _ *corev1.Secret) (admi
 
 // ValidateDelete rejects the deletion if any active CredentialProvider references this Secret.
 func (v *Validator) ValidateDelete(ctx context.Context, secret *corev1.Secret) (admission.Warnings, error) {
-	var cps v1alpha1.CredentialProviderList
+	var cps v1alpha1.MyceliumCredentialProviderList
 	if err := v.List(ctx, &cps,
 		client.InNamespace(secret.Namespace),
-		client.MatchingFields{controller.IndexCredentialProviderSecrets: secret.Name},
+		client.MatchingFields{indexes.IndexCredentialProviderSecrets: secret.Name},
 	); err != nil {
 		return nil, fmt.Errorf("listing CredentialProviders: %w", err)
 	}

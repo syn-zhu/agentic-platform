@@ -12,9 +12,9 @@ import (
 // Defaulter sets defaults on Agent resources (e.g., adds finalizer).
 type Defaulter struct{}
 
-var _ admission.Defaulter[*v1alpha1.Agent] = &Defaulter{}
+var _ admission.Defaulter[*v1alpha1.MyceliumAgent] = &Defaulter{}
 
-func (d *Defaulter) Default(_ context.Context, agent *v1alpha1.Agent) error {
+func (d *Defaulter) Default(_ context.Context, agent *v1alpha1.MyceliumAgent) error {
 	controllerutil.AddFinalizer(agent, controller.AgentFinalizer)
 	return nil
 }

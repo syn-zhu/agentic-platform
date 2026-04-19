@@ -2,15 +2,6 @@ package generate
 
 import "strings"
 
-// TODO(mycelium): Make this configurable — should use the Helm release name
-// or the actual controller deployment name rather than a hardcoded string.
-const ManagedBy = "mycelium-controller"
-
-// ManagedLabels returns the standard labels applied to all generated resources.
-func ManagedLabels() map[string]string {
-	return map[string]string{"app.kubernetes.io/managed-by": ManagedBy}
-}
-
 // ProjectLabels returns labels indicating ownership by a Project.
 func ProjectLabels(projectName string) map[string]string {
 	return map[string]string{"mycelium.io/project": projectName}

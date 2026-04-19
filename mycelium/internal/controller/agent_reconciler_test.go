@@ -16,14 +16,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func newAgent() *v1alpha1.Agent {
-	return &v1alpha1.Agent{
+func newAgent() *v1alpha1.MyceliumAgent {
+	return &v1alpha1.MyceliumAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "github-assistant",
 			Namespace:  "acme",
 			Finalizers: []string{controller.AgentFinalizer},
 		},
-		Spec: v1alpha1.AgentSpec{
+		Spec: v1alpha1.MyceliumAgentSpec{
 			Description: "GitHub agent",
 			Tools: []v1alpha1.ToolRef{
 				{Ref: corev1.LocalObjectReference{Name: "list-repos"}},
@@ -53,20 +53,21 @@ func TestAgentReconciler_CreatesServiceAccount(t *testing.T) {
 	assert.Equal(t, "github-assistant", sa.Annotations["mycelium.io/agent"])
 
 	// Status ref points to it
-	var updated v1alpha1.Agent
+	var updated v1alpha1.MyceliumAgent
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github-assistant", Namespace: "acme"}, &updated)
 	require.NoError(t, err)
 	require.NotNil(t, updated.Status.ServiceAccount)
-	assert.Equal(t, "github-assistant", updated.Status.ServiceAccount.Ref)
+	require.NotNil(t, updated.Status.ServiceAccount.ResourceRef)
+	assert.Equal(t, "github-assistant", updated.Status.ServiceAccount.ResourceRef.Name)
 }
 
 func TestAgentReconciler_SetsReadyCondition(t *testing.T) {
 	scheme := newScheme(t)
 	agent := newAgent()
 	// Tool must exist for ToolsValid=True → Ready=True
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "acme"},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "d", Container: v1alpha1.ToolContainer{Image: "i"},
 		},
 	}
@@ -79,7 +80,7 @@ func TestAgentReconciler_SetsReadyCondition(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Agent
+	var updated v1alpha1.MyceliumAgent
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github-assistant", Namespace: "acme"}, &updated)
 	require.NoError(t, err)
 
@@ -94,9 +95,9 @@ func TestAgentReconciler_SetsReadyCondition(t *testing.T) {
 
 func TestAgentReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
-	agent := &v1alpha1.Agent{
+	agent := &v1alpha1.MyceliumAgent{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
-		Spec: v1alpha1.AgentSpec{
+		Spec: v1alpha1.MyceliumAgentSpec{
 			Description: "GitHub agent",
 			Tools:       []v1alpha1.ToolRef{{Ref: corev1.LocalObjectReference{Name: "list-repos"}}},
 			Container:   v1alpha1.AgentContainer{Image: "acme/gh:latest"},
@@ -111,7 +112,7 @@ func TestAgentReconciler_AddsFinalizer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Agent
+	var updated v1alpha1.MyceliumAgent
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github-assistant", Namespace: "acme"}, &updated)
 	require.NoError(t, err)
 	assert.Contains(t, updated.Finalizers, controller.AgentFinalizer)
@@ -133,7 +134,7 @@ func TestAgentReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	require.NoError(t, err)
 
 	// Object should be deleted (fake client deletes when finalizer removed + DeletionTimestamp set)
-	var updated v1alpha1.Agent
+	var updated v1alpha1.MyceliumAgent
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "github-assistant", Namespace: "acme"}, &updated)
 	assert.True(t, err != nil, "expected object to be deleted after finalizer removal")
 }

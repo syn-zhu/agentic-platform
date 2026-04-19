@@ -18,7 +18,7 @@ import (
 
 func TestProjectValidator_DeleteAllowsWhenEmpty(t *testing.T) {
 	scheme := newScheme(t)
-	proj := &v1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
+	proj := &v1alpha1.MyceliumEcosystem{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	v := &webhook.ProjectValidator{Client: cl}
@@ -28,12 +28,12 @@ func TestProjectValidator_DeleteAllowsWhenEmpty(t *testing.T) {
 
 func TestProjectValidator_DeleteRejectsWithTools(t *testing.T) {
 	scheme := newScheme(t)
-	proj := &v1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
-	tool := &v1alpha1.Tool{
+	proj := &v1alpha1.MyceliumEcosystem{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "list-repos", Namespace: "acme",
 		},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "d",
 			Container:   v1alpha1.ToolContainer{Image: "i"},
 		},
@@ -48,12 +48,12 @@ func TestProjectValidator_DeleteRejectsWithTools(t *testing.T) {
 
 func TestProjectValidator_DeleteRejectsWithCredentialProviders(t *testing.T) {
 	scheme := newScheme(t)
-	proj := &v1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
-	cp := &v1alpha1.CredentialProvider{
+	proj := &v1alpha1.MyceliumEcosystem{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
+	cp := &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "github", Namespace: "acme",
 		},
-		Spec: v1alpha1.CredentialProviderSpec{
+		Spec: v1alpha1.MyceliumCredentialProviderSpec{
 			APIKey: &v1alpha1.APIKeyProviderSpec{
 				APIKeySecretRef: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "s"},
@@ -72,12 +72,12 @@ func TestProjectValidator_DeleteRejectsWithCredentialProviders(t *testing.T) {
 
 func TestProjectValidator_DeleteRejectsWithAgents(t *testing.T) {
 	scheme := newScheme(t)
-	proj := &v1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
-	agent := &v1alpha1.Agent{
+	proj := &v1alpha1.MyceliumEcosystem{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
+	agent := &v1alpha1.MyceliumAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "gh", Namespace: "acme",
 		},
-		Spec: v1alpha1.AgentSpec{
+		Spec: v1alpha1.MyceliumAgentSpec{
 			Description: "d",
 			Tools:       []v1alpha1.ToolRef{{Ref: corev1.LocalObjectReference{Name: "t"}}},
 			Container:   v1alpha1.AgentContainer{Image: "i"},

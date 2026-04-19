@@ -1,11 +1,10 @@
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ToolRef references a Tool by name in the same namespace.
+// ToolRef references a Tool by name in the same Project.
 type ToolRef struct {
 	// Name is the name of the Tool.
 	// +kubebuilder:validation:Required
@@ -13,13 +12,26 @@ type ToolRef struct {
 	Name string `json:"name"`
 }
 
+type RateLimitConfig struct {
+	// Unit is the time unit for the rate limit (e.g., "minute", "hour").
+	// +kubebuilder:validation:Required
+	Unit string `json:"unit"`
+	// RequestsPerUnit is the number of allowed requests per unit of time.
+	// +kubebuilder:validation:Minimum=1
+	RequestsPerUnit int32 `json:"requestsPerUnit"`
+}
+
 // ToolBinding binds an agent to a tool. Currently just holds a ToolRef,
 // but may be extended with per-binding configuration such as
 // per-agent rate limits (see https://agentgateway.dev/docs/kubernetes/latest/mcp/rate-limit/#global-per-tool).
 type ToolBinding struct {
-	// Tool references a Tool in the same namespace.
+	// ToolRef references a Tool in the same Project.
 	// +kubebuilder:validation:Required
-	Tool ToolRef `json:"tool"`
+	ToolRef `json:"tool"`
+
+	// RateLimit defines per-agent rate limits for this tool binding.
+	// +optional
+	RateLimit *RateLimitConfig `json:"rateLimit,omitempty"`
 }
 
 // SandboxPoolConfig defines the container, lifecycle, and warm pool settings for agent sandboxes.
@@ -44,8 +56,8 @@ type SandboxPoolConfig struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 
-// AgentSpec defines the desired state of Agent.
-type AgentSpec struct {
+// MyceliumAgentSpec defines the desired state of Agent.
+type MyceliumAgentSpec struct {
 	// Description is the human-readable agent description.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -53,22 +65,32 @@ type AgentSpec struct {
 	Description string `json:"description"`
 	// ToolBindings are the tools this agent can access. The Mycelium controller
 	// uses this to generate the AGW tool-access policy CEL expressions.
-	// +required
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=64
+	// +optional
 	ToolBindings []ToolBinding `json:"toolBindings"`
 	// Sandbox defines the container image, lifecycle, and warm pool settings for the agent sandbox.
 	// +kubebuilder:validation:Required
-	Sandbox SandboxPoolConfig `json:"sandbox"`
+	SandboxPool SandboxPoolConfig `json:"sandbox"`
 }
 
-// AgentStatus defines the observed state of Agent.
-type AgentStatus struct {
-	BaseStatus `json:",inline"`
-	// ServiceAccount tracks the per-agent K8s ServiceAccount (owned resource).
-	// +optional
-	ServiceAccount *corev1.TypedLocalObjectReference `json:"serviceAccount,omitempty"`
+type ToolBindingStatus struct {
+	ToolRef    `json:"toolRef"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
+
+// MyceliumAgentStatus defines the observed state of Agent.
+type MyceliumAgentStatus struct {
+	BaseMyceliumResourceStatus `json:",inline"`
+	// TODO
+	// ToolBindings tracks the resolved ReferenceStatus for each tool binding.
+	// +optional
+	ToolBindings []ToolBindingStatus `json:"toolBindings,omitempty"`
+}
+
+// GetConditions and SetConditions implement conditions.Setter so that
+// conditions.Set(&agent, cond) stamps ObservedGeneration from agent.GetGeneration()
+// onto each condition.
+func (a *MyceliumAgent) GetConditions() []metav1.Condition  { return a.Status.Conditions }
+func (a *MyceliumAgent) SetConditions(c []metav1.Condition) { a.Status.Conditions = c }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -76,26 +98,26 @@ type AgentStatus struct {
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=='Ready')].status`,description="Whether the agent is ready"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
-// Agent is the Schema for the agents API. Each Agent defines which Tools it
+// MyceliumAgent is the Schema for the agents API. Each MyceliumAgent defines which Tools it
 // can access and how its sandbox is configured.
-type Agent struct {
+type MyceliumAgent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +required
-	Spec   AgentSpec   `json:"spec"`
-	Status AgentStatus `json:"status,omitempty"`
+	Spec   MyceliumAgentSpec   `json:"spec"`
+	Status MyceliumAgentStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// AgentList contains a list of Agent.
-type AgentList struct {
+// MyceliumAgentList contains a list of Agent.
+type MyceliumAgentList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Agent `json:"items"`
+	Items           []MyceliumAgent `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Agent{}, &AgentList{})
+	SchemeBuilder.Register(&MyceliumAgent{}, &MyceliumAgentList{})
 }

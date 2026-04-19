@@ -12,9 +12,9 @@ import (
 // Defaulter sets defaults on Tool resources (e.g., adds finalizer).
 type Defaulter struct{}
 
-var _ admission.Defaulter[*v1alpha1.Tool] = &Defaulter{}
+var _ admission.Defaulter[*v1alpha1.MyceliumTool] = &Defaulter{}
 
-func (d *Defaulter) Default(_ context.Context, tool *v1alpha1.Tool) error {
+func (d *Defaulter) Default(_ context.Context, tool *v1alpha1.MyceliumTool) error {
 	controllerutil.AddFinalizer(tool, controller.ToolFinalizer)
 	return nil
 }

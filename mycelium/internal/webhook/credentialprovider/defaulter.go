@@ -12,9 +12,9 @@ import (
 // Defaulter sets defaults on CredentialProvider resources (e.g., adds finalizer).
 type Defaulter struct{}
 
-var _ admission.Defaulter[*v1alpha1.CredentialProvider] = &Defaulter{}
+var _ admission.Defaulter[*v1alpha1.MyceliumCredentialProvider] = &Defaulter{}
 
-func (d *Defaulter) Default(_ context.Context, cp *v1alpha1.CredentialProvider) error {
+func (d *Defaulter) Default(_ context.Context, cp *v1alpha1.MyceliumCredentialProvider) error {
 	controllerutil.AddFinalizer(cp, controller.CredentialProviderFinalizer)
 	return nil
 }

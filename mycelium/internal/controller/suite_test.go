@@ -35,21 +35,21 @@ func newClientWithIndexes(t *testing.T, scheme *runtime.Scheme, objs ...client.O
 		WithScheme(scheme).
 		WithObjects(objs...).
 		WithStatusSubresource(
-			&v1alpha1.CredentialProvider{},
-			&v1alpha1.Tool{},
-			&v1alpha1.Agent{},
-			&v1alpha1.Project{},
+			&v1alpha1.MyceliumCredentialProvider{},
+			&v1alpha1.MyceliumTool{},
+			&v1alpha1.MyceliumAgent{},
+			&v1alpha1.MyceliumEcosystem{},
 		).
-		WithIndex(&v1alpha1.Tool{}, controller.IndexToolCredentialBindings, func(obj client.Object) []string {
-			tool := obj.(*v1alpha1.Tool)
+		WithIndex(&v1alpha1.MyceliumTool{}, controller.IndexToolCredentialBindings, func(obj client.Object) []string {
+			tool := obj.(*v1alpha1.MyceliumTool)
 			var refs []string
 			for _, cr := range tool.Spec.Credentials {
 				refs = append(refs, cr.ProviderName())
 			}
 			return refs
 		}).
-		WithIndex(&v1alpha1.Agent{}, controller.IndexAgentToolBindings, func(obj client.Object) []string {
-			agent := obj.(*v1alpha1.Agent)
+		WithIndex(&v1alpha1.MyceliumAgent{}, controller.IndexAgentToolBindings, func(obj client.Object) []string {
+			agent := obj.(*v1alpha1.MyceliumAgent)
 			var refs []string
 			for _, t := range agent.Spec.Tools {
 				refs = append(refs, t.Ref.Name)

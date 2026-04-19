@@ -7,9 +7,12 @@ import (
 
 	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	"mycelium.io/mycelium/internal/generate"
+	"mycelium.io/mycelium/internal/indexes"
+	"mycelium.io/mycelium/pkg/wellknown"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,6 +31,17 @@ import (
 
 const ToolFinalizer = "mycelium.io/tool-cleanup"
 
+// phaseStatus is a local summary of a reconcileService outcome.
+// It is scoped to the tool reconciler and distinct from the stage/condition
+// pattern used by the project DAG.
+type phaseStatus int
+
+const (
+	phaseInProgress phaseStatus = iota
+	phaseSucceeded
+	phaseFailed
+)
+
 type ToolReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -43,7 +57,7 @@ type ToolReconciler struct {
 func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	logger := log.FromContext(ctx)
 
-	var tool v1alpha1.Tool
+	var tool v1alpha1.MyceliumTool
 	if err := r.Get(ctx, req.NamespacedName, &tool); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -56,15 +70,15 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctr
 	defer func() {
 		// Only set Ready on error here; on success it is set inline based on phaseStatus.
 		if tool.DeletionTimestamp.IsZero() && reterr != nil {
-			tool.Status.SetStatusCondition(metav1.Condition{
-				Type:    v1alpha1.ReadyCondition,
+			apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
+				Type:    v1alpha1.EcosystemReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  v1alpha1.FailedReason,
 				Message: fmt.Sprintf("Failed to reconcile: %v", reterr),
 			})
 		}
 		if err := patchHelper.Patch(ctx, &tool,
-			patch.WithOwnedConditions{Conditions: []string{v1alpha1.ReadyCondition, v1alpha1.KnativeServiceCondition}},
+			patch.WithOwnedConditions{Conditions: []string{v1alpha1.EcosystemReadyCondition, v1alpha1.KnativeServiceCondition}},
 			patch.WithStatusObservedGeneration{},
 		); err != nil {
 			reterr = kerrors.NewAggregate([]error{reterr, err})
@@ -79,10 +93,10 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctr
 	logger.Info("Reconciling Tool", "tool", tool.Name)
 
 	// Prerequisites: validate sequentially, fail early.
-	if err := r.validateProject(ctx, &tool); err != nil {
+	if err := r.resolveProject(ctx, &tool); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.validateCredentialBindings(ctx, &tool); err != nil {
+	if err := r.resolveCredentialBindings(ctx, &tool); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -93,23 +107,23 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctr
 	}
 
 	switch st {
-	case phaseDone:
-		tool.Status.SetStatusCondition(metav1.Condition{
-			Type:    v1alpha1.ReadyCondition,
+	case phaseSucceeded:
+		apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
+			Type:    v1alpha1.EcosystemReadyCondition,
 			Status:  metav1.ConditionTrue,
-			Reason:  v1alpha1.SucceededReason,
+			Reason:  v1alpha1.RunningReason,
 			Message: fmt.Sprintf("Tool %s reconciled", tool.Name),
 		})
-	case phaseProgressing:
-		tool.Status.SetStatusCondition(metav1.Condition{
-			Type:    v1alpha1.ReadyCondition,
+	case phaseInProgress:
+		apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
+			Type:    v1alpha1.EcosystemReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  v1alpha1.ProgressingReason,
 			Message: "Waiting for Knative Service to become ready",
 		})
 	case phaseFailed:
-		tool.Status.SetStatusCondition(metav1.Condition{
-			Type:    v1alpha1.ReadyCondition,
+		apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
+			Type:    v1alpha1.EcosystemReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  v1alpha1.FailedReason,
 			Message: "Knative Service failed",
@@ -119,10 +133,11 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctr
 }
 
 // validateProject checks that the parent Project exists.
-func (r *ToolReconciler) validateProject(ctx context.Context, tool *v1alpha1.Tool) error {
-	var proj v1alpha1.Project
+func (r *ToolReconciler) resolveProject(ctx context.Context, tool *v1alpha1.MyceliumTool) error {
+	var proj v1alpha1.MyceliumEcosystem
 	if err := r.Get(ctx, types.NamespacedName{Name: tool.Namespace}, &proj); err != nil {
 		if apierrors.IsNotFound(err) {
+			// TODO: set status
 			return fmt.Errorf("Project %s not found", tool.Namespace)
 		}
 		return fmt.Errorf("checking Project: %w", err)
@@ -130,12 +145,12 @@ func (r *ToolReconciler) validateProject(ctx context.Context, tool *v1alpha1.Too
 	return nil
 }
 
-// validateCredentialBindings checks that each referenced CredentialProvider exists and has the correct type.
-func (r *ToolReconciler) validateCredentialBindings(ctx context.Context, tool *v1alpha1.Tool) error {
-	for _, cr := range tool.Spec.CredentialBindings {
+// resolveCredentialBindings checks that each referenced CredentialProvider exists and has the correct type.
+func (r *ToolReconciler) resolveCredentialBindings(ctx context.Context, tool *v1alpha1.MyceliumTool) error {
+	for _, cr := range tool.Spec.CredentialProviderBindings {
 		name := cr.CredentialProviderName()
 
-		var cp v1alpha1.CredentialProvider
+		var cp v1alpha1.MyceliumCredentialProvider
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: tool.Namespace}, &cp); err != nil {
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("CredentialProvider %s not found", name)
@@ -150,13 +165,13 @@ func (r *ToolReconciler) validateCredentialBindings(ctx context.Context, tool *v
 }
 
 // reconcileService ensures the Knative Service for this tool exists and propagates its readiness.
-func (r *ToolReconciler) reconcileService(ctx context.Context, tool *v1alpha1.Tool) (phaseStatus, error) {
+func (r *ToolReconciler) reconcileService(ctx context.Context, tool *v1alpha1.MyceliumTool) (phaseStatus, error) {
 	knSvc := generate.KnativeService(tool)
 	if err := controllerutil.SetControllerReference(tool, knSvc, r.Scheme); err != nil {
-		return phaseProgressing, fmt.Errorf("setting owner reference on Knative Service: %w", err)
+		return phaseInProgress, fmt.Errorf("setting owner reference on Knative Service: %w", err)
 	}
-	if err := r.Patch(ctx, knSvc, client.Apply, client.FieldOwner(generate.ManagedBy), client.ForceOwnership); err != nil {
-		return phaseProgressing, fmt.Errorf("applying Knative Service %s: %w", knSvc.Name, err)
+	if err := r.Patch(ctx, knSvc, client.Apply, client.FieldOwner(wellknown.MyceliumControllerName), client.ForceOwnership); err != nil {
+		return phaseInProgress, fmt.Errorf("applying Knative Service %s: %w", knSvc.Name, err)
 	}
 
 	tool.Status.Service = &corev1.TypedLocalObjectReference{
@@ -169,15 +184,15 @@ func (r *ToolReconciler) reconcileService(ctx context.Context, tool *v1alpha1.To
 	if err := r.Get(ctx, types.NamespacedName{Name: knSvc.Name, Namespace: tool.Namespace}, &svc); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Just applied; cache hasn't caught up yet. The Owns() watch will re-trigger.
-			tool.Status.SetStatusCondition(metav1.Condition{
+			apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
 				Type:    v1alpha1.KnativeServiceCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  v1alpha1.ProgressingReason,
 				Message: "Waiting for Knative Service to be created",
 			})
-			return phaseProgressing, nil
+			return phaseInProgress, nil
 		}
-		return phaseProgressing, fmt.Errorf("getting Knative Service %s: %w", knSvc.Name, err)
+		return phaseInProgress, fmt.Errorf("getting Knative Service %s: %w", knSvc.Name, err)
 	}
 
 	cond := svc.Status.GetCondition(knapis.ConditionReady)
@@ -187,26 +202,26 @@ func (r *ToolReconciler) reconcileService(ctx context.Context, tool *v1alpha1.To
 		if cond != nil && cond.Message != "" {
 			msg = cond.Message
 		}
-		tool.Status.SetStatusCondition(metav1.Condition{
+		apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
 			Type:    v1alpha1.KnativeServiceCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  v1alpha1.ProgressingReason,
 			Message: msg,
 		})
-		return phaseProgressing, nil
+		return phaseInProgress, nil
 	case cond.IsTrue():
-		tool.Status.SetStatusCondition(metav1.Condition{
+		apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
 			Type:   v1alpha1.KnativeServiceCondition,
 			Status: metav1.ConditionTrue,
-			Reason: v1alpha1.SyncedReason,
+			Reason: v1alpha1.RunningReason,
 		})
-		return phaseDone, nil
+		return phaseSucceeded, nil
 	default: // IsFalse
 		reason := cond.Reason
 		if reason == "" {
 			reason = v1alpha1.FailedReason
 		}
-		tool.Status.SetStatusCondition(metav1.Condition{
+		apimeta.SetStatusCondition(&tool.Status.Conditions, metav1.Condition{
 			Type:    v1alpha1.KnativeServiceCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  reason,
@@ -216,10 +231,10 @@ func (r *ToolReconciler) reconcileService(ctx context.Context, tool *v1alpha1.To
 	}
 }
 
-func (r *ToolReconciler) reconcileDelete(ctx context.Context, tool *v1alpha1.Tool) (ctrl.Result, error) {
-	var agents v1alpha1.AgentList
+func (r *ToolReconciler) reconcileDelete(ctx context.Context, tool *v1alpha1.MyceliumTool) (ctrl.Result, error) {
+	var agents v1alpha1.MyceliumAgentList
 	if err := r.List(ctx, &agents, client.InNamespace(tool.Namespace),
-		client.MatchingFields{IndexAgentToolBindings: tool.Name}); err != nil {
+		client.MatchingFields{indexes.IndexAgentToolBindings: tool.Name}); err != nil {
 		return ctrl.Result{}, err
 	}
 	if len(agents.Items) > 0 {
@@ -232,14 +247,14 @@ func (r *ToolReconciler) reconcileDelete(ctx context.Context, tool *v1alpha1.Too
 }
 
 func (r *ToolReconciler) findToolsForCredentialProvider(ctx context.Context, obj client.Object) []ctrl.Request {
-	cp, ok := obj.(*v1alpha1.CredentialProvider)
+	cp, ok := obj.(*v1alpha1.MyceliumCredentialProvider)
 	if !ok {
 		return nil
 	}
-	var toolList v1alpha1.ToolList
+	var toolList v1alpha1.MyceliumToolList
 	if err := r.List(ctx, &toolList,
 		client.InNamespace(cp.Namespace),
-		client.MatchingFields{ToolCredentialBindingIndex(cp.Spec.Type): cp.Name},
+		client.MatchingFields{indexes.ToolCredentialBindingIndex(cp.Spec.Type): cp.Name},
 	); err != nil {
 		return nil
 	}
@@ -253,7 +268,7 @@ func (r *ToolReconciler) findToolsForCredentialProvider(ctx context.Context, obj
 }
 
 func (r *ToolReconciler) findToolsForProject(ctx context.Context, obj client.Object) []ctrl.Request {
-	var toolList v1alpha1.ToolList
+	var toolList v1alpha1.MyceliumToolList
 	if err := r.List(ctx, &toolList, client.InNamespace(obj.GetName())); err != nil {
 		return nil
 	}
@@ -268,12 +283,12 @@ func (r *ToolReconciler) findToolsForProject(ctx context.Context, obj client.Obj
 
 func (r *ToolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.Tool{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&v1alpha1.MyceliumTool{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&knservingv1.Service{}).
-		Watches(&v1alpha1.CredentialProvider{},
+		Watches(&v1alpha1.MyceliumCredentialProvider{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolsForCredentialProvider),
 		).
-		Watches(&v1alpha1.Project{},
+		Watches(&v1alpha1.MyceliumEcosystem{},
 			handler.EnqueueRequestsFromMapFunc(r.findToolsForProject),
 		).
 		Complete(r)

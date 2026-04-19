@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
-	"mycelium.io/mycelium/internal/controller"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/indexes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -18,13 +18,13 @@ type Validator struct {
 	client.Client
 }
 
-var _ admission.Validator[*v1alpha1.CredentialProvider] = &Validator{}
+var _ admission.Validator[*v1alpha1.MyceliumCredentialProvider] = &Validator{}
 
 // ValidateCreate checks that the namespace is a Mycelium project (not being
 // deleted) and that the referenced Secret exists.
-func (v *Validator) ValidateCreate(ctx context.Context, cp *v1alpha1.CredentialProvider) (admission.Warnings, error) {
+func (v *Validator) ValidateCreate(ctx context.Context, cp *v1alpha1.MyceliumCredentialProvider) (admission.Warnings, error) {
 	projectName := cp.Namespace
-	var proj v1alpha1.Project
+	var proj v1alpha1.MyceliumEcosystem
 	if err := v.Get(ctx, types.NamespacedName{Name: projectName}, &proj); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, fmt.Errorf("Project %s not found", projectName)
@@ -40,16 +40,16 @@ func (v *Validator) ValidateCreate(ctx context.Context, cp *v1alpha1.CredentialP
 }
 
 // ValidateUpdate re-checks the referenced Secret in case it changed.
-func (v *Validator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.CredentialProvider) (admission.Warnings, error) {
+func (v *Validator) ValidateUpdate(ctx context.Context, _, newObj *v1alpha1.MyceliumCredentialProvider) (admission.Warnings, error) {
 	return nil, v.validateSecret(ctx, newObj)
 }
 
 // ValidateDelete checks that no Tools reference this CredentialProvider.
-func (v *Validator) ValidateDelete(ctx context.Context, cp *v1alpha1.CredentialProvider) (admission.Warnings, error) {
-	var toolList v1alpha1.ToolList
+func (v *Validator) ValidateDelete(ctx context.Context, cp *v1alpha1.MyceliumCredentialProvider) (admission.Warnings, error) {
+	var toolList v1alpha1.MyceliumToolList
 	if err := v.List(ctx, &toolList,
 		client.InNamespace(cp.Namespace),
-		client.MatchingFields{controller.ToolCredentialBindingIndex(cp.Spec.Type): cp.Name},
+		client.MatchingFields{indexes.ToolCredentialBindingIndex(cp.Spec.Type): cp.Name},
 	); err != nil {
 		return nil, fmt.Errorf("listing Tools: %w", err)
 	}
@@ -61,13 +61,13 @@ func (v *Validator) ValidateDelete(ctx context.Context, cp *v1alpha1.CredentialP
 	return nil, nil
 }
 
-func (v *Validator) validateSecret(ctx context.Context, cp *v1alpha1.CredentialProvider) error {
+func (v *Validator) validateSecret(ctx context.Context, cp *v1alpha1.MyceliumCredentialProvider) error {
 	var secretName string
 	switch cp.Spec.Type {
 	case v1alpha1.CredentialProviderTypeOAuth:
 		secretName = cp.Spec.OAuth.ClientSecretRef.Name
 	case v1alpha1.CredentialProviderTypeAPIKey:
-		secretName = cp.Spec.APIKey.APIKeySecretRef.Name
+		secretName = cp.Spec.APIKey.SecretRef.Name
 	}
 
 	var secret corev1.Secret

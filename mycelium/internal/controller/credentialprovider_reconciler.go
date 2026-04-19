@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
+	"mycelium.io/mycelium/internal/indexes"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -40,7 +41,7 @@ type CredentialProviderReconciler struct {
 func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, retErr error) {
 	logger := log.FromContext(ctx)
 
-	var cp v1alpha1.CredentialProvider
+	var cp v1alpha1.MyceliumCredentialProvider
 	if err := r.Get(ctx, req.NamespacedName, &cp); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -52,7 +53,7 @@ func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	defer func() {
 		if err := patchHelper.Patch(ctx, &cp,
-			patch.WithOwnedConditions{Conditions: []string{v1alpha1.ReadyCondition}},
+			patch.WithOwnedConditions{Conditions: []string{v1alpha1.EcosystemReadyCondition}},
 			patch.WithStatusObservedGeneration{},
 		); err != nil {
 			retErr = kerrors.NewAggregate([]error{retErr, err})
@@ -81,7 +82,7 @@ func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	// No owned resources to reconcile for CredentialProvider.
 	meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
-		Type:    v1alpha1.ReadyCondition,
+		Type:    v1alpha1.EcosystemReadyCondition,
 		Status:  metav1.ConditionTrue,
 		Reason:  v1alpha1.SucceededReason,
 		Message: "All prerequisites valid",
@@ -92,12 +93,12 @@ func (r *CredentialProviderReconciler) Reconcile(ctx context.Context, req ctrl.R
 // resolveProject checks that the parent Project exists.
 // Returns (false, nil) on not-found or deleting after setting Ready=False — caller should return without requeue.
 // Returns (false, err) on unexpected API errors.
-func (r *CredentialProviderReconciler) resolveProject(ctx context.Context, cp *v1alpha1.CredentialProvider) (bool, error) {
-	var proj v1alpha1.Project
+func (r *CredentialProviderReconciler) resolveProject(ctx context.Context, cp *v1alpha1.MyceliumCredentialProvider) (bool, error) {
+	var proj v1alpha1.MyceliumEcosystem
 	if err := r.Get(ctx, types.NamespacedName{Name: cp.Namespace}, &proj); err != nil {
 		if errors.IsNotFound(err) {
 			meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
-				Type:    v1alpha1.ReadyCondition,
+				Type:    v1alpha1.EcosystemReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  v1alpha1.FailedReason,
 				Message: fmt.Sprintf("Project %s not found", cp.Namespace),
@@ -113,20 +114,20 @@ func (r *CredentialProviderReconciler) resolveProject(ctx context.Context, cp *v
 // validateSecrets checks that the referenced K8s Secret exists and is not being deleted.
 // Returns (false, nil) on not-found/deleting after setting Ready=False — caller should return without requeue.
 // Returns (false, err) on unexpected API errors.
-func (r *CredentialProviderReconciler) resolveSecrets(ctx context.Context, cp *v1alpha1.CredentialProvider) (bool, error) {
+func (r *CredentialProviderReconciler) resolveSecrets(ctx context.Context, cp *v1alpha1.MyceliumCredentialProvider) (bool, error) {
 	var sel corev1.SecretKeySelector
 	switch cp.Spec.Type {
 	case v1alpha1.CredentialProviderTypeOAuth:
 		sel = cp.Spec.OAuth.ClientSecretRef
 	case v1alpha1.CredentialProviderTypeAPIKey:
-		sel = cp.Spec.APIKey.APIKeySecretRef
+		sel = cp.Spec.APIKey.SecretRef
 	}
 
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Name: sel.Name, Namespace: cp.Namespace}, &secret); err != nil {
 		if errors.IsNotFound(err) {
 			meta.SetStatusCondition(&cp.Status.Conditions, metav1.Condition{
-				Type:    v1alpha1.ReadyCondition,
+				Type:    v1alpha1.EcosystemReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  v1alpha1.FailedReason,
 				Message: fmt.Sprintf("Secret %s not found", sel.Name),
@@ -138,10 +139,10 @@ func (r *CredentialProviderReconciler) resolveSecrets(ctx context.Context, cp *v
 	return true, nil
 }
 
-func (r *CredentialProviderReconciler) reconcileDelete(ctx context.Context, cp *v1alpha1.CredentialProvider) (ctrl.Result, error) {
-	var tools v1alpha1.ToolList
+func (r *CredentialProviderReconciler) reconcileDelete(ctx context.Context, cp *v1alpha1.MyceliumCredentialProvider) (ctrl.Result, error) {
+	var tools v1alpha1.MyceliumToolList
 	if err := r.List(ctx, &tools, client.InNamespace(cp.Namespace),
-		client.MatchingFields{ToolCredentialBindingIndex(cp.Spec.Type): cp.Name}); err != nil {
+		client.MatchingFields{indexes.ToolCredentialBindingIndex(cp.Spec.Type): cp.Name}); err != nil {
 		return ctrl.Result{}, err
 	}
 	if len(tools.Items) > 0 {
@@ -156,12 +157,12 @@ func (r *CredentialProviderReconciler) reconcileDelete(ctx context.Context, cp *
 }
 
 func (r *CredentialProviderReconciler) mapToolToCredentialProviders(_ context.Context, obj client.Object) []ctrl.Request {
-	tool, ok := obj.(*v1alpha1.Tool)
+	tool, ok := obj.(*v1alpha1.MyceliumTool)
 	if !ok {
 		return nil
 	}
-	requests := make([]ctrl.Request, 0, len(tool.Spec.CredentialBindings))
-	for _, cr := range tool.Spec.CredentialBindings {
+	requests := make([]ctrl.Request, 0, len(tool.Spec.CredentialProviderBindings))
+	for _, cr := range tool.Spec.CredentialProviderBindings {
 		requests = append(requests, ctrl.Request{
 			NamespacedName: types.NamespacedName{Name: cr.CredentialProviderName(), Namespace: tool.Namespace},
 		})
@@ -170,10 +171,10 @@ func (r *CredentialProviderReconciler) mapToolToCredentialProviders(_ context.Co
 }
 
 func (r *CredentialProviderReconciler) mapSecretToCredentialProviders(ctx context.Context, obj client.Object) []ctrl.Request {
-	var cpList v1alpha1.CredentialProviderList
+	var cpList v1alpha1.MyceliumCredentialProviderList
 	if err := r.List(ctx, &cpList,
 		client.InNamespace(obj.GetNamespace()),
-		client.MatchingFields{IndexCredentialProviderSecrets: obj.GetName()},
+		client.MatchingFields{indexes.IndexCredentialProviderSecrets: obj.GetName()},
 	); err != nil {
 		return nil
 	}
@@ -187,7 +188,7 @@ func (r *CredentialProviderReconciler) mapSecretToCredentialProviders(ctx contex
 }
 
 func (r *CredentialProviderReconciler) mapProjectToCredentialProviders(ctx context.Context, obj client.Object) []ctrl.Request {
-	var cpList v1alpha1.CredentialProviderList
+	var cpList v1alpha1.MyceliumCredentialProviderList
 	if err := r.List(ctx, &cpList, client.InNamespace(obj.GetName())); err != nil {
 		return nil
 	}
@@ -202,14 +203,14 @@ func (r *CredentialProviderReconciler) mapProjectToCredentialProviders(ctx conte
 
 func (r *CredentialProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.CredentialProvider{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(&v1alpha1.Project{},
+		For(&v1alpha1.MyceliumCredentialProvider{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&v1alpha1.MyceliumEcosystem{},
 			handler.EnqueueRequestsFromMapFunc(r.mapProjectToCredentialProviders),
 		).
 		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.mapSecretToCredentialProviders),
 		).
-		Watches(&v1alpha1.Tool{},
+		Watches(&v1alpha1.MyceliumTool{},
 			handler.EnqueueRequestsFromMapFunc(r.mapToolToCredentialProviders),
 		).
 		Complete(r)

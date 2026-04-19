@@ -17,19 +17,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func newTool() *v1alpha1.Tool {
-	return &v1alpha1.Tool{
+func newTool() *v1alpha1.MyceliumTool {
+	return &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "list-repos",
 			Namespace:  "tenant-a",
 			Finalizers: []string{controller.ToolFinalizer},
 		},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "List GitHub repos for an org.",
 			Container:   v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
-			Credentials: []v1alpha1.CredentialBinding{
+			Credentials: []v1alpha1.CredentialProviderBinding{
 				{
-					OAuth: &v1alpha1.OAuthCredentialBinding{
+					OAuth: &v1alpha1.OAuthCredentialProviderBinding{
 						ProviderRef: corev1.LocalObjectReference{Name: "github"},
 						Scopes:      []string{"repo"},
 					},
@@ -39,27 +39,27 @@ func newTool() *v1alpha1.Tool {
 	}
 }
 
-func toolProject() *v1alpha1.Project {
-	return &v1alpha1.Project{
+func toolProject() *v1alpha1.MyceliumEcosystem {
+	return &v1alpha1.MyceliumEcosystem{
 		ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"},
-		Spec: v1alpha1.ProjectSpec{
-			UserVerifierURL:  "https://app.acme.com/verify",
-			IdentityProvider: v1alpha1.IdentityProviderConfig{Issuer: "https://accounts.google.com", Audiences: []string{"acme"}},
+		Spec: v1alpha1.MyceliumEcosystemSpec{
+			UserVerifierEndpoint: "https://app.acme.com/verify",
+			IdentityProviders:    []v1alpha1.IdentityProviderConfig{{Name: "google", Issuer: "https://accounts.google.com", Audiences: []string{"acme"}, JWKSEndpoint: "https://accounts.google.com/.well-known/openid-configuration/jwks"}},
 		},
 	}
 }
 
-func githubCredentialProvider() *v1alpha1.CredentialProvider {
-	return &v1alpha1.CredentialProvider{
+func githubCredentialProvider() *v1alpha1.MyceliumCredentialProvider {
+	return &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "tenant-a"},
-		Spec: v1alpha1.CredentialProviderSpec{
+		Spec: v1alpha1.MyceliumCredentialProviderSpec{
 			OAuth: &v1alpha1.OAuthProviderSpec{
 				ClientID: "client-id",
 				ClientSecretRef: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "secret"},
 					Key:                  "client-secret",
 				},
-				Discovery: v1alpha1.OAuthDiscovery{
+				Discovery: v1alpha1.OAuthDiscoveryConfig{
 					DiscoveryURL: "https://accounts.google.com/.well-known/openid-configuration",
 				},
 			},
@@ -109,7 +109,7 @@ func TestToolReconciler_SetsStatusServiceRef(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 	require.NotNil(t, updated.Status.Service)
@@ -118,14 +118,14 @@ func TestToolReconciler_SetsStatusServiceRef(t *testing.T) {
 
 func TestToolReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newScheme(t)
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: "list-repos", Namespace: "tenant-a"},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "List GitHub repos for an org.",
 			Container:   v1alpha1.ToolContainer{Image: "tenant-a/tool-list-repos:latest"},
-			Credentials: []v1alpha1.CredentialBinding{
+			Credentials: []v1alpha1.CredentialProviderBinding{
 				{
-					OAuth: &v1alpha1.OAuthCredentialBinding{
+					OAuth: &v1alpha1.OAuthCredentialProviderBinding{
 						ProviderRef: corev1.LocalObjectReference{Name: "github"},
 						Scopes:      []string{"repo"},
 					},
@@ -144,7 +144,7 @@ func TestToolReconciler_AddsFinalizer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 	assert.Contains(t, updated.Finalizers, controller.ToolFinalizer)
@@ -164,7 +164,7 @@ func TestToolReconciler_SetsReadyCondition(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 
@@ -196,7 +196,7 @@ func TestToolReconciler_ProjectNotFound(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 
@@ -225,7 +225,7 @@ func TestToolReconciler_CredentialsInvalidWhenProviderMissing(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 
@@ -247,9 +247,9 @@ func TestToolReconciler_CredentialsInvalidWhenProviderWrongType(t *testing.T) {
 	tool := newTool()
 	proj := toolProject()
 	// Create an API key provider where OAuth is expected
-	wrongTypeCp := &v1alpha1.CredentialProvider{
+	wrongTypeCp := &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "tenant-a"},
-		Spec: v1alpha1.CredentialProviderSpec{
+		Spec: v1alpha1.MyceliumCredentialProviderSpec{
 			APIKey: &v1alpha1.APIKeyProviderSpec{
 				APIKeySecretRef: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "secret"},
@@ -267,7 +267,7 @@ func TestToolReconciler_CredentialsInvalidWhenProviderWrongType(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 
@@ -293,7 +293,7 @@ func TestToolReconciler_DeletionRemovesFinalizer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	assert.True(t, err != nil, "expected tool to be deleted after finalizer removal")
 }
@@ -304,9 +304,9 @@ func TestToolReconciler_DeletionRequeuesWithDependentAgents(t *testing.T) {
 	now := metav1.Now()
 	tool.DeletionTimestamp = &now
 
-	agent := &v1alpha1.Agent{
+	agent := &v1alpha1.MyceliumAgent{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "tenant-a"},
-		Spec: v1alpha1.AgentSpec{
+		Spec: v1alpha1.MyceliumAgentSpec{
 			Description: "GH agent",
 			Tools: []v1alpha1.ToolRef{
 				{Ref: corev1.LocalObjectReference{Name: "list-repos"}},
@@ -324,7 +324,7 @@ func TestToolReconciler_DeletionRequeuesWithDependentAgents(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter, "expected requeue when dependent agents exist")
 
-	var updated v1alpha1.Tool
+	var updated v1alpha1.MyceliumTool
 	err = cl.Get(context.Background(), types.NamespacedName{Name: "list-repos", Namespace: "tenant-a"}, &updated)
 	require.NoError(t, err)
 	assert.Contains(t, updated.Finalizers, controller.ToolFinalizer)

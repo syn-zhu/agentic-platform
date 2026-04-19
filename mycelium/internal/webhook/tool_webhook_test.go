@@ -16,17 +16,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func oauthCredentialProvider(name, namespace string) *v1alpha1.CredentialProvider {
-	return &v1alpha1.CredentialProvider{
+func oauthCredentialProvider(name, namespace string) *v1alpha1.MyceliumCredentialProvider {
+	return &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: v1alpha1.CredentialProviderSpec{
+		Spec: v1alpha1.MyceliumCredentialProviderSpec{
 			OAuth: &v1alpha1.OAuthProviderSpec{
 				ClientID: "client-id",
 				ClientSecretRef: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "secret"},
 					Key:                  "client-secret",
 				},
-				Discovery: v1alpha1.OAuthDiscovery{
+				Discovery: v1alpha1.OAuthDiscoveryConfig{
 					DiscoveryURL: "https://accounts.google.com/.well-known/openid-configuration",
 				},
 			},
@@ -34,10 +34,10 @@ func oauthCredentialProvider(name, namespace string) *v1alpha1.CredentialProvide
 	}
 }
 
-func apiKeyCredentialProvider(name, namespace string) *v1alpha1.CredentialProvider {
-	return &v1alpha1.CredentialProvider{
+func apiKeyCredentialProvider(name, namespace string) *v1alpha1.MyceliumCredentialProvider {
+	return &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: v1alpha1.CredentialProviderSpec{
+		Spec: v1alpha1.MyceliumCredentialProviderSpec{
 			APIKey: &v1alpha1.APIKeyProviderSpec{
 				APIKeySecretRef: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "secret"},
@@ -48,28 +48,28 @@ func apiKeyCredentialProvider(name, namespace string) *v1alpha1.CredentialProvid
 	}
 }
 
-func baseTool(name, namespace string) *v1alpha1.Tool {
-	return &v1alpha1.Tool{
+func baseTool(name, namespace string) *v1alpha1.MyceliumTool {
+	return &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "test tool",
 			Container:   v1alpha1.ToolContainer{Image: "test:latest"},
 		},
 	}
 }
 
-func oauthCredRef(providerName string, scopes ...string) v1alpha1.CredentialBinding {
-	return v1alpha1.CredentialBinding{
-		OAuth: &v1alpha1.OAuthCredentialBinding{
+func oauthCredRef(providerName string, scopes ...string) v1alpha1.CredentialProviderBinding {
+	return v1alpha1.CredentialProviderBinding{
+		OAuth: &v1alpha1.OAuthCredentialProviderBinding{
 			ProviderRef: corev1.LocalObjectReference{Name: providerName},
 			Scopes:      scopes,
 		},
 	}
 }
 
-func apiKeyCredRef(providerName string) v1alpha1.CredentialBinding {
-	return v1alpha1.CredentialBinding{
-		APIKey: &v1alpha1.APIKeyCredentialBinding{
+func apiKeyCredRef(providerName string) v1alpha1.CredentialProviderBinding {
+	return v1alpha1.CredentialProviderBinding{
+		APIKey: &v1alpha1.APIKeyCredentialProviderBinding{
 			ProviderRef: corev1.LocalObjectReference{Name: providerName},
 		},
 	}
@@ -129,7 +129,7 @@ func TestToolValidator_CreateAllowsWithValidOAuthRef(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tool := baseTool("list-repos", "acme")
-	tool.Spec.Credentials = []v1alpha1.CredentialBinding{oauthCredRef("github", "repo")}
+	tool.Spec.Credentials = []v1alpha1.CredentialProviderBinding{oauthCredRef("github", "repo")}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(managedNamespace("acme"), readyProject(), oauthCredentialProvider("github", "acme")).Build()
@@ -144,7 +144,7 @@ func TestToolValidator_CreateRejectsWhenOAuthRefNotFound(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tool := baseTool("list-repos", "acme")
-	tool.Spec.Credentials = []v1alpha1.CredentialBinding{oauthCredRef("github", "repo")}
+	tool.Spec.Credentials = []v1alpha1.CredentialProviderBinding{oauthCredRef("github", "repo")}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
@@ -160,7 +160,7 @@ func TestToolValidator_CreateRejectsWhenOAuthRefIsAPIKey(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tool := baseTool("list-repos", "acme")
-	tool.Spec.Credentials = []v1alpha1.CredentialBinding{oauthCredRef("stripe", "repo")}
+	tool.Spec.Credentials = []v1alpha1.CredentialProviderBinding{oauthCredRef("stripe", "repo")}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(managedNamespace("acme"), readyProject(), apiKeyCredentialProvider("stripe", "acme")).Build()
@@ -176,7 +176,7 @@ func TestToolValidator_CreateRejectsWhenAPIKeyRefIsOAuth(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tool := baseTool("list-repos", "acme")
-	tool.Spec.Credentials = []v1alpha1.CredentialBinding{apiKeyCredRef("github")}
+	tool.Spec.Credentials = []v1alpha1.CredentialProviderBinding{apiKeyCredRef("github")}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(managedNamespace("acme"), readyProject(), oauthCredentialProvider("github", "acme")).Build()
@@ -192,7 +192,7 @@ func TestToolValidator_CreateRejectsWhenCredentialProviderDeleting(t *testing.T)
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tool := baseTool("list-repos", "acme")
-	tool.Spec.Credentials = []v1alpha1.CredentialBinding{oauthCredRef("github", "repo")}
+	tool.Spec.Credentials = []v1alpha1.CredentialProviderBinding{oauthCredRef("github", "repo")}
 
 	cp := oauthCredentialProvider("github", "acme")
 	now := metav1.Now()
@@ -213,7 +213,7 @@ func TestToolValidator_CreateAllowsWithBothOAuthAndAPIKey(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tool := baseTool("list-repos", "acme")
-	tool.Spec.Credentials = []v1alpha1.CredentialBinding{
+	tool.Spec.Credentials = []v1alpha1.CredentialProviderBinding{
 		oauthCredRef("github", "repo"),
 		apiKeyCredRef("stripe"),
 	}
@@ -237,7 +237,7 @@ func TestToolValidator_UpdateRevalidatesCredentialRefs(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tool := baseTool("list-repos", "acme")
-	tool.Spec.Credentials = []v1alpha1.CredentialBinding{oauthCredRef("nonexistent", "repo")}
+	tool.Spec.Credentials = []v1alpha1.CredentialProviderBinding{oauthCredRef("nonexistent", "repo")}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(managedNamespace("acme"), readyProject()).Build()
@@ -255,8 +255,8 @@ func newClientWithAgentIndex(t *testing.T, scheme *runtime.Scheme, objs ...clien
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objs...).
-		WithIndex(&v1alpha1.Agent{}, "spec.tools.refs", func(obj client.Object) []string {
-			agent := obj.(*v1alpha1.Agent)
+		WithIndex(&v1alpha1.MyceliumAgent{}, "spec.tools.refs", func(obj client.Object) []string {
+			agent := obj.(*v1alpha1.MyceliumAgent)
 			var refs []string
 			for _, tr := range agent.Spec.Tools {
 				refs = append(refs, tr.Ref.Name)
@@ -281,9 +281,9 @@ func TestToolValidator_DeleteRejectsWithDependentAgent(t *testing.T) {
 	scheme := newScheme(t)
 
 	tool := baseTool("list-repos", "acme")
-	agent := &v1alpha1.Agent{
+	agent := &v1alpha1.MyceliumAgent{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-assistant", Namespace: "acme"},
-		Spec: v1alpha1.AgentSpec{
+		Spec: v1alpha1.MyceliumAgentSpec{
 			Description: "GitHub agent",
 			Tools: []v1alpha1.ToolRef{
 				{Ref: corev1.LocalObjectReference{Name: "list-repos"}},

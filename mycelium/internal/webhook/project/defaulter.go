@@ -12,9 +12,9 @@ import (
 // Defaulter sets defaults on Project resources (e.g., adds finalizer).
 type Defaulter struct{}
 
-var _ admission.Defaulter[*v1alpha1.Project] = &Defaulter{}
+var _ admission.Defaulter[*v1alpha1.MyceliumEcosystem] = &Defaulter{}
 
-func (d *Defaulter) Default(_ context.Context, proj *v1alpha1.Project) error {
+func (d *Defaulter) Default(_ context.Context, proj *v1alpha1.MyceliumEcosystem) error {
 	controllerutil.AddFinalizer(proj, controller.ProjectFinalizer)
 	return nil
 }

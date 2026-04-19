@@ -2,12 +2,17 @@ package generate
 
 import (
 	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
-	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Namespace generates the apply configuration for the namespace owned by a Project.
-func Namespace(p *v1alpha1.Project) *corev1ac.NamespaceApplyConfiguration {
-	return corev1ac.Namespace(p.Name).
-		WithLabels(ManagedLabels()).
-		WithLabels(ProjectLabels(p.Name))
+// Namespace generates the Namespace owned by a Project.
+func Namespace(p *v1alpha1.MyceliumEcosystem) *corev1.Namespace {
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   p.Name,
+			Labels: ProjectLabels(p.Name),
+		},
+	}
 }

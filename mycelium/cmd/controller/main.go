@@ -6,6 +6,7 @@ import (
 
 	v1alpha1 "mycelium.io/mycelium/api/v1alpha1"
 	"mycelium.io/mycelium/internal/controller"
+	"mycelium.io/mycelium/internal/indexes"
 	"mycelium.io/mycelium/internal/webhook"
 
 	agwv1alpha1 "github.com/agentgateway/agentgateway/controller/api/v1alpha1/agentgateway"
@@ -47,17 +48,23 @@ func main() {
 
 	ctx := ctrl.SetupSignalHandler()
 
-	// Register field indexes before starting reconcilers
-	if err := controller.SetupIndexes(ctx, mgr); err != nil {
+	if err := indexes.SetupIndexes(ctx, mgr); err != nil {
 		ctrl.Log.Error(err, "unable to setup field indexes")
 		os.Exit(1)
 	}
 
-	if err := (&controller.ProjectReconciler{
+	base := &controller.Base{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+	}
+
+	if err := (&controller.EcosystemReconciler{Base: base}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create Project controller")
+		os.Exit(1)
+	}
+
+	if err := (&controller.IdentityProviderReconciler{Base: base}).SetupWithManager(mgr); err != nil {
+		ctrl.Log.Error(err, "unable to create IdentityProvider controller")
 		os.Exit(1)
 	}
 

@@ -22,30 +22,30 @@ func managedNamespace(name string) *corev1.Namespace {
 	}
 }
 
-func readyProject() *v1alpha1.Project {
-	return &v1alpha1.Project{
+func readyProject() *v1alpha1.MyceliumEcosystem {
+	return &v1alpha1.MyceliumEcosystem{
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
-		Spec: v1alpha1.ProjectSpec{
-			UserVerifierURL:  "https://app.acme.com/verify",
-			IdentityProvider: v1alpha1.IdentityProviderConfig{Issuer: "https://accounts.google.com", Audiences: []string{"acme"}},
+		Spec: v1alpha1.MyceliumEcosystemSpec{
+			UserVerifierEndpoint: "https://app.acme.com/verify",
+			IdentityProviders:    []v1alpha1.IdentityProviderConfig{{Name: "google", Issuer: "https://accounts.google.com", Audiences: []string{"acme"}, JWKSEndpoint: "https://accounts.google.com/.well-known/openid-configuration/jwks"}},
 		},
-		Status: v1alpha1.ProjectStatus{
+		Status: v1alpha1.MyceliumEcosystemStatus{
 			NamespaceRef: &corev1.LocalObjectReference{Name: "acme"},
 		},
 	}
 }
 
-func newOAuthCP() *v1alpha1.CredentialProvider {
-	return &v1alpha1.CredentialProvider{
+func newOAuthCP() *v1alpha1.MyceliumCredentialProvider {
+	return &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "acme"},
-		Spec: v1alpha1.CredentialProviderSpec{
+		Spec: v1alpha1.MyceliumCredentialProviderSpec{
 			OAuth: &v1alpha1.OAuthProviderSpec{
 				ClientID: "client-id",
 				ClientSecretRef: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "github-secret"},
 					Key:                  "client-secret",
 				},
-				Discovery: v1alpha1.OAuthDiscovery{
+				Discovery: v1alpha1.OAuthDiscoveryConfig{
 					DiscoveryURL: "https://accounts.google.com/.well-known/openid-configuration",
 				},
 			},
@@ -53,10 +53,10 @@ func newOAuthCP() *v1alpha1.CredentialProvider {
 	}
 }
 
-func newAPIKeyCP() *v1alpha1.CredentialProvider {
-	return &v1alpha1.CredentialProvider{
+func newAPIKeyCP() *v1alpha1.MyceliumCredentialProvider {
+	return &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "stripe", Namespace: "acme"},
-		Spec: v1alpha1.CredentialProviderSpec{
+		Spec: v1alpha1.MyceliumCredentialProviderSpec{
 			APIKey: &v1alpha1.APIKeyProviderSpec{
 				APIKeySecretRef: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "stripe-secret"},
@@ -196,7 +196,7 @@ func TestCredentialProviderValidator_UpdateAllowsWithSecret(t *testing.T) {
 
 func TestCredentialProviderValidator_DeleteAllowsWhenNoDependents(t *testing.T) {
 	scheme := newScheme(t)
-	cp := &v1alpha1.CredentialProvider{
+	cp := &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "acme"},
 	}
 	cl := newClientWithIndexes(t, scheme)
@@ -208,19 +208,19 @@ func TestCredentialProviderValidator_DeleteAllowsWhenNoDependents(t *testing.T) 
 
 func TestCredentialProviderValidator_DeleteRejectsWithDependentOAuth(t *testing.T) {
 	scheme := newScheme(t)
-	cp := &v1alpha1.CredentialProvider{
+	cp := &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "github", Namespace: "acme"},
 	}
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "list-repos", Namespace: "acme",
 		},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "d",
 			Container:   v1alpha1.ToolContainer{Image: "i"},
-			Credentials: []v1alpha1.CredentialBinding{
+			Credentials: []v1alpha1.CredentialProviderBinding{
 				{
-					OAuth: &v1alpha1.OAuthCredentialBinding{
+					OAuth: &v1alpha1.OAuthCredentialProviderBinding{
 						ProviderRef: corev1.LocalObjectReference{Name: "github"},
 						Scopes:      []string{"repo"},
 					},
@@ -238,19 +238,19 @@ func TestCredentialProviderValidator_DeleteRejectsWithDependentOAuth(t *testing.
 
 func TestCredentialProviderValidator_DeleteRejectsWithDependentAPIKey(t *testing.T) {
 	scheme := newScheme(t)
-	cp := &v1alpha1.CredentialProvider{
+	cp := &v1alpha1.MyceliumCredentialProvider{
 		ObjectMeta: metav1.ObjectMeta{Name: "stripe", Namespace: "acme"},
 	}
-	tool := &v1alpha1.Tool{
+	tool := &v1alpha1.MyceliumTool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "charge", Namespace: "acme",
 		},
-		Spec: v1alpha1.ToolSpec{
+		Spec: v1alpha1.MyceliumToolSpec{
 			Description: "d",
 			Container:   v1alpha1.ToolContainer{Image: "i"},
-			Credentials: []v1alpha1.CredentialBinding{
+			Credentials: []v1alpha1.CredentialProviderBinding{
 				{
-					APIKey: &v1alpha1.APIKeyCredentialBinding{
+					APIKey: &v1alpha1.APIKeyCredentialProviderBinding{
 						ProviderRef: corev1.LocalObjectReference{Name: "stripe"},
 					},
 				},
