@@ -1,0 +1,11 @@
+bin/
+
+# go.work is only needed if you are simultaneously modifying agentgateway's API
+# types and want those changes reflected in mycelium's codegen before re-vendoring.
+# Normal builds and `make codegen` both read from vendor/ — no go.work required.
+#
+# To set up a local workspace override:
+#   go work init .
+#   go work use /path/to/local/agentgateway
+go.work
+go.work.sum
