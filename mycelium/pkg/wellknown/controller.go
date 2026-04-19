@@ -1,8 +1,10 @@
 package wellknown
 
 const (
-	// MyceliumControllerName is the name of the mycelium controller
-	// TODO(mycelium): Make this configurable — should use the Helm release name
-	// or the actual controller deployment name rather than a hardcoded string.
-	MyceliumControllerName = "mycelium.io/mycelium"
+	// DefaultMyceliumControllerName is the name of the mycelium controller
+	// TODO(mycelium): Make this configurable — look at how AgentGateway does it
+	DefaultMyceliumControllerName = "mycelium.io/mycelium"
+
+	// LeaderElectionID is the name of the lease that leader election will use for holding the leader lock.
+	LeaderElectionID = "mycelium-leader"
 )

@@ -1,0 +1,7 @@
+/Users/siyanzhu/istio/pilot/pkg/status/collections.go
+
+
+What do we actually want for out-of-ecosystem?
+
+1. new one is added
+since we're 

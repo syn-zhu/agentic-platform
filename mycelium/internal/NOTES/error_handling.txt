@@ -1,0 +1,152 @@
+Error handling in krt is genuinely different from what you're used to in controller-runtime, and it's one of the places where the paradigm shift has the biggest practical implications. Let me walk through the four layers where errors can occur because they each have different characteristics.
+Layer 1: errors inside transform functions
+This is the one that surprises people. Transforms are pure functions — they take inputs, return an output. There's no error return. If something goes wrong mid-transform, you have a few choices, but none of them are "return an error and krt retries". That's not the programming model.
+Your actual options:
+Return nil to indicate "no output right now."
+gofunc(ctx krt.HandlerContext, t *v1.Tenant) *Policy {
+    agents := krt.Fetch(ctx, agents, krt.FilterIndex(agentByTenant, t.Name))
+    if len(agents) == 0 {
+        return nil  // no policy computable yet; collection has no entry for this tenant
+    }
+    return buildPolicy(t, agents)
+}
+nil means "this transformation doesn't produce an output for this input right now." The collection has no entry for that tenant. When something upstream changes that would make a valid output possible (agents get added), the transform re-runs and can return a non-nil value. This is the idiomatic way to say "not ready yet" — level-triggered, self-healing.
+Return a partial/degraded output with error state baked in.
+gofunc(ctx krt.HandlerContext, t *v1.Tenant) *Policy {
+    tools := krt.Fetch(ctx, tools, krt.FilterIndex(toolByTenant, t.Name))
+
+    var policy Policy
+    policy.TenantName = t.Name
+
+    for _, tool := range tools {
+        entry, err := deriveToolEntry(tool)
+        if err != nil {
+            policy.Errors = append(policy.Errors, ToolError{Tool: tool.Name, Reason: err.Error()})
+            continue
+        }
+        policy.Entries = append(policy.Entries, entry)
+    }
+
+    return &policy
+}
+The Policy type has an Errors field that's part of the derived state. Consumers of the collection see both the successful entries and the failed ones. This is often the right approach for user-facing state — "here's what I could compute, and here's what went wrong with the parts I couldn't." The sink can turn Errors into status conditions on the CRD, visible to users.
+Panic.
+Don't. krt will recover and log, but panicking in a transform is a programming error, not an error-handling strategy. If you catch yourself wanting to panic, you probably want to return nil or a degraded result.
+The "why no error return" is important
+Transforms are pure functions over current state. There's no concept of "retry" because there's nothing to retry against — if the same inputs produce the same error, retrying doesn't help. If the inputs change, the transform re-runs automatically via dependency propagation. Level-triggered convergence means errors inside transforms are either:
+
+Deterministic given the inputs (invalid state, missing required field) → no amount of retry helps; returning nil or a degraded output is the answer.
+Transient (external I/O that should be retried) → shouldn't be inside a transform in the first place; that's sink territory.
+
+This is a genuine discipline shift. The transform has to be pure — no I/O, no retries, no external state. Anything that can fail transiently goes in the sink layer.
+Layer 2: errors in the sink (writing to apiserver)
+This is where apiserver interactions live, and this is where real error handling happens. The pattern is a workqueue with backoff:
+gotype policyEvent struct {
+    key    string
+    policy *v1.Policy
+    delete bool
+}
+
+queue := workqueue.NewTypedRateLimitingQueue[policyEvent](
+    workqueue.DefaultTypedControllerRateLimiter[policyEvent](),
+)
+
+policies.RegisterBatch(func(events []krt.Event[*Policy]) {
+    for _, ev := range events {
+        switch ev.Event {
+        case controllers.EventAdd, controllers.EventUpdate:
+            queue.Add(policyEvent{key: krt.GetKey(ev.Latest()), policy: ev.Latest()})
+        case controllers.EventDelete:
+            queue.Add(policyEvent{key: krt.GetKey(ev.Old), delete: true})
+        }
+    }
+}, true)
+
+// Worker goroutine(s):
+for {
+    ev, shutdown := queue.Get()
+    if shutdown { return }
+
+    err := applyPolicyEvent(ctx, client, ev)
+
+    switch {
+    case err == nil:
+        queue.Forget(ev)
+    case apierrors.IsConflict(err) || apierrors.IsTooManyRequests(err):
+        queue.AddRateLimited(ev)  // retry with backoff
+    case apierrors.IsNotFound(err) && ev.delete:
+        queue.Forget(ev)  // already gone
+    case isFatal(err):
+        log.Error(err, "fatal error, not retrying", "key", ev.key)
+        // Possibly emit a metric, possibly surface via status on the CRD
+        queue.Forget(ev)
+    default:
+        queue.AddRateLimited(ev)  // retry
+    }
+    queue.Done(ev)
+}
+This is familiar controller-runtime shape — it's the workqueue retry pattern, just applied at the sink layer instead of in a reconcile loop. The distinction matters because:
+
+Transient errors retry naturally. 429, 409 conflicts on stale resource versions, network flakes — all handled.
+Fatal errors don't infinite-loop. Bad schema, permission denied, validation failures — log and drop, don't retry forever.
+Level-triggered recovery still works. If an apply fails fatally and gets dropped from the queue, the next time the transform re-runs (because an input changed), a new event fires, which goes onto the queue, which retries. No permanently-stuck state unless the underlying data is genuinely invalid.
+
+Layer 3: error observability
+Because errors can be suppressed in transforms (returning nil or degraded) or dropped in sinks (after max retries), you need to surface them somewhere for operators to see. Three typical channels:
+Metrics. Export counters for sink failures by error type, transform "degraded output" rates, retry counts. Prometheus / VictoriaMetrics gauges on queue depth, histograms on apply latency. This is the first line of "something's wrong in the pipeline."
+Status on CRDs. If a Policy for tenant X fails to apply, put the error message in Policy.Status.Conditions[type=Applied, status=False, reason=...]. Operators see it via kubectl describe policy. Same pattern as controller-runtime, but the writing happens from the sink.
+Structured logs with correlation IDs. Every event flowing through the pipeline should be traceable — sandbox_claim=foo, tenant=acme, transform=tenant-policy, operation=apply, error=.... For complex derivations with multiple levels, log at transform entry/exit with the key. When a bug shows up as "why didn't this policy update," the logs tell you whether the transform ran, what it computed, and what the sink did.
+Layer 4: errors in the krt framework itself
+Less common, but: informer sync failures, type registration issues, collection-creation errors. These are usually startup-time and fatal — crash the process, let the orchestrator restart it, fix via config or code change. krt exposes them via error returns on construction and via sync-check methods (HasSynced, similar pattern to client-go informers).
+Wait for collections to sync at startup before accepting reconcile events:
+gomgr, _ := manager.New(...)
+
+// After registering collections and sinks:
+if !mgr.WaitForCacheSync(ctx) {
+    log.Fatal("failed to sync caches")
+}
+(The exact API here depends on how you've wired krt with your manager; Istio's has its own mechanism that's slightly different from controller-runtime's.)
+Putting it together for Magenta
+For a Policy derivation:
+Tenant changes
+  → transform runs
+  → Fetch(agents, tools, creds) returns current state
+  → buildPolicy() — might return nil if tenant is partial, or Policy with Errors[] for per-tool issues
+  → collection updates
+  → sink enqueues event
+  → worker applies via SSA
+  → on conflict: retry with backoff
+  → on permanent error: log, metric, drop, write failure condition to Policy.Status
+  → on success: forget
+
+Error visibility:
+  - Per-item errors in the computation → Policy.Status.Conditions, visible to tenants
+  - Sink retry failures → controller logs + metrics, visible to SRE
+  - Framework errors → process crashes, visible via container restart events
+Three distinct error audiences (tenant, SRE, operator), three distinct surfaces, three distinct handling strategies.
+The mental shift
+In controller-runtime, error handling is mostly "return error from reconcile, controller-runtime retries with backoff." One mechanism, applied uniformly. In krt, error handling is pulled apart:
+
+Pure errors (input-is-invalid) → return nil or degraded output from transform.
+Transient external errors (apiserver flake) → sink workqueue with backoff.
+Permanent external errors (validation rejection) → log, metric, surface via status, drop from retry.
+Framework errors (sync failure) → fatal at startup.
+
+This is more nuanced but arguably more correct — the controller-runtime "retry everything" model treats retryable and non-retryable errors the same way, which can lead to infinite retry loops on validation failures. krt's separation forces you to think about what kind of error it is and respond appropriately.
+The practical habit to build
+When writing a transform, ask: "can this fail in a way that isn't 'the inputs are in a state that doesn't produce output yet'?" If yes, that failure doesn't belong in the transform. Either:
+
+Move the I/O to the sink (if it's external state).
+Validate the input collection upstream (another transform that filters out bad state).
+Encode the failure in the output type (Errors field, degraded condition).
+
+When writing a sink, ask: "what are the error categories, and what's my policy for each?" At minimum: transient-retry, permanent-drop-and-log, success. Often more nuanced for domain-specific errors.
+For Magenta specifically, I'd suggest designing a shared sink helper early — Writer[T] that takes a collection, a field manager name, an applyFn, and an error classifier. Then every writer you build plugs into the same retry / metric / logging infrastructure. Much better than bespoke error handling in each sink.
+Short version
+krt transforms don't have an error return — they either produce an output (possibly degraded) or return nil. Real error handling lives in sinks, which use workqueues with backoff for retries and classification-based policy for when to give up. Three error audiences (users, SRE, operators) want three different surfaces (status conditions, metrics/logs, process crashes). The lack of retry-from-transform is deliberate: pure functions can't benefit from retry, and the level-triggered model handles "transient bad input state" by re-running when inputs change.
+
+
+
+
+USE ISTIO / AGW QUEUE class
+/Users/siyanzhu/istio/pkg/kube/controllers/queue.go

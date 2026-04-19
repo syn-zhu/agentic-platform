@@ -11,3 +11,13 @@ var (
 	AddToScheme   = SchemeBuilder.AddToScheme
 )
 
+// GVK constants for all Mycelium API types. Derived from GroupVersion so they
+// stay in sync automatically. Add a new entry here when adding a new CRD type.
+var (
+	MyceliumEcosystemGVK          = GroupVersion.WithKind("MyceliumEcosystem")
+	MyceliumAuthorizerGVK         = GroupVersion.WithKind("MyceliumAuthorizer")
+	MyceliumToolGVK               = GroupVersion.WithKind("MyceliumTool")
+	MyceliumAgentGVK              = GroupVersion.WithKind("MyceliumAgent")
+	MyceliumCredentialProviderGVK = GroupVersion.WithKind("MyceliumCredentialProvider")
+)
+

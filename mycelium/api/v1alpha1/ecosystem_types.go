@@ -1,7 +1,6 @@
 package v1alpha1
 
 import (
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -23,14 +22,7 @@ type MyceliumEcosystemSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:Format=uri
-	UserVerifierEndpoint *string `json:"userVerifierEndpoint"`
-
-	Authentication AuthenticationConfig `json:"authentication"`
-}
-
-type AuthenticationConfig struct {
-	// TODO: support API key based authentication as well
-	IdentityProviders []IdentityProviderConfig `json:"identityProviders"`
+	UserVerifierEndpoint string `json:"userVerifierEndpoint"`
 }
 
 // MyceliumEcosystemStatus defines the observed state of Project.
@@ -44,43 +36,6 @@ type MyceliumEcosystemStatus struct {
 	// ToolServerRoute      ReferencedResourceStatus `json:"toolServerRoute"`
 	// ToolAccessPolicy     ReferencedResourceStatus `json:"toolAccessPolicy"`
 	// AuthenticationPolicy ReferencedResourceStatus `json:"authenticationPolicy"`
-}
-
-func (e *MyceliumEcosystem) HasReadyCondition() bool {
-	return meta.FindStatusCondition(e.Status.Conditions, EcosystemReadyCondition) != nil
-}
-
-// IdentityProviderConfig defines the desired state of an IdentityProvider.
-type IdentityProviderConfig struct {
-	// Issuer is the OIDC issuer URL.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=2048
-	// +kubebuilder:validation:Format=uri
-	Issuer string `json:"issuer"`
-	// Audiences are the allowed JWT audiences.
-	// +required
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=16
-	// +kubebuilder:validation:XValidation:rule="self.all(a, size(a) >= 1 && size(a) <= 256)",message="each audience must be 1-256 characters"
-	Audiences []string `json:"audiences"`
-	// AllowedClients are the allowed OAuth client IDs.
-	// +optional
-	// +kubebuilder:validation:MaxItems=64
-	// +kubebuilder:validation:XValidation:rule="self.all(c, size(c) >= 1 && size(c) <= 256)",message="each client ID must be 1-256 characters"
-	AllowedClients []string `json:"allowedClients,omitempty"`
-	// AllowedScopes are the allowed OAuth scopes.
-	// +optional
-	// +kubebuilder:validation:MaxItems=64
-	// +kubebuilder:validation:XValidation:rule="self.all(s, size(s) >= 1 && size(s) <= 256)",message="each scope must be 1-256 characters"
-	AllowedScopes []string `json:"allowedScopes,omitempty"`
-	// JWKSEndpoint is the full URL of the JWKS document (e.g. https://www.googleapis.com/oauth2/v3/certs).
-	// The controller creates an ExternalName Service for the hostname and derives the path for the JWT policy.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=2048
-	// +kubebuilder:validation:Format=uri
-	JWKSEndpoint string `json:"jwksEndpoint"`
 }
 
 // GetConditions and SetConditions implement conditions.Setter so that

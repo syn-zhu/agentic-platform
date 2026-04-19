@@ -1,0 +1,91 @@
+The idiomatic krt pattern for things you write to the apiserver:
+go// Observed: what's actually on the apiserver right now.
+observedPolicies := krt.NewInformer[*v1.Policy](client)
+
+// Desired: what your pipeline computes.
+desiredPolicies := krt.NewCollection(tenants, func(ctx krt.HandlerContext, t *v1.Tenant) *v1.Policy {
+    // ... derive from tenant + agents + tools + creds ...
+    return buildPolicy(t, ...)
+})
+
+// Sink: compares desired against observed, applies if they differ.
+desiredPolicies.RegisterBatch(func(events []krt.Event[*v1.Policy]) {
+    for _, ev := range events {
+        desired := ev.Latest()
+        queue.Add(writeTask{desired: desired})
+    }
+}, true)
+
+// Also re-enqueue when observed changes — this is the drift catcher.
+observedPolicies.RegisterBatch(func(events []krt.Event[*v1.Policy]) {
+    for _, ev := range events {
+        key := krt.GetKey(ev.Latest())
+        if desired := desiredPolicies.GetKey(key); desired != nil {
+            queue.Add(writeTask{desired: desired})
+        }
+    }
+}, true)
+
+Extract-compare as additional safety
+Even with idempotent applies, you can short-circuit the second apply entirely rather than relying on the apiserver to no-op it:
+gofunc applyPolicyEvent(ctx context.Context, client kclient.Client[*v1.Policy], task writeTask) error {
+    current := client.Get(task.desired.Name, task.desired.Namespace)
+
+    if current != nil {
+        owned, err := policyac.ExtractPolicy(current, "magenta-policy-writer")
+        if err == nil && apiequality.Semantic.DeepEqual(owned, task.desired) {
+            return nil  // observed already matches desired; skip apply entirely
+        }
+    }
+
+    return client.Apply(ctx, task.desired, "magenta-policy-writer", true)
+}
+Now the "second apply" doesn't even hit the apiserver. Pipeline converges in one apiserver round-trip for real changes, zero apiserver round-trips for spurious observed events. Defensive and efficient.
+This matters more at scale. For low-volume pipelines, the no-op apply is fine and the extra extract-compare is over-engineering. For high-volume pipelines (thousands of objects, frequent recomputation), the saved apiserver hits add up.
+
+
+// Trigger 1: desired changed
+desiredPolicies.RegisterBatch(func(events []krt.Event[*v1.Policy]) {
+    for _, ev := range events {
+        queue.Add(key(ev))
+    }
+}, true)
+
+// Trigger 2: observed changed (drift or self-echo)
+observedPolicies.RegisterBatch(func(events []krt.Event[*v1.Policy]) {
+    for _, ev := range events {
+        queue.Add(key(ev))
+    }
+}, true)
+
+// Worker: one logic for both
+for {
+    k, _ := queue.Get()
+    desired := desiredPolicies.GetKey(k)
+    current := observedPolicies.GetKey(k)
+
+    if desired == nil && current != nil {
+        client.Delete(k)
+        continue
+    }
+    if desired == nil {
+        continue // nothing to do
+    }
+
+    // Extract-compare to skip no-op applies
+    if current != nil {
+        owned, err := policyac.ExtractPolicy(current, fieldManager)
+        if err == nil && apiequality.Semantic.DeepEqual(owned, desired) {
+            continue // no drift, no change, skip
+        }
+    }
+
+    client.Apply(ctx, desired, fieldManager, force)
+}
+
+
+SEE: /Users/siyanzhu/istio/pkg/revisions/tag_watcher.go
+here, they use it to trigger from admission webhook
+
+Later, we should set things up so that only project namespaces are watched;
+every other 

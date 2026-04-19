@@ -1,0 +1,17 @@
+// A selector to restrict the list of returned objects by their labels.
+	// This is a *server side* filter.
+	LabelSelector string
+	// A selector to restrict the list of returned objects by their fields.
+	// This is a *server side* filter.
+	FieldSelector string
+	// Namespace to watch.
+	// This is a *server side* filter.
+	Namespace string
+
+
+At the end, go through and see if any of our "observed" informers can be tightened up with server-side filtering
+Almost all of them can probably use the label selector; some of them can probably use field selector 
+if we only need certain fields to compute the status
+
+/Users/siyanzhu/istio/pkg/kube/controllers/queue.go
+

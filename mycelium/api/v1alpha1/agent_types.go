@@ -4,6 +4,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	AgentReadyCondition          = "Ready"
+	AgentReadyInitializingReason = "Initializing"
+)
+
 // ToolRef references a Tool by name in the same Project.
 type ToolRef struct {
 	// Name is the name of the Tool.
@@ -84,6 +89,8 @@ type MyceliumAgentStatus struct {
 	// ToolBindings tracks the resolved ReferenceStatus for each tool binding.
 	// +optional
 	ToolBindings []ToolBindingStatus `json:"toolBindings,omitempty"`
+
+	ServiceAccount ReferencedResourceStatus
 }
 
 // GetConditions and SetConditions implement conditions.Setter so that
