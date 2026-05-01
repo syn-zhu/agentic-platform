@@ -1,0 +1,12 @@
+We should really make sure sessions are working across multiple tools
+
+
+https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_ToolSchema.html
+
+https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_ToolDefinition.html
+
+https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_McpServerTargetConfiguration.html
+
+https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_McpToolSchemaConfiguration.html
+
+https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_McpTargetConfiguration.html
